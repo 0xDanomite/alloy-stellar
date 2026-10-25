@@ -236,6 +236,80 @@ cmd_clawback_drill() {
   echo "units per share after:  $(view "$fund" units_per_share)"
 }
 
+# Oracles (mainnet, verified by simulation on 2026-10-25). RedStone's SEP-40
+# adapter quotes USD at 8 decimals; Reflector quotes in USDC at 14. BENJI is
+# on neither SEP-40 contract, only on RedStone's BENJI_ETHEREUM_FUNDAMENTAL
+# single-feed contract.
+REDSTONE_ORACLE="${REDSTONE_ORACLE:-CBMGLKUQZVSAIL5CPDDAWSUY7MAKXISHMOZEVLMBUWBMFGHRJSR4WYRF}"
+REFLECTOR_ORACLE="${REFLECTOR_ORACLE:-CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M}"
+REDSTONE_BENJI_FEED=CCDM2U5E3SBMPJUQCBIER4BSFAVSJTY5I5EQEZIRDZSA3YOJH3YM4TW5
+# RedStone heartbeats are 12-24h; Reflector resolves every 5 minutes.
+REDSTONE_MAX_AGE=$((26 * 3600))
+REFLECTOR_MAX_AGE=$((15 * 60))
+
+# nav-deploy : the read-only NAV contract; USDC's route converts USDC quotes
+cmd_nav_deploy() {
+  ensure_identity "$ADMIN_IDENTITY"
+  [ -n "${RELEASE_TAG:-}" ] || cmd_build >/dev/null
+  local usdc nav
+  usdc="${USDC_CONTRACT:-$(get '.assets["USDC"].contract')}"
+  [ -n "$usdc" ] || { echo "no USDC asset; run add-asset USDC first or set USDC_CONTRACT" >&2; exit 1; }
+  nav="$(run_tx "deploy nav" stellar contract deploy \
+    --wasm "$(wasm_path alloy-nav)" --source-account "$ADMIN_IDENTITY" \
+    -- --admin "$(addr "$ADMIN_IDENTITY")" --usdc "$usdc")"
+  put --arg n "$nav" '.contracts.nav = $n'
+  echo "nav: $EXPERT/contract/$nav"
+}
+
+# Route JSON for a token: redstone | reflector | redstone-feed:CONTRACT
+route_json() {
+  local kind="$1" token="$2"
+  case "$kind" in
+    redstone) jq -nc --arg o "$REDSTONE_ORACLE" --arg t "$token" --argjson a "$REDSTONE_MAX_AGE" \
+      '{oracle: $o, feed: {Sep40: {Stellar: $t}}, quote: "Usd", max_age_secs: $a, source: "redstone"}' ;;
+    reflector) jq -nc --arg o "$REFLECTOR_ORACLE" --arg t "$token" --argjson a "$REFLECTOR_MAX_AGE" \
+      '{oracle: $o, feed: {Sep40: {Stellar: $t}}, quote: "Usdc", max_age_secs: $a, source: "reflector"}' ;;
+    redstone-feed:*) jq -nc --arg o "${kind#redstone-feed:}" --argjson a "$REDSTONE_MAX_AGE" \
+      '{oracle: $o, feed: "RedStoneFeed", quote: "Usd", max_age_secs: $a, source: "redstone"}' ;;
+    *) echo "route must be redstone, reflector or redstone-feed:CONTRACT" >&2; exit 1 ;;
+  esac
+}
+
+# nav-route CODE PRIMARY [SECONDARY]
+cmd_nav_route() {
+  local code="$1" primary="$2" secondary="${3:-}" nav token
+  nav="$(get .contracts.nav)"
+  token="$(get ".assets[\"$code\"].contract")"
+  [ -n "$nav" ] && [ -n "$token" ] || { echo "need .contracts.nav and asset $code" >&2; exit 1; }
+  invoke "nav route $code" "$nav" "$ADMIN_IDENTITY" set_route --token "$token" \
+    --primary "$(route_json "$primary" "$token")" \
+    ${secondary:+--secondary "$(route_json "$secondary" "$token")"} >/dev/null
+  echo "$code: $primary${secondary:+ then $secondary}"
+}
+
+cmd_mainnet_nav_routes() {
+  [ "$NETWORK" = mainnet ] || { echo "mainnet only" >&2; exit 1; }
+  cmd_nav_route XLM reflector redstone
+  cmd_nav_route USDC reflector redstone
+  cmd_nav_route USDY redstone
+  cmd_nav_route USTRY redstone reflector
+  cmd_nav_route CETES redstone reflector
+  cmd_nav_route BENJI "redstone-feed:$REDSTONE_BENJI_FEED"
+}
+
+# nav SYMBOL : oracle NAV per share, or each leg's price when one is unpriced
+cmd_nav() {
+  local nav fund code token
+  nav="$(get .contracts.nav)"
+  fund="$(fund_id "$1")"
+  if view "$nav" nav --fund "$fund"; then echo; return; fi
+  echo "no full NAV for $1; per leg:"
+  for token in $(view "$fund" components | jq -r '.[].token'); do
+    code="$(jq -r --arg t "$token" '.assets | to_entries[] | select(.value.contract == $t) | .key' "$DEPLOYMENTS")"
+    echo "  ${code:-$token}: $(view "$nav" price --token "$token" || echo unpriced)"
+  done
+}
+
 cmd_status() {
   local fund; fund="$(fund_id "$1")"
   echo "fund $1 $EXPERT/contract/$fund"
@@ -263,5 +337,9 @@ case "$command" in
   redeem) cmd_redeem "$@" ;;
   clawback-drill) cmd_clawback_drill "$@" ;;
   status) cmd_status "$@" ;;
-  *) sed -n 2,8p "$0"; echo "commands: build deploy set-fund-wasm issue-asset add-asset mainnet-assets buy shelf create-fund authorize-fund fund-investor allowlist issue redeem clawback-drill status"; exit 1 ;;
+  nav-deploy) cmd_nav_deploy ;;
+  nav-route) cmd_nav_route "$@" ;;
+  mainnet-nav-routes) cmd_mainnet_nav_routes ;;
+  nav) cmd_nav "$@" ;;
+  *) sed -n 2,8p "$0"; echo "commands: build deploy set-fund-wasm issue-asset add-asset mainnet-assets buy shelf create-fund authorize-fund fund-investor allowlist issue redeem clawback-drill status nav-deploy nav-route mainnet-nav-routes nav"; exit 1 ;;
 esac

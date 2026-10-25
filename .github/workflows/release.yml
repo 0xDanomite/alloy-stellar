@@ -1,6 +1,6 @@
 # Verified builds (SEP-0055). Mirrors stellar-expert/soroban-build-workflow
 # v25.1.0 step for step, with stellar-cli 25.2.0: soroban-sdk 29 refuses to
-# build under 25.1. Every v* tag builds both contracts from the tagged commit
+# build under 25.1. Every v* tag builds every contract from the tagged commit
 # with source_repo stamped into contractmeta, attests each wasm, attaches them
 # to one release, and registers the build with stellar.expert. Mainnet
 # deploys use these binaries, never a local build.
@@ -20,7 +20,7 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        package: [alloy-fund, alloy-platform]
+        package: [alloy-fund, alloy-platform, alloy-nav]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
