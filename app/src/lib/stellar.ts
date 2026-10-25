@@ -106,6 +106,18 @@ function clientCache<T>() {
   };
 }
 
+/** Retries transient network failures (public RPCs drop requests under bursts); never chain errors. */
+async function withRetry<T>(attempt: () => Promise<T>, tries = 4): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (err instanceof ChainError || i >= tries) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 400 * 2 ** i));
+    }
+  }
+}
+
 async function read<T>(tx: AT<T>): Promise<T> {
   const assembled = await tx;
   const simulation = assembled.simulation;
@@ -454,7 +466,7 @@ export function listFunds(fresh = false): Promise<Fund[]> {
   if (!fundsCache || fresh) {
     fundsCache = platformClient()
       .then(registeredFundIds)
-      .then((ids) => Promise.all(ids.map(loadFund)));
+      .then((ids) => Promise.all(ids.map((id) => withRetry(() => loadFund(id)))));
     fundsCache.catch(() => {
       fundsCache = null;
     });
