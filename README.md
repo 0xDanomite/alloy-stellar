@@ -1,30 +1,230 @@
 # Alloy on Stellar
 
-Multi-asset fund tokens for wealth managers, built from Stellar's tokenized
-treasuries, stablecoins and permissioned funds, with redemption no manager
-can switch off.
+**Live on Stellar Mainnet**
 
-> Work in progress at HackMeridian 2026 (Lisbon, 25 to 26 October).
-> This README is filled in as the build lands; the `arrival` tag marks the
-> state we walked in with.
+Multi-asset fund tokens for wealth managers: one share holds a basket of
+Stellar's tokenized treasuries, stablecoins and money-market funds,
+priced on chain by RedStone and Reflector, and redeemable for the assets
+underneath at any time.
+
+**Live app:** _deploying_ · **Pitch deck:** _coming_ · **New code since arrival:** [arrival...v0.2.0](https://github.com/0xDanomite/alloy-stellar/compare/arrival...v0.2.0)
+
+## At a glance
+
+| | In one line | Proof |
+| --- | --- | --- |
+| What we started with | Alloy live in production on Robinhood Chain and Polygon; nothing on Stellar | [alloy.neevstack.com](https://alloy.neevstack.com), [`arrival` tag](https://github.com/0xDanomite/alloy-stellar/tree/arrival) |
+| What we built at HackMeridian | Fund, platform and oracle NAV contracts, a CLI, an app, and a mainnet launch | [arrival...v0.2.0](https://github.com/0xDanomite/alloy-stellar/compare/arrival...v0.2.0) |
+| The problem we solve | Tokenized assets on Stellar come one per wrapper; managers can't hand a client one share of a portfolio | [How it works](docs/how-it-works.md) |
+| What we bring to Stellar | A multi-asset fund layer built for permissioned assets, ported from our EVM product | [Platform contract](https://stellar.expert/explorer/public/contract/CDV2FJ4J2IIFSUREC5VAHINVCSVZGOMIMXJHA32XD7H2CMY6DNXD6KDM) |
+| What makes it different | Issuer rails: funds that hold assets like BENJI, survive clawbacks, and never lock redemption | [Clawback drill on mainnet](https://stellar.expert/explorer/public/tx/f692a96a8aa7e1ec742ecb4fe1efbaef54e2c81bb5150d39e428e5949f893fa0) |
+| How it works | Soroban contracts hold the basket; NAV from RedStone and Reflector; SDEX path payments buy it | [aTRSY issue](https://stellar.expert/explorer/public/tx/94489b5be5bdba25d51a29212a2d96075f74de2eb2ad46be468767ad50eb7c66) |
+| Using the product | Pick a fund, buy the basket, deposit, hold one token, redeem any time | App (testnet and mainnet in one switch) |
+| Business model & traction | Platform for managers and issuers; live EVM venues today | [alloy.neevstack.com](https://alloy.neevstack.com) |
 
 ## What We Started With
 
 **Alloy is live in production on two EVM chains. None of it ran on Stellar.**
 
-- App: [alloy.neevstack.com](https://alloy.neevstack.com), our own
-  timelocked multi-asset fund protocol on Robinhood Chain
-  (4663) and Polygon (137): fund creator, mandate manager, fee splitter,
-  Chainlink and Pyth oracle adapters, a zap, a manager console and an
-  investor app.
-- The EVM codebase is private. This repository is new, public, and
-  everything in it was written at HackMeridian.
+- [alloy.neevstack.com](https://alloy.neevstack.com): our own timelocked
+  multi-asset fund protocol on Robinhood Chain (4663) and Polygon (137):
+  - fund creator, mandate manager and fee splitter;
+  - oracle adapters and a zap;
+  - a manager console and an investor app.
+- That codebase is private. This repository started empty at HackMeridian:
+  the [`arrival`](https://github.com/0xDanomite/alloy-stellar/tree/arrival)
+  tag is a README and a license.
+
+## What We Built at HackMeridian
+
+**A Stellar-native fund layer, written from scratch in Rust, live on mainnet
+with three funds and on-chain oracle NAV.**
+
+Before: no Alloy on Stellar.
+After: funds of real tokenized assets that anyone can verify, buy into and
+redeem on Stellar mainnet.
+
+| What we built | Where |
+| --- | --- |
+| Fund contract: SEP-41 basket shares, in-kind issue, redeem nobody can pause, units from live balances (clawback-safe) | [contracts/fund](contracts/fund) |
+| Platform contract: manager allowlist, asset shelf, permissioned assets force an investor allowlist | [contracts/platform](contracts/platform) |
+| NAV contract: per-asset RedStone and Reflector routes, staleness limits, fallback, divergence | [contracts/nav](contracts/nav) |
+| Verifiable builds: CI builds tagged releases from source and attests them (SEP-0055); deploys use only those binaries | [release workflow](.github/workflows/release.yml), [v0.2.0](https://github.com/0xDanomite/alloy-stellar/releases/tag/v0.2.0) |
+| CLI for the whole journey, mainnet and testnet | [scripts/alloy.sh](scripts/alloy.sh), [scripts/mainnet-launch.sh](scripts/mainnet-launch.sh) |
+| App: funds, oracle NAV, buy-the-basket, redeem, testnet/mainnet switch | [app](app) |
+
+What we learned about Stellar:
+
+- **Liquidity is on the order book.** Most tokenized-asset liquidity sits
+  on the classic order book (SDEX), which contracts can't trade on. So the
+  app buys the basket with path payments in one transaction, and the
+  contract only ever takes the assets in kind.
+- **Issuers gate holders.** Issuers like Franklin Templeton set
+  `AUTH_REQUIRED` and clawback. We designed around those flags, so a frozen
+  or clawed-back asset never traps the rest of a redemption.
+- **Fees moved under us.**
+  - Testnet storage rent spiked about 2,700x above mainnet during the
+    event.
+  - Mainnet's minimum fee for contract transactions was above the CLI's
+    default, so our launch scripts set their own fee.
+
+What we tested:
+
+- 44 contract tests, including a property test over random issue and
+  redeem sequences.
+- A mainnet fork test of the NAV contract against live oracle state.
+- A review against the SDF smart-contract security guides and the
+  community common-mistakes checklist from skills.stellar.org.
+- Full rehearsals on testnet, then the same scripts on mainnet.
+
+## The Problem We Solve
+
+**Wealth managers can't hand clients one share of a portfolio of Stellar's
+real-world assets. Alloy lets them build that fund, and lets investors
+always redeem it.**
+
+Stellar carries each of these in its own wrapper:
+
+- tokenized treasuries: Ondo's USDY, Etherfuse's USTRY and CETES;
+- stablecoins: Circle's USDC;
+- registered money-market funds: Franklin Templeton's BENJI.
+
+A manager who wants a diversified product today has to hold each asset
+separately for each client. With Alloy the manager defines the basket
+once, and investors get one SEP-41 token that holds it. They can redeem
+it for the underlying assets whenever they want.
+
+## What We Bring to Stellar
+
+**A fund layer built for permissioned assets: the piece above single-asset
+tokenization.**
+
+- **Ported from:** Alloy's EVM fund platform (Robinhood Chain, Polygon),
+  rewritten in Rust for Soroban rather than bridged.
+- **Uses:**
+  - Soroban contracts;
+  - Stellar Asset Contracts for USDC, USDY, USTRY, CETES and BENJI;
+  - issuer authorization and clawback flags;
+  - SDEX path payments;
+  - RedStone and Reflector oracles;
+  - Stellar Wallets Kit (Freighter, xBull, Lobstr).
+- **What Stellar gains:** a way to compose its tokenized assets into
+  managed products. Every new issuer becomes a new ingredient.
+
+## What Makes It Different
+
+**Funds that hold issuer-permissioned assets, stay honest through
+clawbacks, and never lock redemption.**
+
+- **Clawback-safe accounting.** Positions come from live balances, not
+  stored numbers. If an issuer claws back from the fund, value per share
+  falls pro rata and every redemption still pays out. We ran
+  [this drill on mainnet](https://stellar.expert/explorer/public/tx/f692a96a8aa7e1ec742ecb4fe1efbaef54e2c81bb5150d39e428e5949f893fa0).
+- **Issuer rules carry through.** A fund holding a permissioned asset must
+  run its own investor allowlist, and its manager can't switch it off.
+- **One frozen asset doesn't block the rest.** If an issuer freezes one
+  asset for a redeemer, that leg becomes a claim to collect later and the
+  rest pays out now.
+- **Ready for BENJI.**
+  [aBENJI](https://stellar.expert/explorer/public/contract/CCIQFFLE5X3T3SWWOET2N2LIPQLEUDTGLOGCDCBPDOM67ARH6A26MKG5)
+  holds a slot for real BENJI and opens the moment the issuer authorizes
+  the fund's address.
 
 ## How It Works
 
-[docs/how-it-works.md](docs/how-it-works.md): the accounting, the guarantees and
-the tests that hold them, issuer rails, oracle pricing, and verifiable
-builds.
+**Two core Soroban contracts plus a read-only oracle NAV contract, all
+deployed from an attested release.**
+
+```
+            platform (manager allowlist, asset shelf)
+                 |  create_fund
+     +-----------+-----------+
+   aTRSY       aBENJI      aRAIL        <- fund contracts (SEP-41 shares)
+     |  hold USDC, USDY, USTRY, CETES, XLM, BENJI, DEMOMMF via their SACs
+     |
+    nav  --reads-->  RedStone, Reflector (SEP-40 + RedStone feeds)
+
+app: SDEX path payments buy the basket -> fund.issue; fund.redeem pays it back
+```
+
+All on Stellar Mainnet:
+
+| Component | Stellar Expert |
+| --- | --- |
+| Platform | [CDV2FJ4J…6KDM](https://stellar.expert/explorer/public/contract/CDV2FJ4J2IIFSUREC5VAHINVCSVZGOMIMXJHA32XD7H2CMY6DNXD6KDM) |
+| NAV | [CBO42GCY…ZVIC](https://stellar.expert/explorer/public/contract/CBO42GCYFZPOM4ITSCKF7DXI7MBL5PMHRL4DBBEZ35HZLOWT76GLZVIC) |
+| aTRSY, Alloy Stellar Treasury | [CAIJVJBR…C7UB](https://stellar.expert/explorer/public/contract/CAIJVJBRUVJZFCN2TFCV6LTPZNMCJC62IP6ZDIFXFAMHUW5YMYYCC7UB) |
+| aBENJI, Alloy Treasury + BENJI | [CCIQFFLE…MKG5](https://stellar.expert/explorer/public/contract/CCIQFFLE5X3T3SWWOET2N2LIPQLEUDTGLOGCDCBPDOM67ARH6A26MKG5) |
+| aRAIL, Issuer Rails Demo | [CCBONNER…PWJJ](https://stellar.expert/explorer/public/contract/CCBONNERPF2UQGMRTOJELOSA574VDY6XFRNKLLVBZNLLEULZ65UYPWJJ) |
+| DEMOMMF (demo asset with BENJI's flags) | [asset](https://stellar.expert/explorer/public/asset/DEMOMMF-GAPHKRSKDAJYL6FYCRBIIY4M6QP32CM6WOKPNGOOKZ3EQ52LW2K4Q2HM) |
+| Seed issue of aTRSY | [tx](https://stellar.expert/explorer/public/tx/94489b5be5bdba25d51a29212a2d96075f74de2eb2ad46be468767ad50eb7c66) |
+| Issuer authorizes aRAIL | [tx](https://stellar.expert/explorer/public/tx/73cbec3c624226ff92ea1ff33f2b72f5c99ec1e59d4553eec9d5ac3d5824a291) |
+| Clawback drill (1.0 to 0.75 DEMOMMF per share) | [tx](https://stellar.expert/explorer/public/tx/f692a96a8aa7e1ec742ecb4fe1efbaef54e2c81bb5150d39e428e5949f893fa0) |
+| Redeem after the clawback | [tx](https://stellar.expert/explorer/public/tx/1fbd0e1a0d80303d243d60282a2b1360c9760e4e6ad21b3d5a71084a094062f0) |
+
+Every transaction from the launch is in
+[deployments/mainnet.json](deployments/mainnet.json).
+
+The contracts come from the attested
+[v0.2.0](https://github.com/0xDanomite/alloy-stellar/releases/tag/v0.2.0)
+release. To verify one:
+
+```
+gh attestation verify alloy-fund_v0.1.0.wasm -R 0xDanomite/alloy-stellar
+```
+
+Details: [docs/how-it-works.md](docs/how-it-works.md).
+
+## Using the Product
+
+**Pick a fund, buy the basket, deposit, and hold one token you can redeem
+any time.**
+
+1. Open the app and pick a fund. Each asset in it shows its oracle price,
+   that price's source and age, and the live market price as a
+   cross-check.
+2. Connect a wallet (Freighter, xBull or Lobstr). "Buy the basket" buys
+   every asset on the Stellar DEX in one transaction.
+3. "Deposit" sends the basket into the fund and mints your shares.
+4. "Redeem" returns the basket, any time.
+
+The switch in the header moves between mainnet and testnet.
+
+## Business Model & Traction
+
+**Alloy is the fund layer that managers, banks and issuers build on.**
+
+- **Before HackMeridian:** live in production on Robinhood Chain and
+  Polygon ([alloy.neevstack.com](https://alloy.neevstack.com)).
+- **On Stellar:**
+  - Managers pay platform fees to launch and run funds, alongside their
+    own management fees.
+  - Banks and wealth managers get white-label model-portfolio rails.
+  - Issuers get distribution: their asset inside managed portfolios, with
+    their holder rules enforced.
+- **Next steps:**
+  1. An independent audit.
+  2. Streaming fees and a timelocked admin.
+  3. Manager rebalancing through Soroswap, with minimums checked against
+     the oracles.
+  4. Issuer authorizations, starting with BENJI.
+  5. Private, ZK-verified investor allowlists.
+
+## Run It
+
+1. Install Rust with the `wasm32v1-none` target, stellar-cli 25.2+, Node 22
+   and jq.
+2. Copy `.env.example` to `.env`.
+3. Run the tests with `cargo test`, and the app with
+   `cd app && npm ci && npm run dev`.
+4. Rehearse the full journey on testnet with `scripts/testnet-launch.sh`
+   (throwaway keys, funded from friendbot).
+5. On mainnet, run `scripts/mainnet-launch.sh`, using identities in your
+   local `stellar keys` and the attested release.
+
+## Team
+
+Dan McQuillan: founder of Alloy.
 
 ## License
 
