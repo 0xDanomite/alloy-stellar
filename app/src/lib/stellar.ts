@@ -14,9 +14,9 @@ import { xBullModule } from "@creit.tech/stellar-wallets-kit/modules/xbull";
 import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
 import { deployments, endpoints, expert, network } from "./config";
 import { ONE, toDecimalString, unitsToNumber } from "./format";
+import { CIRCLE_USDC_ISSUER, DEMO_ISSUER_LABEL, PINNED_MAINNET_ISSUERS, UNVERIFIED_ISSUER_LABEL } from "./issuers";
 
-/** Circle USDC on mainnet, pinned: lookalike issuers are common. */
-const CIRCLE_USDC = new Asset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN");
+const CIRCLE_USDC = new Asset("USDC", CIRCLE_USDC_ISSUER);
 const SLIPPAGE_BPS = 200n;
 const TX_TIMEOUT_SECONDS = 180;
 
@@ -157,7 +157,8 @@ export function explain(error: unknown): string {
     const message = HORIZON_CODES[code];
     if (message) return message;
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const kitMessage = field(error, "message");
+  const message = error instanceof Error ? error.message : typeof kitMessage === "string" ? kitMessage : String(error);
   if (/reject|declin|cancel/i.test(message)) return "You declined the request in your wallet.";
   if (/Error\(Contract|HostError|trustline|authorized/.test(message)) return explainRaw(message);
   return message || "Something went wrong. Nothing was sent.";
@@ -184,7 +185,9 @@ export interface AssetInfo {
   code: string;
   issuer: string | null;
   asset: Asset;
-  domain: string | null;
+  /** Who stands behind the asset: a pinned domain, "demo issuer", "unverified issuer" or "native". */
+  issuerLabel: string;
+  verified: boolean;
   authRequired: boolean;
   revocable: boolean;
   clawback: boolean;
@@ -213,16 +216,19 @@ async function loadAssetInfo(token: string): Promise<AssetInfo> {
   const known = Object.values(deployments?.assets ?? {}).find((a) => a.contract === token);
   const asset = parseAsset(known?.asset ?? (await read((await sacClient(token)).name())));
   if (asset.isNative()) {
-    return { token, code: "XLM", issuer: null, asset, domain: "stellar.org", authRequired: false, revocable: false, clawback: false };
+    return { token, code: "XLM", issuer: null, asset, issuerLabel: "native", verified: true, authRequired: false, revocable: false, clawback: false };
   }
   const issuer = asset.getIssuer() ?? "";
+  const pinned = isMainnet ? PINNED_MAINNET_ISSUERS[issuer] : undefined;
+  const ours = known?.issuer_identity !== undefined;
   const account = await horizon.accounts().accountId(issuer).call().catch(() => null);
   return {
     token,
     code: asset.getCode(),
     issuer,
     asset,
-    domain: account?.home_domain || null,
+    issuerLabel: pinned ?? (ours ? DEMO_ISSUER_LABEL : UNVERIFIED_ISSUER_LABEL),
+    verified: pinned !== undefined || ours,
     authRequired: account?.flags.auth_required ?? false,
     revocable: account?.flags.auth_revocable ?? false,
     clawback: account?.flags.auth_clawback_enabled ?? false,
@@ -342,9 +348,10 @@ export function listFunds(fresh = false): Promise<Fund[]> {
   return fundsCache;
 }
 
-export async function findFund(symbol: string, fresh = false): Promise<Fund | null> {
+/** Resolves a route by contract ID, and only among funds the platform registered. */
+export async function findFund(contractId: string, fresh = false): Promise<Fund | null> {
   const funds = await listFunds(fresh);
-  return funds.find((f) => f.symbol.toLowerCase() === symbol.toLowerCase()) ?? null;
+  return funds.find((f) => f.id === contractId) ?? null;
 }
 
 // ---------------------------------------------------------------- positions
@@ -597,6 +604,25 @@ function initKit() {
   StellarWalletsKit.init({
     modules: [new FreighterModule(), new xBullModule(), new LobstrModule()],
     network: isMainnet ? KitNetworks.PUBLIC : KitNetworks.TESTNET,
+    theme: {
+      background: "var(--background)",
+      "background-secondary": "var(--secondary)",
+      "foreground-strong": "var(--foreground)",
+      foreground: "var(--foreground)",
+      "foreground-secondary": "var(--muted-foreground)",
+      primary: "var(--primary)",
+      "primary-foreground": "var(--primary-foreground)",
+      transparent: "rgba(0, 0, 0, 0)",
+      lighter: "var(--card)",
+      light: "var(--secondary)",
+      "light-gray": "var(--border)",
+      gray: "var(--muted-foreground)",
+      danger: "var(--destructive)",
+      border: "var(--border)",
+      shadow: "var(--shadow-overlay)",
+      "border-radius": "1rem",
+      "font-family": "Switzer, ui-sans-serif, system-ui, sans-serif",
+    },
   });
   kitReady = true;
 }

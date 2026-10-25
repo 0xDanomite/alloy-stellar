@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import { complianceLabel, IssuerFlags, issuerLabel, strandColor } from "../components/fund-bits";
+import { complianceLabel, IssuerFlags, IssuerName, strandColor } from "../components/fund-bits";
 import { InvestPanel } from "../components/InvestPanel";
 import { RedeemPanel } from "../components/RedeemPanel";
 import { CopyId, Figure, Usd } from "../components/ui";
@@ -25,8 +25,8 @@ function Composition({ fund }: { fund: Fund }) {
         {fund.components.map((leg, i) => {
           const legValue = leg.priceUsdc === null ? null : unitsToNumber(leg.unitsPerShare) * leg.priceUsdc;
           return (
-            <li key={leg.token} className="grid grid-cols-2 gap-x-4 gap-y-1 px-5 py-4 md:grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr] md:items-center">
-              <div className="col-span-2 flex min-w-0 items-start gap-3 md:col-span-1">
+            <li key={leg.token} className="grid grid-cols-1 gap-x-6 gap-y-1 px-5 py-4 sm:grid-cols-2 md:grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr] md:items-center">
+              <div className="mb-1 flex min-w-0 items-start gap-3 sm:col-span-2 md:col-span-1 md:mb-0">
                 <span className="mt-1 h-8 w-1 shrink-0 rounded-full" style={{ background: strandColor(i) }} aria-hidden />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-baseline gap-x-2">
@@ -37,7 +37,7 @@ function Composition({ fund }: { fund: Fund }) {
                     ) : (
                       <span className="font-medium">{leg.code}</span>
                     )}
-                    <span className="text-[0.8125rem] text-muted-foreground">{issuerLabel(leg)}</span>
+                    <IssuerName leg={leg} />
                   </div>
                   <IssuerFlags leg={leg} />
                   {leg.shelfStatus === "Permissioned" && leg.fundAuthorized && (
@@ -87,10 +87,10 @@ function AwaitingIssuer({ fund }: { fund: Fund }) {
 }
 
 export function FundPage() {
-  const { symbol = "" } = useParams();
+  const { id = "" } = useParams();
   const { address } = useWallet();
   const [version, setVersion] = useState(0);
-  const fund = useAsync(() => findFund(symbol, version > 0), deployments ? symbol : null, version);
+  const fund = useAsync(() => findFund(id, version > 0), deployments ? id : null, version);
   const f = fund.data;
   const position = useAsync(
     () => (f && address ? loadPosition(f, address) : Promise.resolve(null)),
@@ -100,11 +100,11 @@ export function FundPage() {
   const [tab, setTab] = useState<"invest" | "redeem">("invest");
   const refresh = () => setVersion((v) => v + 1);
 
-  if (fund.data === null) return <NotFound message={`The platform has no fund called ${symbol}.`} />;
+  if (fund.data === null) return <NotFound message="The Alloy platform has no fund at this address." />;
   if (fund.error != null && !f) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-24 sm:px-6">
-        <h1 className="text-title">Couldn't load {symbol}</h1>
+        <h1 className="text-title">Couldn't load this fund</h1>
         <p className="mt-2 text-muted-foreground">{explain(fund.error)}</p>
         <button type="button" onClick={fund.reload} className="mt-4 text-primary underline-offset-4 hover:underline">
           Try again
@@ -123,7 +123,7 @@ export function FundPage() {
         <div className="min-w-0 space-y-8">
           <header>
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="font-display text-[clamp(2.25rem,6vw,3.25rem)] leading-none font-semibold">{f?.symbol ?? symbol}</h1>
+              <h1 className="font-display text-[clamp(2.25rem,6vw,3.25rem)] leading-none font-semibold">{f ? f.symbol : <span className="skeleton w-40">fund</span>}</h1>
               {f && <span className="rounded-full bg-secondary px-2.5 py-0.5 text-[0.75rem] font-medium">{complianceLabel(f)}</span>}
             </div>
             <p className="mt-2 text-[1.0625rem] text-muted-foreground">{f ? f.name : <span className="skeleton w-48">loading</span>}</p>

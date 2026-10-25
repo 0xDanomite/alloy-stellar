@@ -4,6 +4,8 @@ export interface DeploymentAsset {
   asset: string;
   contract: string;
   status: "open" | "permissioned";
+  /** Set only for assets we issued ourselves (testnet stand-ins, the demo asset). */
+  issuer_identity?: string;
 }
 
 export interface DeploymentTx {

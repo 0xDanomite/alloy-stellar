@@ -1,11 +1,13 @@
 import { Link } from "react-router-dom";
 import { formatAmount } from "../lib/format";
+import { DEMO_ISSUER_LABEL } from "../lib/issuers";
 import type { Fund, FundComponent } from "../lib/stellar";
 import { Usd } from "./ui";
 
-export function issuerLabel(leg: Pick<FundComponent, "issuer" | "domain">): string {
-  if (!leg.issuer) return "native";
-  return leg.domain ?? "demo issuer";
+export function IssuerName({ leg }: { leg: Pick<FundComponent, "issuerLabel" | "verified"> }) {
+  return (
+    <span className={`text-[0.8125rem] ${leg.verified ? "text-muted-foreground" : "text-warning"}`}>{leg.issuerLabel}</span>
+  );
 }
 
 export function complianceLabel(fund: Fund): string {
@@ -19,7 +21,13 @@ export function IssuerFlags({ leg }: { leg: FundComponent }) {
     leg.revocable && !leg.authRequired && "revocable",
   ].filter(Boolean);
   if (!flags.length) return null;
-  return <span className="text-[0.8125rem] text-muted-foreground">{flags.join(", ")}</span>;
+  const benjiFlags = leg.issuerLabel === DEMO_ISSUER_LABEL && leg.authRequired && leg.revocable && leg.clawback;
+  return (
+    <span className="block text-[0.8125rem] text-muted-foreground">
+      {flags.join(", ")}
+      {benjiFlags && ", the same flags as BENJI"}
+    </span>
+  );
 }
 
 const STRAND_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -31,7 +39,7 @@ export function strandColor(i: number): string {
 export function FundCard({ fund }: { fund: Fund }) {
   return (
     <Link
-      to={`/fund/${fund.symbol}`}
+      to={`/fund/${fund.id}`}
       className="group flex flex-col rounded-xl border bg-card p-5 transition-colors hover:border-primary/50 sm:p-6"
     >
       <div className="flex items-start justify-between gap-4">
@@ -50,7 +58,9 @@ export function FundCard({ fund }: { fund: Fund }) {
             <span className="h-4 w-1 shrink-0 rounded-full" style={{ background: strandColor(i) }} aria-hidden />
             <span className="min-w-0 flex-1">
               <span className="font-medium">{leg.code}</span>
-              <span className="ml-2 text-[0.8125rem] text-muted-foreground">{issuerLabel(leg)}</span>
+              <span className="ml-2">
+                <IssuerName leg={leg} />
+              </span>
             </span>
             <span className="num text-[0.875rem]">{formatAmount(leg.unitsPerShare)}</span>
           </li>
