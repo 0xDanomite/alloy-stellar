@@ -26,7 +26,8 @@ export function NetworkBadge() {
   return (
     <span className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-label whitespace-nowrap">
       <span className={`size-2 rounded-full ${live ? "bg-success" : "bg-warning"}`} aria-hidden />
-      {live ? "Live on Stellar Mainnet" : "Testnet preview"}
+      <span className="sm:hidden">{live ? "Mainnet" : "Testnet"}</span>
+      <span className="hidden sm:inline">{live ? "Live on Stellar Mainnet" : "Testnet preview"}</span>
     </span>
   );
 }

@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
 import { FundCard, SkeletonCard, strandColor } from "../components/fund-bits";
-import { NetworkBadge } from "../components/ui";
 import { deployments, links, network } from "../lib/config";
 import { explain, listFunds, type Fund } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
@@ -80,10 +79,7 @@ export function Landing() {
     <>
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pt-12 pb-16 sm:px-6 lg:grid-cols-[1.1fr_1fr] lg:pt-20 lg:pb-24">
         <div>
-          <span className="sm:hidden">
-            <NetworkBadge />
-          </span>
-          <h1 className="mt-5 font-display text-[clamp(2.25rem,6vw,3.75rem)] leading-[1.02] font-semibold sm:mt-0">
+          <h1 className="font-display text-[clamp(2.25rem,6vw,3.75rem)] leading-[1.02] font-semibold">
             Portfolios built from Stellar's real-world assets.
           </h1>
           <p className="mt-6 max-w-[34rem] text-[1.0625rem] text-muted-foreground">

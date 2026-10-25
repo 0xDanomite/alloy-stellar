@@ -1,6 +1,6 @@
 import { deployments, expert, links, network } from "../lib/config";
 import { shortId } from "../lib/format";
-import { CopyId, NetworkBadge } from "../components/ui";
+import { CopyId } from "../components/ui";
 import type { DeploymentTx } from "../lib/config";
 
 const GROUPS: { title: string; blurb: string; match: RegExp }[] = [
@@ -32,8 +32,7 @@ export function Built() {
   const groups = group(deployments?.txs ?? []);
   return (
     <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 lg:py-16">
-      <NetworkBadge />
-      <h1 className="mt-5 font-display text-[clamp(2rem,5vw,3rem)] leading-[1.05] font-semibold">
+      <h1 className="font-display text-[clamp(2rem,5vw,3rem)] leading-[1.05] font-semibold">
         What we built at HackMeridian
       </h1>
       <p className="mt-4 max-w-[40rem] text-[1.0625rem] text-muted-foreground">

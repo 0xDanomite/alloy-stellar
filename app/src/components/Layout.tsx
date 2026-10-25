@@ -16,7 +16,8 @@ function WalletButton() {
   }
   return (
     <Button onClick={connect} busy={connecting}>
-      Connect wallet
+      <span className="sm:hidden">Connect</span>
+      <span className="hidden sm:inline">Connect wallet</span>
     </Button>
   );
 }
@@ -31,9 +32,7 @@ export function Layout() {
             <AlloyMark className="h-5 w-auto" />
             <span className="font-display text-[1.0625rem] font-semibold">Alloy</span>
           </Link>
-          <span className="hidden sm:inline-flex">
-            <NetworkBadge />
-          </span>
+          <NetworkBadge />
           <nav className="ml-auto flex items-center gap-1">
             <NavLink
               to="/built"
