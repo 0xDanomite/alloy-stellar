@@ -71,9 +71,39 @@ Most tokenized-asset liquidity on Stellar is on the built-in order book
 path payments in one classic transaction (direct or via Circle USDC only),
 then calls `issue` in a second. Two signatures, one flow.
 
+## Pricing
+
+Funds never need a price: issue and redeem move assets in proportion to
+what the fund holds, so no oracle can make a share mint cheap or redeem
+rich. Prices are for showing what a share is worth, and they come from a
+separate read-only `nav` contract that holds nothing and only calls fund
+views (`components`, `units_per_share`, `total_supply`).
+
+- Each asset has an admin-set primary route and an optional secondary,
+  each naming an oracle contract, what to ask it for, its quote unit and
+  a maximum age. Mainnet routes: RWAs (USDY, USTRY, CETES) on
+  [RedStone](https://redstone.finance) first and
+  [Reflector](https://reflector.network) second where it covers them;
+  XLM and USDC on Reflector first and RedStone second. BENJI is on neither
+  SEP-40 contract, so it reads RedStone's single-feed BENJI contract
+  (`BENJI_ETHEREUM_FUNDAMENTAL`, the fund's published NAV).
+- A primary that is stale, missing, future-dated, or fails in any way
+  (a trap, a wrong shape, an overflow) falls back to the secondary. If
+  neither is fresh the asset is unpriced, and so is the fund: `nav`
+  refuses rather than skip a leg.
+- Staleness limits follow each feed's heartbeat: 26 hours for RedStone
+  (12 to 24 hour updates), 15 minutes for Reflector (5 minute updates).
+- When both oracles are fresh, `price` reports how far apart they are in
+  basis points. Reflector quotes in USDC; those prices are converted with
+  RedStone's USDC/USD price, never assumed to be 1:1.
+- Prices are USD with 8 decimals. `nav(fund)` returns per-share value for
+  one whole share, each leg's units, price, value, source and age, and the
+  fund total. The app shows the SDEX price beside it as a market
+  cross-check and flags legs more than 2% apart.
+
 ## Builds you can verify
 
-Every `v*` tag builds both contracts in CI from the tagged commit, stamps
+Every `v*` tag builds every contract in CI from the tagged commit, stamps
 `source_repo` into the WASM, attests it (SEP-0055) and attaches it to a
 GitHub release. Mainnet deploys download that release and check its
 attestation first:
@@ -90,6 +120,8 @@ gh attestation verify alloy-fund_v0.1.0.wasm -R 0xDanomite/alloy-stellar
   closes the allowlist).
 - `redeem` takes no minimum-out; per-share value can only fall between
   quote and execution through an issuer clawback or freeze.
+- Oracle routes are set by a single admin key, like the platform; a
+  wrong route mislabels share value on screen but cannot move assets.
 - An asset reclassified `Permissioned` after a fund opened does not force
   that fund back to an allowlist. The issuer's asset contract still refuses
   unauthorized holders.
