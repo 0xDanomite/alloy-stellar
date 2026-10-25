@@ -20,7 +20,10 @@ case "$NETWORK" in
     EXPERT="https://stellar.expert/explorer/testnet"
     ;;
   mainnet)
-    export STELLAR_RPC_URL="${MAINNET_RPC_URL:-https://mainnet.sorobanrpc.com}"
+    export STELLAR_RPC_URL="${MAINNET_RPC_URL:-https://rpc.lightsail.network}"
+    # Mainnet's Soroban inclusion fee runs above the CLI's 100-stroop default;
+    # under it, transactions wait out their timeout instead of landing.
+    export STELLAR_INCLUSION_FEE="${STELLAR_INCLUSION_FEE:-1000}"
     export STELLAR_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
     HORIZON_URL="https://horizon.stellar.org"
     EXPERT="https://stellar.expert/explorer/public"
