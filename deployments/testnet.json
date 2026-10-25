@@ -1,8 +1,8 @@
 {
   "contracts": {
-    "platform": "CDRMKKWRX6FFBG6NLOVANDO4MIOZZ7HQKLL4V4L6ET5HQEKPBGSA2UKK",
+    "platform": "CAZJIYK3WGFJPNSB3TSUIPDZ4AP5MFRS6SHWVUY7QJONB3BNTI4IP75B",
     "funds": {
-      "aDEMO": "CCOV6VZSI6LIHMJFTI2DAAWAJ5R7JPI7AD37BQUZWZ524PX4PEQBK6C6"
+      "aDEMO": "CBWGXZ6P2CHWPYAROQOQPN4TUX7VPJ4NR4MXWSSRGS22KXJKLITE3KHG"
     }
   },
   "assets": {
@@ -26,96 +26,77 @@
   },
   "txs": [
     {
+      "label": "upload fund wasm",
+      "hash": "14c2e008d55ac16d36b60dedcef88517b54f726194e93c0e14ab349fa754ffc3",
+      "url": "https://stellar.expert/explorer/testnet/tx/14c2e008d55ac16d36b60dedcef88517b54f726194e93c0e14ab349fa754ffc3"
+    },
+    {
       "label": "deploy platform",
-      "hash": "31e96c6e39e5129d11b4aec393d8ab81a94c232607529fe3687cc1be32bb55a2",
-      "url": "https://stellar.expert/explorer/testnet/tx/31e96c6e39e5129d11b4aec393d8ab81a94c232607529fe3687cc1be32bb55a2"
+      "hash": "655c118f54e330cf1f1d366c51a23826ba06d11678f45a795d31b8ad51e5d51b",
+      "url": "https://stellar.expert/explorer/testnet/tx/655c118f54e330cf1f1d366c51a23826ba06d11678f45a795d31b8ad51e5d51b"
     },
     {
       "label": "allowlist manager",
-      "hash": "83ab3dc758c2845fa8c4bdad6b56b32d163db8824dfdcee1bf9ce9db556ef9a2",
-      "url": "https://stellar.expert/explorer/testnet/tx/83ab3dc758c2845fa8c4bdad6b56b32d163db8824dfdcee1bf9ce9db556ef9a2"
+      "hash": "f0dffe2a432699d27f3c2d350eed18fc55252b3b47cd1522184b6316548fa38c",
+      "url": "https://stellar.expert/explorer/testnet/tx/f0dffe2a432699d27f3c2d350eed18fc55252b3b47cd1522184b6316548fa38c"
     },
     {
       "label": "issuer flags TBILL",
-      "hash": "5d1526c0d9104e8fba3d7317c1c5132d2d2509d939d145c1488638730381b40a",
-      "url": "https://stellar.expert/explorer/testnet/tx/5d1526c0d9104e8fba3d7317c1c5132d2d2509d939d145c1488638730381b40a"
+      "hash": "706740be6198af766945e0f92a6db5390579b7a52668d2c5d09d45a00c582474",
+      "url": "https://stellar.expert/explorer/testnet/tx/706740be6198af766945e0f92a6db5390579b7a52668d2c5d09d45a00c582474"
     },
     {
       "label": "issuer flags DEMOMMF",
-      "hash": "52916096c09e6f051a932e48a2ffcf8e0a5a4001e16186460141426cd98e043f",
-      "url": "https://stellar.expert/explorer/testnet/tx/52916096c09e6f051a932e48a2ffcf8e0a5a4001e16186460141426cd98e043f"
+      "hash": "d5f67506eb8c2bc8f784668cc156c65061135f67f533ec8373301ede87f395a5",
+      "url": "https://stellar.expert/explorer/testnet/tx/d5f67506eb8c2bc8f784668cc156c65061135f67f533ec8373301ede87f395a5"
     },
     {
       "label": "shelf DEMOMMF Permissioned",
-      "hash": "18d8c6a1e18e7e2deb5967dac130362f35f0ea34da6f6c9a1da2add6a9a327b8",
-      "url": "https://stellar.expert/explorer/testnet/tx/18d8c6a1e18e7e2deb5967dac130362f35f0ea34da6f6c9a1da2add6a9a327b8"
+      "hash": "bcf6e8b6317ef129bf1a9cb7dc90144b1ef02424c5ea52702c0a8479c6005b99",
+      "url": "https://stellar.expert/explorer/testnet/tx/bcf6e8b6317ef129bf1a9cb7dc90144b1ef02424c5ea52702c0a8479c6005b99"
     },
     {
       "label": "shelf TBILL Open",
-      "hash": "b9eda736f6f8ef1f6c1987e22147ac6150829248cff826628c556e4c739f6782",
-      "url": "https://stellar.expert/explorer/testnet/tx/b9eda736f6f8ef1f6c1987e22147ac6150829248cff826628c556e4c739f6782"
+      "hash": "f1c2da5933ce46c40ac048e8ca8608630fa5f6765a3811ffafde284d480c3a7c",
+      "url": "https://stellar.expert/explorer/testnet/tx/f1c2da5933ce46c40ac048e8ca8608630fa5f6765a3811ffafde284d480c3a7c"
     },
     {
       "label": "shelf XLM Open",
-      "hash": "a67437ef8d8d5fc809d214e7c3ea1af3d73cac5b1c541993063617362e6c0d2b",
-      "url": "https://stellar.expert/explorer/testnet/tx/a67437ef8d8d5fc809d214e7c3ea1af3d73cac5b1c541993063617362e6c0d2b"
+      "hash": "a7395fb0bcc29617b66ad1889dbe2de179ff95ccdd36138cd84ada2a82ef6615",
+      "url": "https://stellar.expert/explorer/testnet/tx/a7395fb0bcc29617b66ad1889dbe2de179ff95ccdd36138cd84ada2a82ef6615"
     },
     {
       "label": "create fund aDEMO",
-      "hash": "64eec0f90a5515d0cfd617cc4cb3c4e776ccd18d7df0c321bec07158ddfcd335",
-      "url": "https://stellar.expert/explorer/testnet/tx/64eec0f90a5515d0cfd617cc4cb3c4e776ccd18d7df0c321bec07158ddfcd335"
-    },
-    {
-      "label": "trustline TBILL",
-      "hash": "b192144fd870b056726c6fbf9b38eaa604fd980d19b95fceb97ecbd2603efeed",
-      "url": "https://stellar.expert/explorer/testnet/tx/b192144fd870b056726c6fbf9b38eaa604fd980d19b95fceb97ecbd2603efeed"
-    },
-    {
-      "label": "pay investor TBILL",
-      "hash": "956f0e9c1ce4ee0b602d32c9423e97f68165c02a3c806d19fc9d3dcd2b41e0a5",
-      "url": "https://stellar.expert/explorer/testnet/tx/956f0e9c1ce4ee0b602d32c9423e97f68165c02a3c806d19fc9d3dcd2b41e0a5"
-    },
-    {
-      "label": "trustline DEMOMMF",
-      "hash": "c12b0d177a163ce8c924fe8e21ebe43608d8e588431b895e11871e0bf0d5861f",
-      "url": "https://stellar.expert/explorer/testnet/tx/c12b0d177a163ce8c924fe8e21ebe43608d8e588431b895e11871e0bf0d5861f"
-    },
-    {
-      "label": "issuer authorizes investor for DEMOMMF",
-      "hash": "5b5ef562628e421cd10ef50defffb701a51d43787596563bd9b2f88e5cc4d68a",
-      "url": "https://stellar.expert/explorer/testnet/tx/5b5ef562628e421cd10ef50defffb701a51d43787596563bd9b2f88e5cc4d68a"
-    },
-    {
-      "label": "pay investor DEMOMMF",
-      "hash": "740e39cee3a07c0dfb6ce8769ddad23783eb4b1b5a66ca0ff4cd662daee4f131",
-      "url": "https://stellar.expert/explorer/testnet/tx/740e39cee3a07c0dfb6ce8769ddad23783eb4b1b5a66ca0ff4cd662daee4f131"
+      "hash": "7447dc92d670f1ef9a06ff2fbeb2ca9a0607e98aaecbd9d6493247c14e022f43",
+      "url": "https://stellar.expert/explorer/testnet/tx/7447dc92d670f1ef9a06ff2fbeb2ca9a0607e98aaecbd9d6493247c14e022f43"
     },
     {
       "label": "allowlist investor on aDEMO",
-      "hash": "8bd2198901a44c5e80a8aa4f9f05fe82c0ac2ad98924301628615a5012b984f8",
-      "url": "https://stellar.expert/explorer/testnet/tx/8bd2198901a44c5e80a8aa4f9f05fe82c0ac2ad98924301628615a5012b984f8"
+      "hash": "e40db1d49e288ff803f5200a6f43f5034b79ac164d9bb165e74ac53434dcffba",
+      "url": "https://stellar.expert/explorer/testnet/tx/e40db1d49e288ff803f5200a6f43f5034b79ac164d9bb165e74ac53434dcffba"
     },
     {
       "label": "issuer authorizes fund for DEMOMMF",
-      "hash": "917eb3d4f69fd2ecbfb15a5cf8389e7b61d8340b1005e039d20ef6c0de2de6ad",
-      "url": "https://stellar.expert/explorer/testnet/tx/917eb3d4f69fd2ecbfb15a5cf8389e7b61d8340b1005e039d20ef6c0de2de6ad"
+      "hash": "a7dd3ce7f1ccfa77c7ccf92b9f4681a3a3e9aecd2ef46b2118c7b7d43b93afb8",
+      "url": "https://stellar.expert/explorer/testnet/tx/a7dd3ce7f1ccfa77c7ccf92b9f4681a3a3e9aecd2ef46b2118c7b7d43b93afb8"
     },
     {
       "label": "issue aDEMO",
-      "hash": "8fe189f2cf969d0d25c5c3c275c98eb45b1ed9722b76de5df9099f83c435e7c3",
-      "url": "https://stellar.expert/explorer/testnet/tx/8fe189f2cf969d0d25c5c3c275c98eb45b1ed9722b76de5df9099f83c435e7c3"
+      "hash": "8e62508893b6d9f98dabe062f55d32c0369f84c5291387cf99df81e9f5814498",
+      "url": "https://stellar.expert/explorer/testnet/tx/8e62508893b6d9f98dabe062f55d32c0369f84c5291387cf99df81e9f5814498"
     },
     {
       "label": "clawback drill DEMOMMF from aDEMO",
-      "hash": "4cbccc269a7ea275f9e444b11a225137af69f6efced959a2328883ba04f3b47e",
-      "url": "https://stellar.expert/explorer/testnet/tx/4cbccc269a7ea275f9e444b11a225137af69f6efced959a2328883ba04f3b47e"
+      "hash": "d8a9d8c639068edd537c091bd692d6ec8f01af2c4da4327be72606fa5e1c7b77",
+      "url": "https://stellar.expert/explorer/testnet/tx/d8a9d8c639068edd537c091bd692d6ec8f01af2c4da4327be72606fa5e1c7b77"
     },
     {
       "label": "redeem aDEMO",
-      "hash": "94a4682fa0aa28c3b6785f00eec5f97d4a5441cfc694186e6976ce8b2407c327",
-      "url": "https://stellar.expert/explorer/testnet/tx/94a4682fa0aa28c3b6785f00eec5f97d4a5441cfc694186e6976ce8b2407c327"
+      "hash": "ce4cf11218f79f9777df168ab01d0738fc9af08d3d1fc3c4cc7bcea9bd2ab655",
+      "url": "https://stellar.expert/explorer/testnet/tx/ce4cf11218f79f9777df168ab01d0738fc9af08d3d1fc3c4cc7bcea9bd2ab655"
     }
   ],
-  "fund_wasm": "c418e4e30bc9ffc481f8dc0bd83219c260b37af1e1b176eb88cea2d0e9b98758",
-  "admin": "GBQMIVPBVDVZFCK6MQVSNC7I3HJQ5PYES27NJVKZKS7EUVDQZ2MY6QJX"
+  "fund_wasm": "c8fb9924c0f70d51c1d04e693e9d2c6f8b43c41656d9530dea3539d0c9efec57",
+  "admin": "GBQMIVPBVDVZFCK6MQVSNC7I3HJQ5PYES27NJVKZKS7EUVDQZ2MY6QJX",
+  "release": "local"
 }

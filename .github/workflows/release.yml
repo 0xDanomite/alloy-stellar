@@ -24,6 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: stellar/stellar-cli@28484880988199233a7e8e87c97cb12dac323cb3 # v25.2.0
+        with:
+          version: 25.2.0
       - name: Build
         run: |
           stellar contract build --optimize --package "${{ matrix.package }}" \
