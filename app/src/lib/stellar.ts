@@ -57,7 +57,6 @@ interface SacMethods {
 export const horizon = new Horizon.Server(endpoints.horizonUrl);
 export const isMainnet = network === "mainnet";
 
-// ---------------------------------------------------------------- clients
 
 function clientCache<T>() {
   const cache = new Map<string, Promise<contract.Client & T>>();
@@ -98,7 +97,6 @@ function requireDeployments() {
   return deployments;
 }
 
-// ---------------------------------------------------------------- errors
 
 export class ChainError extends Error {
   readonly raw: string;
@@ -178,7 +176,6 @@ function horizonResultCodes(error: unknown): string[] {
   ];
 }
 
-// ---------------------------------------------------------------- assets
 
 export interface AssetInfo {
   token: string;
@@ -259,7 +256,6 @@ async function priceInUsdc(asset: Asset): Promise<number | null> {
   }
 }
 
-// ---------------------------------------------------------------- funds
 
 export interface FundComponent extends AssetInfo {
   shelfStatus: ShelfStatus;
@@ -354,7 +350,6 @@ export async function findFund(contractId: string, fresh = false): Promise<Fund 
   return funds.find((f) => f.id === contractId) ?? null;
 }
 
-// ---------------------------------------------------------------- positions
 
 export interface Holding {
   code: string;
@@ -431,7 +426,6 @@ export async function quoteRedeem(fund: Fund, shares: bigint): Promise<bigint[]>
   return read((await fundClient(fund.id)).quote_redeem({ shares }));
 }
 
-// ---------------------------------------------------------------- basket purchase (classic)
 
 export interface BasketLeg {
   code: string;
@@ -535,7 +529,6 @@ export async function submitClassic(xdr: string, address: string): Promise<strin
   return result.hash;
 }
 
-// ---------------------------------------------------------------- contract writes
 
 export interface TxResult {
   hash: string;
@@ -595,7 +588,6 @@ export async function withdrawOwed(fund: Fund, address: string, token: string) {
   return send((await fundClient(fund.id, address)).withdraw_owed({ owner: address, to: address, token }));
 }
 
-// ---------------------------------------------------------------- wallet
 
 let kitReady = false;
 
