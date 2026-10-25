@@ -4,12 +4,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
           components: clippy, rustfmt
+      - uses: stellar/stellar-cli@28484880988199233a7e8e87c97cb12dac323cb3 # v25.2.0
       - run: cargo fmt --all --check
-      - run: cargo build --release --target wasm32v1-none -p alloy-fund
+      - run: stellar contract build --package alloy-fund
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings

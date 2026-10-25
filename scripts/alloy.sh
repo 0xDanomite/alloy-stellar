@@ -19,7 +19,6 @@ cmd_build() {
 # that GitHub release (SEP-0055 verified build); otherwise a local build.
 # Mainnet only ever deploys release binaries.
 REPO_SLUG="${REPO_SLUG:-0xDanomite/alloy-stellar}"
-BUILD_CLI_VERSION="25.1.0"
 wasm_path() {
   local package="$1"
   if [ -z "${RELEASE_TAG:-}" ]; then
@@ -29,8 +28,8 @@ wasm_path() {
   fi
   local dir="$ROOT/target/release-wasm/$RELEASE_TAG"
   mkdir -p "$dir"
-  gh release download "${RELEASE_TAG}_${package}_cli${BUILD_CLI_VERSION}" -R "$REPO_SLUG" \
-    -p '*.wasm' -D "$dir" --clobber >&2
+  gh release download "$RELEASE_TAG" -R "$REPO_SLUG" -p "${package}_v*.wasm" -D "$dir" --clobber >&2
+  gh attestation verify "$(ls "$dir"/"${package}"_v*.wasm | head -1)" -R "$REPO_SLUG" >&2
   ls "$dir"/"${package}"_v*.wasm | head -1
 }
 
