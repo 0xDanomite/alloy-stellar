@@ -29,6 +29,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-nav"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "alloy-platform"
 version = "0.1.0"
 dependencies = [
