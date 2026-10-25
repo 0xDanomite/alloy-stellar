@@ -55,7 +55,7 @@ run_tx() {
   local log out hash
   log="$(mktemp)"
   out="$("$@" 2>"$log")" || { cat "$log" >&2; rm -f "$log"; return 1; }
-  hash="$(grep -oE '[0-9a-f]{64}' "$log" | tail -1 || true)"
+  hash="$(grep -oE 'Signing transaction: [0-9a-f]{64}' "$log" | tail -1 | grep -oE '[0-9a-f]{64}' || true)"
   rm -f "$log"
   [ -n "$hash" ] && record_tx "$label" "$hash" >&2
   printf '%s' "$out"

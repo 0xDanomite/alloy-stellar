@@ -33,6 +33,17 @@ cmd_deploy() {
   echo "platform: $EXPERT/contract/$platform"
 }
 
+cmd_set_fund_wasm() {
+  cmd_build >/dev/null
+  local platform fund_wasm
+  platform="$(get .contracts.platform)"
+  fund_wasm="$(run_tx "upload fund wasm" stellar contract upload \
+    --wasm "$WASM_DIR/alloy_fund.wasm" --source-account "$ADMIN_IDENTITY")"
+  invoke "set fund wasm" "$platform" "$ADMIN_IDENTITY" set_fund_wasm --wasm_hash "$fund_wasm" >/dev/null
+  put --arg w "$fund_wasm" '.fund_wasm = $w'
+  echo "fund wasm: $fund_wasm"
+}
+
 # issue-asset CODE IDENTITY [permissioned]
 # Testnet stand-ins, and the mainnet demo asset with BENJI's flags.
 cmd_issue_asset() {
@@ -175,6 +186,7 @@ command="${1:-}"; shift || true
 case "$command" in
   build) cmd_build ;;
   deploy) cmd_deploy ;;
+  set-fund-wasm) cmd_set_fund_wasm ;;
   issue-asset) cmd_issue_asset "$@" ;;
   add-asset) cmd_add_asset "$@" ;;
   shelf) cmd_shelf ;;
@@ -186,5 +198,5 @@ case "$command" in
   redeem) cmd_redeem "$@" ;;
   clawback-drill) cmd_clawback_drill "$@" ;;
   status) cmd_status "$@" ;;
-  *) sed -n 2,8p "$0"; echo "commands: build deploy issue-asset add-asset shelf create-fund authorize-fund fund-investor allowlist issue redeem clawback-drill status"; exit 1 ;;
+  *) sed -n 2,8p "$0"; echo "commands: build deploy set-fund-wasm issue-asset add-asset shelf create-fund authorize-fund fund-investor allowlist issue redeem clawback-drill status"; exit 1 ;;
 esac
