@@ -101,9 +101,14 @@ fn first_issue_prices_at_initial_units_and_redeem_returns_basket() {
     assert_eq!(paid, vec![&s.env, 30_000_000, 60_000_000, 15_000_000]);
     assert_eq!(s.fund.balance(&investor), 3 * SHARE_SCALE);
     assert_eq!(s.fund.total_supply(), 3 * SHARE_SCALE);
-    assert_eq!(s.fund.units_per_share(), vec![&s.env, 10_000_000, 20_000_000, 5_000_000]);
+    assert_eq!(
+        s.fund.units_per_share(),
+        vec![&s.env, 10_000_000, 20_000_000, 5_000_000]
+    );
 
-    let got = s.fund.redeem(&investor, &investor, &(3 * SHARE_SCALE), &Vec::new(&s.env));
+    let got = s
+        .fund
+        .redeem(&investor, &investor, &(3 * SHARE_SCALE), &Vec::new(&s.env));
     assert_eq!(got, paid);
     assert_eq!(balances(&s, &investor), start);
     assert_eq!(s.fund.total_supply(), 0);
@@ -156,7 +161,10 @@ fn clawback_lowers_value_per_share_and_redeem_stays_pro_rata() {
     let held = s.assets[2].token.balance(&s.fund.address);
     s.assets[2].admin.clawback(&s.fund.address, &(held / 2));
 
-    assert_eq!(s.fund.units_per_share().get_unchecked(2), INITIAL_UNITS[2] / 2);
+    assert_eq!(
+        s.fund.units_per_share().get_unchecked(2),
+        INITIAL_UNITS[2] / 2
+    );
     let none = Vec::new(&s.env);
     let got = s.fund.redeem(&a, &a, &(2 * SHARE_SCALE), &none);
     assert_eq!(got, vec![&s.env, 20_000_000, 40_000_000, 5_000_000]);
@@ -187,8 +195,14 @@ fn frozen_leg_can_be_skipped_and_claimed_later() {
 
     let skip = vec![&s.env, s.assets[2].token.address.clone()];
     s.fund.redeem(&a, &a, &SHARE_SCALE, &skip);
-    assert_eq!(s.fund.owed(&a, &s.assets[2].token.address), INITIAL_UNITS[2]);
-    assert_eq!(s.fund.units_per_share(), vec![&s.env, 10_000_000, 20_000_000, 5_000_000]);
+    assert_eq!(
+        s.fund.owed(&a, &s.assets[2].token.address),
+        INITIAL_UNITS[2]
+    );
+    assert_eq!(
+        s.fund.units_per_share(),
+        vec![&s.env, 10_000_000, 20_000_000, 5_000_000]
+    );
 
     s.assets[2].admin.set_authorized(&a, &true);
     let before = s.assets[2].token.balance(&a);
@@ -268,12 +282,25 @@ fn rejects_duplicate_components() {
     let name = String::from_str(&env, "x");
     let dup = vec![
         &env,
-        Component { token: asset.token.address.clone(), initial_units: 1 },
-        Component { token: asset.token.address.clone(), initial_units: 1 },
+        Component {
+            token: asset.token.address.clone(),
+            initial_units: 1,
+        },
+        Component {
+            token: asset.token.address.clone(),
+            initial_units: 1,
+        },
     ];
     env.register(
         Fund,
-        (Address::generate(&env), Address::generate(&env), name.clone(), name, dup, Compliance::Open),
+        (
+            Address::generate(&env),
+            Address::generate(&env),
+            name.clone(),
+            name,
+            dup,
+            Compliance::Open,
+        ),
     );
 }
 
@@ -310,4 +337,29 @@ fn twelve_component_issue_and_redeem_fit_mainnet_limits() {
     fund.redeem(&investor, &investor, &SHARE_SCALE, &Vec::new(&env));
     std::println!("redeem x12: {:?}", env.cost_estimate().resources());
     assert_eq!(assets[11].token.balance(&investor), 1_000 * SHARE_SCALE);
+}
+
+#[test]
+fn clawback_below_owed_reserve_never_blocks_redeem() {
+    let s = setup(Compliance::Open, [false, false, true]);
+    let a = funded_investor(&s, 1_000 * SHARE_SCALE);
+    let b = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&a, &a, &SHARE_SCALE);
+    s.fund.issue(&b, &b, &SHARE_SCALE);
+    let leg = s.assets[2].token.address.clone();
+
+    s.fund
+        .redeem(&a, &a, &SHARE_SCALE, &vec![&s.env, leg.clone()]);
+    // Issuer claws back almost everything, cutting into a's reserved claim.
+    let held = s.assets[2].token.balance(&s.fund.address);
+    s.assets[2]
+        .admin
+        .clawback(&s.fund.address, &(held - 1_000_000));
+
+    assert_eq!(s.fund.holdings().get_unchecked(2), 0);
+    let got = s.fund.redeem(&b, &b, &SHARE_SCALE, &Vec::new(&s.env));
+    assert_eq!(got, vec![&s.env, 10_000_000, 20_000_000, 0]);
+
+    assert_eq!(s.fund.withdraw_owed(&a, &a, &leg), 1_000_000);
+    assert_eq!(s.fund.owed(&a, &leg), INITIAL_UNITS[2] - 1_000_000);
 }

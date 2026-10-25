@@ -117,7 +117,9 @@ pub(crate) fn compliance(env: &Env) -> Compliance {
 }
 
 pub(crate) fn set_compliance(env: &Env, compliance: Compliance) {
-    env.storage().instance().set(&DataKey::Compliance, &compliance);
+    env.storage()
+        .instance()
+        .set(&DataKey::Compliance, &compliance);
 }
 
 pub(crate) fn supply(env: &Env) -> i128 {
@@ -212,7 +214,11 @@ pub(crate) fn allowance(env: &Env, from: &Address, spender: &Address) -> Allowan
         from: from.clone(),
         spender: spender.clone(),
     });
-    match env.storage().temporary().get::<DataKey, AllowanceValue>(&key) {
+    match env
+        .storage()
+        .temporary()
+        .get::<DataKey, AllowanceValue>(&key)
+    {
         Some(value) if value.expiration_ledger >= env.ledger().sequence() => value,
         _ => AllowanceValue {
             amount: 0,

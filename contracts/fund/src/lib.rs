@@ -19,8 +19,8 @@ use soroban_sdk::{
     String, Vec,
 };
 
-pub use storage::{Compliance, Component};
 use storage::Config;
+pub use storage::{Compliance, Component};
 
 pub const SHARE_DECIMALS: u32 = 7;
 pub const SHARE_SCALE: i128 = 10_000_000;
@@ -71,9 +71,14 @@ fn require_can_hold(env: &Env, holder: &Address) {
     }
 }
 
+fn held(env: &Env, token: &Address) -> i128 {
+    TokenClient::new(env, token).balance(&env.current_contract_address())
+}
+
+/// What current holders own of `token`. Owed claims rank ahead of holders, so
+/// a clawback that cuts below the reserve leaves holders nothing, never less.
 fn available(env: &Env, token: &Address) -> i128 {
-    let held = TokenClient::new(env, token).balance(&env.current_contract_address());
-    held - storage::reserved(env, token)
+    (held(env, token) - storage::reserved(env, token)).max(0)
 }
 
 fn issue_amounts(env: &Env, shares: i128) -> Vec<i128> {
@@ -232,7 +237,13 @@ impl Fund {
     /// Burn `shares` from `from` and pay the pro-rata basket to `to`.
     /// Legs listed in `skip` are booked as owed to `from` instead of paid.
     /// Nobody, manager included, can stop this call.
-    pub fn redeem(env: Env, from: Address, to: Address, shares: i128, skip: Vec<Address>) -> Vec<i128> {
+    pub fn redeem(
+        env: Env,
+        from: Address,
+        to: Address,
+        shares: i128,
+        skip: Vec<Address>,
+    ) -> Vec<i128> {
         from.require_auth();
         storage::bump_instance(&env);
         require_positive(&env, shares);
@@ -282,9 +293,13 @@ impl Fund {
     pub fn withdraw_owed(env: Env, owner: Address, to: Address, token: Address) -> i128 {
         owner.require_auth();
         storage::bump_instance(&env);
-        let amount = storage::owed(&env, &owner, &token);
+        let owed = storage::owed(&env, &owner, &token);
+        require_positive(&env, owed);
+        // After a deep clawback the fund may hold less than it owes; pay what
+        // is there and leave the rest owed.
+        let amount = owed.min(held(&env, &token));
         require_positive(&env, amount);
-        storage::set_owed(&env, &owner, &token, 0);
+        storage::set_owed(&env, &owner, &token, owed - amount);
         storage::set_reserved(&env, &token, storage::reserved(&env, &token) - amount);
         TokenClient::new(&env, &token).transfer(&env.current_contract_address(), &to, &amount);
         events::WithdrawOwed {
@@ -328,7 +343,13 @@ impl Fund {
             let unit = if supply == 0 {
                 component.initial_units
             } else {
-                mul_div(&env, available(&env, &component.token), SHARE_SCALE, supply, false)
+                mul_div(
+                    &env,
+                    available(&env, &component.token),
+                    SHARE_SCALE,
+                    supply,
+                    false,
+                )
             };
             units.push_back(unit);
         }
@@ -392,7 +413,13 @@ impl Fund {
         storage::allowance(&env, &from, &spender).amount
     }
 
-    pub fn approve(env: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32) {
+    pub fn approve(
+        env: Env,
+        from: Address,
+        spender: Address,
+        amount: i128,
+        expiration_ledger: u32,
+    ) {
         from.require_auth();
         storage::bump_instance(&env);
         if amount < 0 {
