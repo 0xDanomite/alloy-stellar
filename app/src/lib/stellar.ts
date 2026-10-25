@@ -1,0 +1,631 @@
+import {
+  Asset,
+  BASE_FEE,
+  Horizon,
+  Operation,
+  TransactionBuilder,
+  contract,
+  rpc,
+} from "@stellar/stellar-sdk";
+import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
+import { Networks as KitNetworks } from "@creit.tech/stellar-wallets-kit/types";
+import { FreighterModule } from "@creit.tech/stellar-wallets-kit/modules/freighter";
+import { xBullModule } from "@creit.tech/stellar-wallets-kit/modules/xbull";
+import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
+import { deployments, endpoints, expert, network } from "./config";
+import { ONE, toDecimalString, unitsToNumber } from "./format";
+
+/** Circle USDC on mainnet, pinned: lookalike issuers are common. */
+const CIRCLE_USDC = new Asset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN");
+const SLIPPAGE_BPS = 200n;
+const TX_TIMEOUT_SECONDS = 180;
+
+type AT<T> = Promise<contract.AssembledTransaction<T>>;
+type Tagged<T extends string> = { tag: T };
+
+export type ShelfStatus = "Unlisted" | "Open" | "Permissioned";
+export type Compliance = "Open" | "Allowlist";
+
+interface PlatformMethods {
+  funds(): AT<string[]>;
+  shelf_status(args: { token: string }): AT<Tagged<ShelfStatus>>;
+}
+
+interface FundMethods {
+  name(): AT<string>;
+  symbol(): AT<string>;
+  total_supply(): AT<bigint>;
+  components(): AT<{ token: string; initial_units: bigint }[]>;
+  holdings(): AT<bigint[]>;
+  units_per_share(): AT<bigint[]>;
+  compliance(): AT<Tagged<Compliance>>;
+  quote_issue(args: { shares: bigint }): AT<bigint[]>;
+  quote_redeem(args: { shares: bigint }): AT<bigint[]>;
+  is_investor(args: { investor: string }): AT<boolean>;
+  balance(args: { id: string }): AT<bigint>;
+  owed(args: { owner: string; token: string }): AT<bigint>;
+  issue(args: { investor: string; to: string; shares: bigint }): AT<bigint[]>;
+  redeem(args: { from: string; to: string; shares: bigint; skip: string[] }): AT<bigint[]>;
+  withdraw_owed(args: { owner: string; to: string; token: string }): AT<bigint>;
+}
+
+interface SacMethods {
+  name(): AT<string>;
+  authorized(args: { id: string }): AT<boolean>;
+}
+
+export const horizon = new Horizon.Server(endpoints.horizonUrl);
+export const isMainnet = network === "mainnet";
+
+// ---------------------------------------------------------------- clients
+
+function clientCache<T>() {
+  const cache = new Map<string, Promise<contract.Client & T>>();
+  return (contractId: string, publicKey?: string): Promise<contract.Client & T> => {
+    const key = `${contractId}:${publicKey ?? ""}`;
+    let pending = cache.get(key);
+    if (!pending) {
+      pending = contract.Client.from<T>({
+        contractId,
+        rpcUrl: endpoints.rpcUrl,
+        networkPassphrase: endpoints.passphrase,
+        publicKey,
+        signTransaction: publicKey ? signWithWallet : undefined,
+      });
+      pending.catch(() => cache.delete(key));
+      cache.set(key, pending);
+    }
+    return pending;
+  };
+}
+
+async function read<T>(tx: AT<T>): Promise<T> {
+  const assembled = await tx;
+  const simulation = assembled.simulation;
+  if (simulation && rpc.Api.isSimulationError(simulation)) {
+    throw new ChainError(simulation.error);
+  }
+  return assembled.result;
+}
+
+const platformClients = clientCache<PlatformMethods>();
+const fundClient = clientCache<FundMethods>();
+const sacClient = clientCache<SacMethods>();
+const platformClient = () => platformClients(requireDeployments().contracts.platform);
+
+function requireDeployments() {
+  if (!deployments) throw new Error(`deployments/${network}.json is missing from this build.`);
+  return deployments;
+}
+
+// ---------------------------------------------------------------- errors
+
+export class ChainError extends Error {
+  readonly raw: string;
+  constructor(raw: string) {
+    super(explainRaw(raw));
+    this.raw = raw;
+  }
+}
+
+const FUND_ERRORS: Record<number, string> = {
+  5: "Enter an amount above zero.",
+  6: "You don't hold enough fund shares for that.",
+  8: "This fund only accepts approved investors, and your address isn't on its list yet.",
+  9: "That amount is too small to deposit anything.",
+  10: "One of the skipped assets isn't part of this fund.",
+  11: "That amount is too large.",
+  14: "The fund is holding that asset for earlier redemptions, so it can't be paid out right now.",
+};
+
+function explainRaw(raw: string): string {
+  const text = raw.toLowerCase();
+  if (text.includes("trustline") && text.includes("missing")) {
+    return "Your account isn't set up to hold one of the assets yet (it needs a trustline).";
+  }
+  if (text.includes("not authorized") || text.includes("deauthorized")) {
+    return "The issuer hasn't approved this account to hold one of the assets.";
+  }
+  if (text.includes("balance is not sufficient") || text.includes("resulting balance is not within the allowed range")) {
+    return "Your wallet doesn't hold enough of one of the assets for this amount.";
+  }
+  if (text.includes("account entry is missing") || text.includes("account not found")) {
+    return "This account doesn't exist on the network yet. Fund it with some XLM first.";
+  }
+  const code = /Error\(Contract, #(\d+)\)/.exec(raw)?.[1];
+  if (code && FUND_ERRORS[Number(code)]) return FUND_ERRORS[Number(code)] ?? raw;
+  return "The network rejected this transaction. Nothing was sent.";
+}
+
+const HORIZON_CODES: Record<string, string> = {
+  op_too_few_offers: "There isn't enough market depth to buy one of the assets right now.",
+  op_over_source_max: "The price moved more than 2% while you were signing. Try again.",
+  op_underfunded: "You don't have enough XLM to buy the basket.",
+  op_low_reserve: "Your account needs more XLM to cover the reserve for new assets.",
+  op_no_trust: "Your account isn't set up to hold one of the assets.",
+  op_not_authorized: "The issuer hasn't approved your account for one of the assets.",
+  op_src_not_authorized: "The issuer hasn't approved your account for one of the assets.",
+  tx_bad_seq: "Your wallet's sequence number was out of date. Try again.",
+  tx_insufficient_balance: "You don't have enough XLM to pay the network fee.",
+};
+
+export function explain(error: unknown): string {
+  if (error instanceof ChainError) return error.message;
+  if (error instanceof contract.AssembledTransaction.Errors.UserRejected) return "You declined the request in your wallet.";
+  const codes = horizonResultCodes(error);
+  for (const code of codes) {
+    const message = HORIZON_CODES[code];
+    if (message) return message;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/reject|declin|cancel/i.test(message)) return "You declined the request in your wallet.";
+  if (/Error\(Contract|HostError|trustline|authorized/.test(message)) return explainRaw(message);
+  return message || "Something went wrong. Nothing was sent.";
+}
+
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && key in value ? Reflect.get(value, key) : undefined;
+}
+
+function horizonResultCodes(error: unknown): string[] {
+  const codes = field(field(field(field(error, "response"), "data"), "extras"), "result_codes");
+  const operations = field(codes, "operations");
+  const transaction = field(codes, "transaction");
+  return [
+    ...(Array.isArray(operations) ? operations.filter((c): c is string => typeof c === "string" && c !== "op_success") : []),
+    ...(typeof transaction === "string" ? [transaction] : []),
+  ];
+}
+
+// ---------------------------------------------------------------- assets
+
+export interface AssetInfo {
+  token: string;
+  code: string;
+  issuer: string | null;
+  asset: Asset;
+  domain: string | null;
+  authRequired: boolean;
+  revocable: boolean;
+  clawback: boolean;
+}
+
+function parseAsset(name: string): Asset {
+  if (name === "native") return Asset.native();
+  const [code, issuer] = name.split(":");
+  if (!code || !issuer) throw new Error(`Unrecognized asset ${name}`);
+  return new Asset(code, issuer);
+}
+
+const assetCache = new Map<string, Promise<AssetInfo>>();
+
+function assetInfo(token: string): Promise<AssetInfo> {
+  let pending = assetCache.get(token);
+  if (!pending) {
+    pending = loadAssetInfo(token);
+    pending.catch(() => assetCache.delete(token));
+    assetCache.set(token, pending);
+  }
+  return pending;
+}
+
+async function loadAssetInfo(token: string): Promise<AssetInfo> {
+  const known = Object.values(deployments?.assets ?? {}).find((a) => a.contract === token);
+  const asset = parseAsset(known?.asset ?? (await read((await sacClient(token)).name())));
+  if (asset.isNative()) {
+    return { token, code: "XLM", issuer: null, asset, domain: "stellar.org", authRequired: false, revocable: false, clawback: false };
+  }
+  const issuer = asset.getIssuer() ?? "";
+  const account = await horizon.accounts().accountId(issuer).call().catch(() => null);
+  return {
+    token,
+    code: asset.getCode(),
+    issuer,
+    asset,
+    domain: account?.home_domain || null,
+    authRequired: account?.flags.auth_required ?? false,
+    revocable: account?.flags.auth_revocable ?? false,
+    clawback: account?.flags.auth_clawback_enabled ?? false,
+  };
+}
+
+function pathIsAllowed(path: { asset_type: string; asset_code?: string; asset_issuer?: string }[]): boolean {
+  return path.every(
+    (hop) =>
+      hop.asset_type === "native" ||
+      (hop.asset_code === CIRCLE_USDC.getCode() && hop.asset_issuer === CIRCLE_USDC.getIssuer()),
+  );
+}
+
+/** USDC received for 1 unit, or null where there is no honest price (testnet, no book). */
+async function priceInUsdc(asset: Asset): Promise<number | null> {
+  if (!isMainnet) return null;
+  if (asset.equals(CIRCLE_USDC)) return 1;
+  try {
+    const { records } = await horizon.strictSendPaths(asset, "1", [CIRCLE_USDC]).call();
+    const best = records
+      .filter((r) => pathIsAllowed(r.path))
+      .map((r) => Number(r.destination_amount))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    return best.length ? Math.max(...best) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------- funds
+
+export interface FundComponent extends AssetInfo {
+  shelfStatus: ShelfStatus;
+  unitsPerShare: bigint;
+  holding: bigint;
+  priceUsdc: number | null;
+  /** Only read for shelf-permissioned assets; null elsewhere. */
+  fundAuthorized: boolean | null;
+}
+
+export interface Fund {
+  id: string;
+  name: string;
+  symbol: string;
+  compliance: Compliance;
+  totalSupply: bigint;
+  components: FundComponent[];
+  valuePerShare: number | null;
+  awaitingIssuer: FundComponent[];
+}
+
+async function loadFund(id: string): Promise<Fund> {
+  const fund = await fundClient(id);
+  const platform = await platformClient();
+  const knownSymbol = Object.entries(deployments?.contracts.funds ?? {}).find(([, cid]) => cid === id)?.[0];
+  const [name, symbol, compliance, totalSupply, components, holdings, units] = await Promise.all([
+    read(fund.name()),
+    knownSymbol ? Promise.resolve(knownSymbol) : read(fund.symbol()),
+    read(fund.compliance()),
+    read(fund.total_supply()),
+    read(fund.components()),
+    read(fund.holdings()),
+    read(fund.units_per_share()),
+  ]);
+
+  const legs = await Promise.all(
+    components.map(async (component, i): Promise<FundComponent> => {
+      const [info, shelf] = await Promise.all([
+        assetInfo(component.token),
+        read(platform.shelf_status({ token: component.token })),
+      ]);
+      const [priceUsdc, fundAuthorized] = await Promise.all([
+        priceInUsdc(info.asset),
+        shelf.tag === "Permissioned"
+          ? sacClient(component.token).then((sac) => read(sac.authorized({ id })))
+          : Promise.resolve(null),
+      ]);
+      return {
+        ...info,
+        shelfStatus: shelf.tag,
+        unitsPerShare: units[i] ?? 0n,
+        holding: holdings[i] ?? 0n,
+        priceUsdc,
+        fundAuthorized,
+      };
+    }),
+  );
+
+  const priced = legs.every((leg) => leg.priceUsdc !== null);
+  return {
+    id,
+    name,
+    symbol,
+    compliance: compliance.tag,
+    totalSupply,
+    components: legs,
+    valuePerShare: priced
+      ? legs.reduce((sum, leg) => sum + unitsToNumber(leg.unitsPerShare) * (leg.priceUsdc ?? 0), 0)
+      : null,
+    awaitingIssuer: legs.filter((leg) => leg.fundAuthorized === false),
+  };
+}
+
+let fundsCache: Promise<Fund[]> | null = null;
+
+/** Every fund the platform recognizes. The platform's registry is the authority, never fund self-reports. */
+export function listFunds(fresh = false): Promise<Fund[]> {
+  if (!fundsCache || fresh) {
+    fundsCache = platformClient()
+      .then((platform) => read(platform.funds()))
+      .then((ids) => Promise.all(ids.map(loadFund)));
+    fundsCache.catch(() => {
+      fundsCache = null;
+    });
+  }
+  return fundsCache;
+}
+
+export async function findFund(symbol: string, fresh = false): Promise<Fund | null> {
+  const funds = await listFunds(fresh);
+  return funds.find((f) => f.symbol.toLowerCase() === symbol.toLowerCase()) ?? null;
+}
+
+// ---------------------------------------------------------------- positions
+
+export interface Holding {
+  code: string;
+  token: string;
+  balance: bigint;
+  hasTrustline: boolean;
+  authorized: boolean;
+}
+
+export interface Position {
+  exists: boolean;
+  shares: bigint;
+  isInvestor: boolean;
+  wallet: Holding[];
+  owed: { component: FundComponent; amount: bigint }[];
+}
+
+async function accountBalances(address: string) {
+  try {
+    const account = await horizon.accounts().accountId(address).call();
+    return account.balances;
+  } catch {
+    return null;
+  }
+}
+
+function holdingFor(balances: Horizon.HorizonApi.BalanceLine[] | null, leg: AssetInfo): Holding {
+  const base = { code: leg.code, token: leg.token };
+  if (!balances) return { ...base, balance: 0n, hasTrustline: false, authorized: false };
+  for (const line of balances) {
+    if (line.asset_type === "native" && leg.asset.isNative()) {
+      return { ...base, balance: toBaseUnits(line.balance), hasTrustline: true, authorized: true };
+    }
+    if (
+      (line.asset_type === "credit_alphanum4" || line.asset_type === "credit_alphanum12") &&
+      line.asset_code === leg.code &&
+      line.asset_issuer === leg.issuer
+    ) {
+      return { ...base, balance: toBaseUnits(line.balance), hasTrustline: true, authorized: line.is_authorized };
+    }
+  }
+  return { ...base, balance: 0n, hasTrustline: false, authorized: false };
+}
+
+function toBaseUnits(amount: string): bigint {
+  const [whole = "0", frac = ""] = amount.split(".");
+  return BigInt(whole) * ONE + BigInt(frac.padEnd(7, "0").slice(0, 7));
+}
+
+export async function loadPosition(fund: Fund, address: string): Promise<Position> {
+  const c = await fundClient(fund.id);
+  const [balances, shares, isInvestor, owed] = await Promise.all([
+    accountBalances(address),
+    read(c.balance({ id: address })),
+    fund.compliance === "Allowlist" ? read(c.is_investor({ investor: address })) : Promise.resolve(true),
+    Promise.all(fund.components.map((leg) => read(c.owed({ owner: address, token: leg.token })))),
+  ]);
+  return {
+    exists: balances !== null,
+    shares,
+    isInvestor,
+    wallet: fund.components.map((leg) => holdingFor(balances, leg)),
+    owed: fund.components
+      .map((component, i) => ({ component, amount: owed[i] ?? 0n }))
+      .filter((o) => o.amount > 0n),
+  };
+}
+
+export async function quoteIssue(fund: Fund, shares: bigint): Promise<bigint[]> {
+  return read((await fundClient(fund.id)).quote_issue({ shares }));
+}
+
+export async function quoteRedeem(fund: Fund, shares: bigint): Promise<bigint[]> {
+  return read((await fundClient(fund.id)).quote_redeem({ shares }));
+}
+
+// ---------------------------------------------------------------- basket purchase (classic)
+
+export interface BasketLeg {
+  code: string;
+  shortfall: bigint;
+  needsTrustline: boolean;
+  /** Why this leg can't be bought here, in plain words. */
+  blocked: string | null;
+  sendMax: bigint | null;
+  route: string;
+}
+
+export interface BasketPlan {
+  legs: BasketLeg[];
+  totalSendMax: bigint;
+  /** Unsigned XDR, or null when nothing needs buying or a leg is blocked. */
+  xdr: string | null;
+}
+
+export async function planBasket(fund: Fund, address: string, shares: bigint): Promise<BasketPlan> {
+  const [needed, balances] = await Promise.all([quoteIssue(fund, shares), accountBalances(address)]);
+  if (!balances) throw new Error("This account doesn't exist on the network yet. Fund it with some XLM first.");
+
+  const legs: (BasketLeg & { asset: Asset; path: Asset[] })[] = [];
+  for (const [i, leg] of fund.components.entries()) {
+    if (leg.asset.isNative()) continue;
+    const holding = holdingFor(balances, leg);
+    const shortfall = (needed[i] ?? 0n) - holding.balance;
+    if (shortfall <= 0n) continue;
+    const base = { code: leg.code, shortfall, needsTrustline: !holding.hasTrustline, asset: leg.asset, path: [] as Asset[] };
+    if (leg.authRequired && !holding.authorized) {
+      legs.push({
+        ...base,
+        blocked: `${leg.code}'s issuer approves each holder. Your account needs their approval before you can buy it.`,
+        sendMax: null,
+        route: "",
+      });
+      continue;
+    }
+    const quote = await quoteBuy(leg.asset, shortfall);
+    if (!quote) {
+      legs.push({ ...base, blocked: `There's no market for ${leg.code} on ${isMainnet ? "the Stellar DEX" : "testnet"} right now.`, sendMax: null, route: "" });
+      continue;
+    }
+    legs.push({ ...base, blocked: null, ...quote });
+  }
+
+  const totalSendMax = legs.reduce((sum, leg) => sum + (leg.sendMax ?? 0n), 0n);
+  const buyable = legs.filter((leg) => !leg.blocked);
+  const trustlines = legs.filter((leg) => leg.needsTrustline);
+  let xdr: string | null = null;
+  if (buyable.length || trustlines.length) {
+    const account = await horizon.loadAccount(address);
+    const builder = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: endpoints.passphrase });
+    for (const leg of trustlines) builder.addOperation(Operation.changeTrust({ asset: leg.asset }));
+    for (const leg of buyable) {
+      builder.addOperation(
+        Operation.pathPaymentStrictReceive({
+          sendAsset: Asset.native(),
+          sendMax: toDecimalString(leg.sendMax ?? 0n),
+          destination: address,
+          destAsset: leg.asset,
+          destAmount: toDecimalString(leg.shortfall),
+          path: leg.path,
+        }),
+      );
+    }
+    xdr = builder.setTimeout(TX_TIMEOUT_SECONDS).build().toXDR();
+  }
+  return {
+    legs: legs.map(({ asset: _asset, path: _path, ...rest }) => rest),
+    totalSendMax,
+    xdr,
+  };
+}
+
+async function quoteBuy(asset: Asset, amount: bigint): Promise<{ sendMax: bigint; path: Asset[]; route: string } | null> {
+  try {
+    const { records } = await horizon.strictReceivePaths([Asset.native()], asset, toDecimalString(amount)).call();
+    const best = records
+      .filter((r) => pathIsAllowed(r.path))
+      .sort((a, b) => Number(a.source_amount) - Number(b.source_amount))[0];
+    if (!best) return null;
+    const path = best.path.map((hop) =>
+      hop.asset_type === "native" ? Asset.native() : new Asset(hop.asset_code ?? "", hop.asset_issuer ?? ""),
+    );
+    const cost = toBaseUnits(best.source_amount);
+    return {
+      sendMax: cost + (cost * SLIPPAGE_BPS) / 10_000n,
+      path,
+      route: path.length ? `XLM → ${path.map((p) => p.getCode()).join(" → ")} → ${asset.getCode()}` : `XLM → ${asset.getCode()}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function submitClassic(xdr: string, address: string): Promise<string> {
+  const signed = await signWithWallet(xdr, { networkPassphrase: endpoints.passphrase, address });
+  const tx = TransactionBuilder.fromXDR(signed.signedTxXdr, endpoints.passphrase);
+  const result = await horizon.submitTransaction(tx);
+  return result.hash;
+}
+
+// ---------------------------------------------------------------- contract writes
+
+export interface TxResult {
+  hash: string;
+  url: string;
+}
+
+async function send<T>(tx: AT<T>): Promise<TxResult> {
+  const assembled = await tx;
+  const simulation = assembled.simulation;
+  if (simulation && rpc.Api.isSimulationError(simulation)) throw new ChainError(simulation.error);
+  const sent = await assembled.signAndSend();
+  const response = sent.getTransactionResponse;
+  const hash = sent.sendTransactionResponse?.hash ?? "";
+  if (response && response.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`The transaction was submitted but did not succeed (${response.status}).`);
+  }
+  return { hash, url: expert.tx(hash) };
+}
+
+/** Simulate only: the same checks the network runs, without asking the wallet to sign. */
+async function simulate<T>(tx: AT<T>): Promise<T> {
+  return read(tx);
+}
+
+export async function simulateIssue(fund: Fund, address: string, shares: bigint) {
+  return simulate((await fundClient(fund.id, address)).issue({ investor: address, to: address, shares }));
+}
+
+export async function issue(fund: Fund, address: string, shares: bigint) {
+  return send((await fundClient(fund.id, address)).issue({ investor: address, to: address, shares }));
+}
+
+export async function simulateRedeem(fund: Fund, address: string, shares: bigint, skip: string[]) {
+  return simulate((await fundClient(fund.id, address)).redeem({ from: address, to: address, shares, skip }));
+}
+
+export async function redeem(fund: Fund, address: string, shares: bigint, skip: string[]) {
+  return send((await fundClient(fund.id, address)).redeem({ from: address, to: address, shares, skip }));
+}
+
+/**
+ * Legs this account can't receive right now: no trustline, or the issuer
+ * hasn't authorized it. Redeeming with these skipped books them as owed.
+ */
+export async function unreceivableLegs(fund: Fund, address: string, failure?: ChainError): Promise<FundComponent[]> {
+  const balances = await accountBalances(address);
+  const blocked = fund.components.filter((leg) => {
+    if (leg.asset.isNative()) return false;
+    const holding = holdingFor(balances, leg);
+    return !holding.hasTrustline || !holding.authorized;
+  });
+  if (blocked.length || !failure) return blocked;
+  return fund.components.filter((leg) => failure.raw.includes(leg.token));
+}
+
+export async function withdrawOwed(fund: Fund, address: string, token: string) {
+  return send((await fundClient(fund.id, address)).withdraw_owed({ owner: address, to: address, token }));
+}
+
+// ---------------------------------------------------------------- wallet
+
+let kitReady = false;
+
+function initKit() {
+  if (kitReady) return;
+  StellarWalletsKit.init({
+    modules: [new FreighterModule(), new xBullModule(), new LobstrModule()],
+    network: isMainnet ? KitNetworks.PUBLIC : KitNetworks.TESTNET,
+  });
+  kitReady = true;
+}
+
+export async function connectWallet(): Promise<string> {
+  initKit();
+  const { address } = await StellarWalletsKit.authModal();
+  return address;
+}
+
+export async function restoreWallet(): Promise<string | null> {
+  try {
+    initKit();
+    const { address } = await StellarWalletsKit.getAddress();
+    return address || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function disconnectWallet(): Promise<void> {
+  initKit();
+  await StellarWalletsKit.disconnect();
+}
+
+async function signWithWallet(xdr: string, opts?: { networkPassphrase?: string; address?: string }) {
+  initKit();
+  return StellarWalletsKit.signTransaction(xdr, {
+    networkPassphrase: opts?.networkPassphrase ?? endpoints.passphrase,
+    address: opts?.address,
+  });
+}
