@@ -464,8 +464,7 @@ let fundsCache: Promise<Fund[]> | null = null;
 /** Every fund the platform recognizes. The platform's registry is the authority, never fund self-reports. */
 export function listFunds(fresh = false): Promise<Fund[]> {
   if (!fundsCache || fresh) {
-    fundsCache = platformClient()
-      .then(registeredFundIds)
+    fundsCache = withRetry(() => platformClient().then(registeredFundIds))
       .then((ids) => Promise.all(ids.map((id) => withRetry(() => loadFund(id)))));
     fundsCache.catch(() => {
       fundsCache = null;
