@@ -17,6 +17,15 @@ import { ONE, toDecimalString, unitsToNumber } from "./format";
 import { CIRCLE_USDC_ISSUER, DEMO_ISSUER_LABEL, PINNED_MAINNET_ISSUERS, UNVERIFIED_ISSUER_LABEL } from "./issuers";
 
 const CIRCLE_USDC = new Asset("USDC", CIRCLE_USDC_ISSUER);
+
+/** The USD quote asset: Circle USDC on mainnet, the tUSDC stand-in on testnet. */
+const QUOTE_USDC: Asset | null = (() => {
+  if (network === "mainnet") return CIRCLE_USDC;
+  const stand = deployments?.assets.tUSDC?.asset;
+  if (!stand) return null;
+  const [code, issuer] = stand.split(":");
+  return code && issuer ? new Asset(code, issuer) : null;
+})();
 const SLIPPAGE_BPS = 200n;
 const TX_TIMEOUT_SECONDS = 180;
 
@@ -256,16 +265,16 @@ function pathIsAllowed(path: { asset_type: string; asset_code?: string; asset_is
   return path.every(
     (hop) =>
       hop.asset_type === "native" ||
-      (hop.asset_code === CIRCLE_USDC.getCode() && hop.asset_issuer === CIRCLE_USDC.getIssuer()),
+      (QUOTE_USDC !== null && hop.asset_code === QUOTE_USDC.getCode() && hop.asset_issuer === QUOTE_USDC.getIssuer()),
   );
 }
 
-/** USDC received for 1 unit, or null where there is no honest price (testnet, no book). */
+/** USDC received for 1 unit on the network's own DEX, or null where there is no book. */
 async function priceInUsdc(asset: Asset): Promise<number | null> {
-  if (!isMainnet) return null;
-  if (asset.equals(CIRCLE_USDC)) return 1;
+  if (!QUOTE_USDC) return null;
+  if (asset.equals(QUOTE_USDC)) return 1;
   try {
-    const { records } = await horizon.strictSendPaths(asset, "1", [CIRCLE_USDC]).call();
+    const { records } = await horizon.strictSendPaths(asset, "1", [QUOTE_USDC]).call();
     const best = records
       .filter((r) => pathIsAllowed(r.path))
       .map((r) => Number(r.destination_amount))
@@ -431,7 +440,11 @@ async function registeredFundIds(platform: Awaited<ReturnType<typeof platformCli
   for (let start = 0; start < count; start += FUNDS_PAGE) {
     pages.push(read(platform.funds({ start, limit: FUNDS_PAGE })));
   }
-  return (await Promise.all(pages)).flat();
+  const registered = new Set((await Promise.all(pages)).flat());
+  // Show the funds this deployment launched, in launch order, and only those
+  // the platform itself registered.
+  const launched = Object.values(requireDeployments().contracts.funds);
+  return launched.length ? launched.filter((id) => registered.has(id)) : [...registered];
 }
 
 let fundsCache: Promise<Fund[]> | null = null;
