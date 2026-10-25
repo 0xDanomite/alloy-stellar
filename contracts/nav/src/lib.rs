@@ -23,9 +23,11 @@ pub use oracle::{
 pub const PRICE_DECIMALS: u32 = 8;
 pub const SHARE_SCALE: i128 = 10_000_000;
 const PRICE_SCALE: i128 = 100_000_000;
-const BPS: i128 = 10_000;
+const BPS: u128 = 10_000;
 /// Any oracle timestamp above this (year 5138 in seconds) is in milliseconds.
 const MS_THRESHOLD: u64 = 100_000_000_000;
+/// How far ahead of the ledger an oracle timestamp may be before it is refused.
+const MAX_CLOCK_SKEW_SECS: u64 = 60;
 
 const DAY_IN_LEDGERS: u32 = 17_280;
 const INSTANCE_BUMP: u32 = 30 * DAY_IN_LEDGERS;
@@ -206,26 +208,24 @@ fn seconds(timestamp: u64) -> u64 {
 }
 
 /// A fresh, positive price from one oracle, in its quote unit at 8 decimals.
-/// Anything an oracle does wrong (no entry, a panic, a wrong shape, a zero)
-/// reads as "no price" so the caller can fall back.
-fn read_raw(env: &Env, route: &Route) -> Result<Option<(i128, u64)>, NavError> {
-    let reading = match &route.feed {
+/// Anything an oracle does wrong (no entry, a trap, a wrong shape, a zero, a
+/// value that overflows, a timestamp from the future) reads as "no price" so
+/// the other route still gets its turn.
+fn read_raw(env: &Env, route: &Route) -> Option<(i128, u64)> {
+    let (raw, decimals, timestamp) = match &route.feed {
         Feed::Sep40(asset) => read_sep40(env, &route.oracle, asset),
         Feed::RedStoneFeed => read_redstone_feed(env, &route.oracle),
-    };
-    let Some((raw, decimals, timestamp)) = reading else {
-        return Ok(None);
-    };
+    }?;
     let timestamp = seconds(timestamp);
-    let age = env.ledger().timestamp().saturating_sub(timestamp);
-    if raw <= 0 || age > route.max_age_secs {
-        return Ok(None);
+    let now = env.ledger().timestamp();
+    if raw <= 0 || timestamp > now.saturating_add(MAX_CLOCK_SKEW_SECS) {
+        return None;
     }
-    let price = to_price_decimals(raw, decimals)?;
-    if price <= 0 {
-        return Ok(None);
+    if now.saturating_sub(timestamp) > route.max_age_secs {
+        return None;
     }
-    Ok(Some((price, timestamp)))
+    let price = to_price_decimals(raw, decimals).ok()?;
+    (price > 0).then_some((price, timestamp))
 }
 
 fn read_sep40(env: &Env, oracle: &Address, asset: &Asset) -> Option<(i128, u32, u64)> {
@@ -244,62 +244,49 @@ fn read_redstone_feed(env: &Env, oracle: &Address) -> Option<(i128, u32, u64)> {
 }
 
 /// USDC in USD from the first fresh USD-quoted route configured for USDC.
-fn usdc_in_usd(env: &Env) -> Result<Option<(i128, u64)>, NavError> {
+fn usdc_in_usd(env: &Env) -> Option<(i128, u64)> {
     let usdc: Address = env.storage().instance().get(&DataKey::Usdc).unwrap();
-    for route in [primary(env, &usdc), secondary(env, &usdc)]
+    [primary(env, &usdc), secondary(env, &usdc)]
         .into_iter()
         .flatten()
-    {
-        if route.quote != Quote::Usd {
-            continue;
-        }
-        if let Some(found) = read_raw(env, &route)? {
-            return Ok(Some(found));
-        }
-    }
-    Ok(None)
+        .filter(|route| route.quote == Quote::Usd)
+        .find_map(|route| read_raw(env, &route))
 }
 
-fn read_route(env: &Env, route: &Route) -> Result<Option<(i128, u64)>, NavError> {
-    let Some((price, timestamp)) = read_raw(env, route)? else {
-        return Ok(None);
-    };
+fn read_route(env: &Env, route: &Route) -> Option<(i128, u64)> {
+    let (price, timestamp) = read_raw(env, route)?;
     match route.quote {
-        Quote::Usd => Ok(Some((price, timestamp))),
+        Quote::Usd => Some((price, timestamp)),
         Quote::Usdc => {
-            let Some((usdc, usdc_timestamp)) = usdc_in_usd(env)? else {
-                return Ok(None);
-            };
-            Ok(Some((
-                mul_div(price, usdc, PRICE_SCALE)?,
-                timestamp.min(usdc_timestamp),
-            )))
+            let (usdc, usdc_timestamp) = usdc_in_usd(env)?;
+            let price = mul_div(price, usdc, PRICE_SCALE).ok()?;
+            (price > 0).then_some((price, timestamp.min(usdc_timestamp)))
         }
     }
 }
 
-fn divergence_bps(primary: i128, secondary: i128) -> Result<u32, NavError> {
-    let gap = primary.checked_sub(secondary).ok_or(NavError::Overflow)?;
-    let bps = mul_div(gap.abs(), BPS, primary)?;
-    Ok(u32::try_from(bps).unwrap_or(u32::MAX))
+/// Both inputs are positive, so the gap cannot overflow; an absurd ratio
+/// saturates rather than hiding the quote.
+fn divergence_bps(primary: i128, secondary: i128) -> u32 {
+    let gap = primary.abs_diff(secondary);
+    let bps = gap
+        .checked_mul(BPS)
+        .map(|scaled| scaled / primary.unsigned_abs())
+        .unwrap_or(u128::MAX);
+    u32::try_from(bps).unwrap_or(u32::MAX)
 }
 
 fn price(env: &Env, token: &Address) -> Result<PriceQuote, NavError> {
     let primary_route = primary(env, token).ok_or(NavError::NoRoute)?;
-    let fresh_primary = read_route(env, &primary_route)?;
-    let fresh_secondary = match secondary(env, token) {
-        Some(route) => read_route(env, &route)?.map(|found| (found, route.source)),
-        None => None,
-    };
+    let fresh_primary = read_route(env, &primary_route);
+    let fresh_secondary = secondary(env, token)
+        .and_then(|route| read_route(env, &route).map(|found| (found, route.source)));
     match (fresh_primary, fresh_secondary) {
         (Some((price, timestamp)), secondary) => Ok(PriceQuote {
             price,
             timestamp,
             source: primary_route.source,
-            divergence_bps: match secondary {
-                Some(((other, _), _)) => Some(divergence_bps(price, other)?),
-                None => None,
-            },
+            divergence_bps: secondary.map(|((other, _), _)| divergence_bps(price, other)),
         }),
         (None, Some(((price, timestamp), source))) => Ok(PriceQuote {
             price,

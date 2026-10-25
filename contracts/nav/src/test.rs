@@ -51,6 +51,21 @@ impl MockSep40 {
     }
 }
 
+/// Answers `lastprice` with the wrong type, as a misconfigured route would.
+#[contract]
+struct WrongShapeOracle;
+
+#[contractimpl]
+impl WrongShapeOracle {
+    pub fn lastprice(_env: Env, _asset: Asset) -> u32 {
+        7
+    }
+
+    pub fn decimals(_env: Env) -> u32 {
+        8
+    }
+}
+
 #[contract]
 struct MockRedStoneFeed;
 
@@ -482,4 +497,89 @@ fn nav_over_a_three_leg_fund() {
     // An unpriced leg fails the whole NAV rather than understating it.
     feed.set(&10_000_000_000, &((NOW - 27 * HOUR) * 1000));
     assert_eq!(err(s.nav.try_nav(&fund)), NavError::NoFreshPrice);
+}
+
+/// A primary route the given oracle serves, with Reflector as the fallback.
+fn with_fallback(s: &Setup, token: &Address, oracle: &Address) {
+    route_usdc(s, 100_000_000);
+    let mut primary = redstone_route(s, token);
+    primary.oracle = oracle.clone();
+    s.reflector.set(&stellar(token), &50_000_000_000_000, &NOW);
+    s.nav
+        .set_route(token, &primary, &Some(reflector_route(s, token)));
+}
+
+fn assert_fell_back(s: &Setup, token: &Address) {
+    let quote = s.nav.price(token);
+    assert_eq!(quote.source, Symbol::new(&s.env, "reflector"));
+    assert_eq!(quote.price, 50_000_000);
+    assert_eq!(quote.divergence_bps, None);
+}
+
+#[test]
+fn overflowing_primary_falls_back() {
+    let s = setup();
+    let token = new_token(&s.env);
+    let zero_decimals = MockSep40Client::new(&s.env, &s.env.register(MockSep40, (0u32,)));
+    with_fallback(&s, &token, &zero_decimals.address);
+    zero_decimals.set(&stellar(&token), &(i128::MAX / 2), &NOW);
+    assert_fell_back(&s, &token);
+
+    let absurd_decimals = MockSep40Client::new(&s.env, &s.env.register(MockSep40, (80u32,)));
+    let mut primary = redstone_route(&s, &token);
+    primary.oracle = absurd_decimals.address.clone();
+    absurd_decimals.set(&stellar(&token), &1, &NOW);
+    s.nav
+        .set_route(&token, &primary, &Some(reflector_route(&s, &token)));
+    assert_fell_back(&s, &token);
+}
+
+#[test]
+fn future_dated_primary_falls_back() {
+    let s = setup();
+    let token = new_token(&s.env);
+    let early = MockSep40Client::new(&s.env, &s.env.register(MockSep40, (8u32,)));
+    with_fallback(&s, &token, &early.address);
+    early.set(&stellar(&token), &51_000_000, &(NOW + 120));
+    assert_fell_back(&s, &token);
+    early.set(&stellar(&token), &51_000_000, &((NOW + 120) * 1000));
+    assert_fell_back(&s, &token);
+
+    early.set(&stellar(&token), &51_000_000, &(NOW + 30));
+    assert_eq!(s.nav.price(&token).price, 51_000_000);
+}
+
+#[test]
+fn trapping_or_absent_oracle_falls_back() {
+    let s = setup();
+    let token = new_token(&s.env);
+    let trapping = MockSep40Client::new(&s.env, &s.env.register(MockSep40, (8u32,)));
+    trapping.set(&stellar(&token), &51_000_000, &NOW);
+    trapping.break_feed();
+    with_fallback(&s, &token, &trapping.address);
+    assert_fell_back(&s, &token);
+
+    let wrong_shape = s.env.register(WrongShapeOracle, ());
+    with_fallback(&s, &token, &wrong_shape);
+    assert_fell_back(&s, &token);
+
+    with_fallback(&s, &token, &Address::generate(&s.env));
+    assert_fell_back(&s, &token);
+}
+
+#[test]
+fn absurd_divergence_saturates() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let token = new_token(&s.env);
+    s.redstone.set(&stellar(&token), &1, &NOW);
+    s.reflector.set(&stellar(&token), &(i128::MAX / 4), &NOW);
+    let mut secondary = redstone_route(&s, &token);
+    secondary.oracle = s.reflector.address.clone();
+    secondary.quote = Quote::Usd;
+    s.nav
+        .set_route(&token, &redstone_route(&s, &token), &Some(secondary));
+    let quote = s.nav.price(&token);
+    assert_eq!(quote.price, 1);
+    assert_eq!(quote.divergence_bps, Some(u32::MAX));
 }
