@@ -5,25 +5,45 @@
 #   aBENJI Alloy Treasury + BENJI  USDC + USTRY + BENJI                allowlist; waits on Franklin
 #   aRAIL  Issuer Rails Demo       USDC + DEMOMMF (BENJI's flags)      allowlist; full drill
 #
-# Needs identities you created yourself (`stellar keys generate <name>` then
-# fund them from your wallet): alloy-admin (~40 XLM), alloy-manager (~40 XLM),
-# alloy-demo-issuer (~10 XLM). Contracts come from the attested GitHub
+# Identities live in the local stellar keystore (alloy-main-admin,
+# alloy-main-manager, alloy-main-issuer by default). Fund only the admin with
+# ~95 XLM; the script opens the manager (40 XLM) and issuer (10 XLM) from it.
+# ALLOY_YES=1 skips the confirmation prompt. Contracts come from the attested GitHub
 # release RELEASE_TAG (default v0.1.0), never a local build. Resumable: steps already in
 # deployments/mainnet.json are skipped.
 set -euo pipefail
 export NETWORK=mainnet
+export ADMIN_IDENTITY="${ADMIN_IDENTITY:-alloy-main-admin}"
+export MANAGER_IDENTITY="${MANAGER_IDENTITY:-alloy-main-manager}"
+export DEMO_ISSUER_IDENTITY="${DEMO_ISSUER_IDENTITY:-alloy-main-issuer}"
 export RELEASE_TAG="${RELEASE_TAG:-v0.1.0}"
-export INVESTOR_IDENTITY="${INVESTOR_IDENTITY:-alloy-manager}"
+export INVESTOR_IDENTITY="${INVESTOR_IDENTITY:-$MANAGER_IDENTITY}"
 S="$(dirname "$0")/alloy.sh"
 . "$(dirname "$0")/lib.sh"
 
+xlm_of() {
+  curl -s "$HORIZON_URL/accounts/$(addr "$1")" \
+    | jq -r '[.balances[]? | select(.asset_type == "native")][0].balance // "0"'
+}
+
 for id in "$ADMIN_IDENTITY" "$MANAGER_IDENTITY" "$DEMO_ISSUER_IDENTITY"; do
-  a="$(addr "$id")" || { echo "missing identity $id" >&2; exit 1; }
-  xlm="$(curl -s "$HORIZON_URL/accounts/$a" | jq -r '[.balances[] | select(.asset_type == "native")][0].balance // "unfunded"')"
-  echo "$id $a  XLM: $xlm"
+  addr "$id" >/dev/null || { echo "missing identity $id" >&2; exit 1; }
+  echo "$id $(addr "$id")  XLM: $(xlm_of "$id")"
 done
-read -r -p "Spend real XLM on mainnet with these accounts? [yes/no] " answer
-[ "$answer" = yes ] || exit 1
+if [ "${ALLOY_YES:-}" != 1 ]; then
+  read -r -p "Spend real XLM on mainnet with these accounts? [yes/no] " answer
+  [ "$answer" = yes ] || exit 1
+fi
+
+open_account() {
+  local id="$1" stroops="$2"
+  if [ "$(xlm_of "$id")" = 0 ]; then
+    run_tx "open $id" stellar tx new create-account --source-account "$ADMIN_IDENTITY" \
+      --destination "$(addr "$id")" --starting-balance "$stroops" >/dev/null
+  fi
+}
+open_account "$MANAGER_IDENTITY" 400000000
+open_account "$DEMO_ISSUER_IDENTITY" 100000000
 
 step() { [ -n "$(get "$1")" ]; }
 
