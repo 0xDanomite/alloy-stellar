@@ -56,6 +56,11 @@
   color-scheme: light;
   --gold: oklch(0.89 0.18 95);
   --gold-foreground: oklch(0.18 0 0);
+  --panel: oklch(1 0 0 / 0.66);
+  --panel-border: oklch(0.88 0.025 288);
+  --haze-a: oklch(0.86 0.07 292 / 0.55);
+  --haze-b: oklch(0.9 0.05 270 / 0.45);
+  --haze-c: oklch(0.88 0.06 205 / 0.25);
 }
 
 .dark {
@@ -84,6 +89,11 @@
   --logo-a: #b7ace8;
   --logo-b: #beb2f6;
   --logo-c: #ab9df0;
+  --panel: oklch(0.3 0.022 292 / 0.42);
+  --panel-border: oklch(1 0 0 / 11%);
+  --haze-a: oklch(0.52 0.1 292 / 0.5);
+  --haze-b: oklch(0.45 0.08 282 / 0.42);
+  --haze-c: oklch(0.5 0.09 300 / 0.3);
   color-scheme: dark;
 }
 
@@ -236,27 +246,45 @@
     }
   }
 
-  /* Landing only: the strands converge once on load. */
-  .strand {
-    stroke-dasharray: 1;
-    stroke-dashoffset: 1;
-    animation: strand-draw 1.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  .text-filing {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    line-height: 1.4;
+    font-weight: 500;
+    font-style: italic;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
-  @keyframes strand-draw {
-    to {
-      stroke-dashoffset: 0;
-    }
+
+  /* The violet haze behind every page: two soft pools of Lilac on near-black. */
+  .atmosphere {
+    background:
+      radial-gradient(ellipse 70% 55% at 78% 18%, var(--haze-a), transparent 70%),
+      radial-gradient(ellipse 60% 50% at 30% 72%, var(--haze-b), transparent 72%),
+      radial-gradient(ellipse 50% 40% at 85% 90%, var(--haze-c), transparent 70%);
+  }
+
+  .panel {
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border: 1px solid var(--panel-border);
+    background: color-mix(in oklch, var(--background) 60%, transparent);
+    border-radius: 0.625rem;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .skeleton,
   .content-fade,
-  .check-draw,
-  .strand {
+  .check-draw {
     animation: none;
-  }
-  .strand {
-    stroke-dashoffset: 0;
   }
 }
