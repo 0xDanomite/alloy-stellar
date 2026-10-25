@@ -521,3 +521,5 @@ impl Fund {
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test_reference_model;
