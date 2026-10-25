@@ -48,7 +48,7 @@ export function NetworkSwitch() {
             role="radio"
             aria-checked={active}
             onClick={() => !active && switchNetwork(n)}
-            className={`inline-flex items-center gap-2 rounded-full px-3 py-1 whitespace-nowrap transition-colors ${
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 whitespace-nowrap transition-colors sm:gap-2 sm:px-3 ${
               active
                 ? n === "mainnet"
                   ? "bg-gold text-gold-foreground"
@@ -76,7 +76,7 @@ export function Button({
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; busy?: boolean }) {
   const styles: Record<Variant, string> = {
-    primary: "bg-primary text-primary-foreground hover:opacity-90",
+    primary: "bg-primary text-primary-foreground shadow-sm hover:opacity-90",
     secondary: "border bg-card hover:bg-secondary",
     ghost: "hover:bg-secondary",
   };
@@ -84,7 +84,7 @@ export function Button({
     <button
       {...rest}
       disabled={rest.disabled || busy}
-      className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-4 text-label transition-[opacity,background-color] disabled:cursor-not-allowed disabled:opacity-50 ${styles[variant]} ${className}`}
+      className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-full px-4 text-label transition-[opacity,background-color] disabled:cursor-not-allowed disabled:opacity-50 ${styles[variant]} ${className}`}
     >
       {busy && <Spinner />}
       {children}
@@ -188,7 +188,7 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={() => setDark((d) => !d)}
-      className="grid size-10 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground"
+      className="grid size-10 place-items-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"
       aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
     >
       <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>

@@ -54,7 +54,7 @@ export function Built() {
             <section key={g.title}>
               <h2 className="text-heading">{g.title}</h2>
               {g.blurb && <p className="mt-1 text-muted-foreground">{g.blurb}</p>}
-              <ol className="mt-4 divide-y rounded-lg border bg-card">
+              <ol className="panel mt-4 divide-y rounded-2xl">
                 {g.txs.map((tx) => (
                   <li key={tx.hash}>
                     <a
@@ -82,7 +82,7 @@ export function Built() {
                   href={`${links.repo}/pull/${pr.n}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="block rounded-lg border bg-card px-4 py-3 hover:border-primary/50"
+                  className="panel block rounded-xl px-4 py-3 hover:border-primary/50"
                 >
                   <span className="num text-[0.8125rem] text-muted-foreground">#{pr.n}</span>
                   <span className="mt-0.5 block">{pr.title}</span>
