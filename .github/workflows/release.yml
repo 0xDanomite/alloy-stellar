@@ -1,0 +1,58 @@
+# Verified builds (SEP-0055). Mirrors stellar-expert/soroban-build-workflow
+# v25.1.0 step for step, with stellar-cli 25.2.0: soroban-sdk 29 refuses to
+# build under 25.1. Every v* tag builds both contracts from the tagged commit
+# with source_repo stamped into contractmeta, attests each wasm, attaches them
+# to one release, and registers the build with stellar.expert. Mainnet
+# deploys use these binaries, never a local build.
+name: Build and Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      matrix:
+        package: [alloy-fund, alloy-platform]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: stellar/stellar-cli@28484880988199233a7e8e87c97cb12dac323cb3 # v25.2.0
+        with:
+          version: 25.2.0
+      - name: Build
+        run: |
+          stellar contract build --optimize --package "${{ matrix.package }}" \
+            --out-dir out --meta "source_repo=github:${{ github.repository }}"
+          VERSION=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "${{ matrix.package }}") | .version')
+          WASM="${{ matrix.package }}_v${VERSION}.wasm"
+          cp "out/$(echo '${{ matrix.package }}' | tr - _).wasm" "out/$WASM"
+          echo "WASM=$WASM" >> "$GITHUB_ENV"
+          echo "WASM_HASH=$(sha256sum "out/$WASM" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+          stellar contract info meta --wasm "out/$WASM"
+      - uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1
+        with:
+          subject-path: out/${{ env.WASM }}
+          subject-name: ${{ env.WASM }}
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 \
+            || gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes "Verified build (SEP-0055)."
+          gh release upload "${{ github.ref_name }}" "out/${{ env.WASM }}" --clobber
+      - name: Register with stellar.expert
+        run: |
+          jq -n --arg repo "${{ github.server_url }}/${{ github.repository }}" --arg sha "${{ github.sha }}" \
+            --arg job "${{ github.job }}" --arg run "${{ github.run_id }}" --arg hash "${{ env.WASM_HASH }}" \
+            --arg pkg "${{ matrix.package }}" \
+            '{repository: $repo, commitHash: $sha, jobId: $job, runId: $run, contractHash: $hash, packageName: $pkg}' \
+          | curl -sS -X POST "https://api.stellar.expert/explorer/public/contract-validation/match" \
+              -H "Content-Type: application/json" -d @- --max-time 15 || true
