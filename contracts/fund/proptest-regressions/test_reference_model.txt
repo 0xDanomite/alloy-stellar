@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e95cc3668300d960790570afdddc9b59c268b7a87ef6ad0fc8aed6f6c77a0c34 # shrinks to initial_units = [1], ops = [Issue { investor: 0, shares: 9774676 }, Issue { investor: 0, shares: 1 }]
