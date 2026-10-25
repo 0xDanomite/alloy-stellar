@@ -1,0 +1,295 @@
+{
+  "contracts": {
+    "platform": "CDV2FJ4J2IIFSUREC5VAHINVCSVZGOMIMXJHA32XD7H2CMY6DNXD6KDM",
+    "funds": {
+      "aTRSY": "CAIJVJBRUVJZFCN2TFCV6LTPZNMCJC62IP6ZDIFXFAMHUW5YMYYCC7UB",
+      "aBENJI": "CCIQFFLE5X3T3SWWOET2N2LIPQLEUDTGLOGCDCBPDOM67ARH6A26MKG5",
+      "aRAIL": "CCBONNERPF2UQGMRTOJELOSA574VDY6XFRNKLLVBZNLLEULZ65UYPWJJ"
+    },
+    "nav": "CBO42GCYFZPOM4ITSCKF7DXI7MBL5PMHRL4DBBEZ35HZLOWT76GLZVIC"
+  },
+  "assets": {
+    "XLM": {
+      "asset": "native",
+      "contract": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+      "status": "open"
+    },
+    "USDC": {
+      "asset": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "contract": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "status": "open"
+    },
+    "USDY": {
+      "asset": "USDY:GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+      "contract": "CB3YA656OYIHU57657I5KGSBRHE5I3OZU4VFC22PYAOANFZHEWNYGAGP",
+      "status": "open"
+    },
+    "USTRY": {
+      "asset": "USTRY:GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+      "contract": "CBLV4ATSIWU67CFSQU2NVRKINQIKUZ2ODSZBUJTJ43VJVRSBTZYOPNUR",
+      "status": "open"
+    },
+    "CETES": {
+      "asset": "CETES:GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+      "contract": "CAL6ER2TI6CTRAY6BFXWNWA7WTYXUXTQCHUBCIBU5O6KM3HJFG6Z6VXV",
+      "status": "open"
+    },
+    "BENJI": {
+      "asset": "BENJI:GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5",
+      "contract": "CCDSDPD7FXB74PFB2SYCHGQRWLXQRYRTQSPCVSRJ7FAOLOUGWEYAXQ7A",
+      "status": "permissioned"
+    },
+    "DEMOMMF": {
+      "asset": "DEMOMMF:GAPHKRSKDAJYL6FYCRBIIY4M6QP32CM6WOKPNGOOKZ3EQ52LW2K4Q2HM",
+      "contract": "CCDKWOUML7ZBLXBWCLLX2BAWW5OCSU3BYCASK7KHSGAZVJYYDMSXG347",
+      "status": "permissioned",
+      "issuer_identity": "alloy-main-issuer"
+    }
+  },
+  "txs": [
+    {
+      "label": "open alloy-main-manager",
+      "hash": "5dc5f3b11c8b28d166933f9d3d4f13852f369f365828139d99b22716ecf0fcb7",
+      "url": "https://stellar.expert/explorer/public/tx/5dc5f3b11c8b28d166933f9d3d4f13852f369f365828139d99b22716ecf0fcb7"
+    },
+    {
+      "label": "open alloy-main-issuer",
+      "hash": "8bb192135dc98147badc0007862bce6c948240d7a4a43a9dd3964cb152f7d65e",
+      "url": "https://stellar.expert/explorer/public/tx/8bb192135dc98147badc0007862bce6c948240d7a4a43a9dd3964cb152f7d65e"
+    },
+    {
+      "label": "upload fund wasm",
+      "hash": "929eaa5941fe178c44cc096cb4fda9139edc21b21828a01d13500a2f65ad84b0",
+      "url": "https://stellar.expert/explorer/public/tx/929eaa5941fe178c44cc096cb4fda9139edc21b21828a01d13500a2f65ad84b0"
+    },
+    {
+      "label": "deploy platform",
+      "hash": "f9216a02249f59377a8d0512ee7632e808df2b5f497c04706a2e95b7e315fc7d",
+      "url": "https://stellar.expert/explorer/public/tx/f9216a02249f59377a8d0512ee7632e808df2b5f497c04706a2e95b7e315fc7d"
+    },
+    {
+      "label": "allowlist manager",
+      "hash": "7302488c0a81c55e5ef4826b0a13b267bee412073cf4543aa015fd8301e9a956",
+      "url": "https://stellar.expert/explorer/public/tx/7302488c0a81c55e5ef4826b0a13b267bee412073cf4543aa015fd8301e9a956"
+    },
+    {
+      "label": "issuer flags DEMOMMF",
+      "hash": "11c907a61ce2c89aec135590c1ee87e20ff767892eb4acb5d914b3c184068468",
+      "url": "https://stellar.expert/explorer/public/tx/11c907a61ce2c89aec135590c1ee87e20ff767892eb4acb5d914b3c184068468"
+    },
+    {
+      "label": "deploy SAC DEMOMMF",
+      "hash": "7b9e3554e2158ccd76e61049364d9c4d08ede1b1546914a9247c76650a450f15",
+      "url": "https://stellar.expert/explorer/public/tx/7b9e3554e2158ccd76e61049364d9c4d08ede1b1546914a9247c76650a450f15"
+    },
+    {
+      "label": "shelf BENJI Permissioned",
+      "hash": "d13e5ce076381ea6dcac14c1d7b457cac19ec7b247a5dfd7ff5a2c3b18ec2766",
+      "url": "https://stellar.expert/explorer/public/tx/d13e5ce076381ea6dcac14c1d7b457cac19ec7b247a5dfd7ff5a2c3b18ec2766"
+    },
+    {
+      "label": "shelf CETES Open",
+      "hash": "283a617289c7d7d0cfd35a79a5f8ade5a0cec3052886e3b4dc213f03c82c3a2d",
+      "url": "https://stellar.expert/explorer/public/tx/283a617289c7d7d0cfd35a79a5f8ade5a0cec3052886e3b4dc213f03c82c3a2d"
+    },
+    {
+      "label": "shelf DEMOMMF Permissioned",
+      "hash": "be3dad60d170fbc9a0b77abb0a293415d89bd372702325dbdf041093856368c9",
+      "url": "https://stellar.expert/explorer/public/tx/be3dad60d170fbc9a0b77abb0a293415d89bd372702325dbdf041093856368c9"
+    },
+    {
+      "label": "shelf USDC Open",
+      "hash": "33c77c5d6fd2f77399746a55dc1432aef03d8d674e782f2969ae148e3909f86c",
+      "url": "https://stellar.expert/explorer/public/tx/33c77c5d6fd2f77399746a55dc1432aef03d8d674e782f2969ae148e3909f86c"
+    },
+    {
+      "label": "create fund aRAIL",
+      "hash": "e2bb2ff5f22ff100ee704ea54c838597199c684fb29e3c1b593998601bf52989",
+      "url": "https://stellar.expert/explorer/public/tx/e2bb2ff5f22ff100ee704ea54c838597199c684fb29e3c1b593998601bf52989"
+    },
+    {
+      "label": "shelf BENJI Permissioned",
+      "hash": "5b6f52335cb3af8ed9add7d2e1397dce9ad946fc0aa3f28d6311fe48ff7dd1fe",
+      "url": "https://stellar.expert/explorer/public/tx/5b6f52335cb3af8ed9add7d2e1397dce9ad946fc0aa3f28d6311fe48ff7dd1fe"
+    },
+    {
+      "label": "shelf CETES Open",
+      "hash": "4877ce4cb5b2dcc520df92c013a88b6ba4d5df3495cf9c3802d38d57206645f6",
+      "url": "https://stellar.expert/explorer/public/tx/4877ce4cb5b2dcc520df92c013a88b6ba4d5df3495cf9c3802d38d57206645f6"
+    },
+    {
+      "label": "shelf BENJI Permissioned",
+      "hash": "69380b3306314d025db55f030f7b1378e54cad5dad1ca2e1d4dc5d1eb7956f80",
+      "url": "https://stellar.expert/explorer/public/tx/69380b3306314d025db55f030f7b1378e54cad5dad1ca2e1d4dc5d1eb7956f80"
+    },
+    {
+      "label": "shelf CETES Open",
+      "hash": "f8e47564006e90d3e8c83e577404595e2cb28661ea0b3f9870aa75f20d789648",
+      "url": "https://stellar.expert/explorer/public/tx/f8e47564006e90d3e8c83e577404595e2cb28661ea0b3f9870aa75f20d789648"
+    },
+    {
+      "label": "shelf DEMOMMF Permissioned",
+      "hash": "c2800d8a6e37015afcd027eaf5abb78b442ff1bf4a661b70c3ece6964bba099a",
+      "url": "https://stellar.expert/explorer/public/tx/c2800d8a6e37015afcd027eaf5abb78b442ff1bf4a661b70c3ece6964bba099a"
+    },
+    {
+      "label": "shelf USDC Open",
+      "hash": "3e174fef367265656d2b7c3aa975600edf812078ea5cab99d63a519ecb338718",
+      "url": "https://stellar.expert/explorer/public/tx/3e174fef367265656d2b7c3aa975600edf812078ea5cab99d63a519ecb338718"
+    },
+    {
+      "label": "shelf USDY Open",
+      "hash": "9fe43d3a3ff8c9de9fcd99558ef95cea0718a9a3416cf4a71bcea804b6e24b50",
+      "url": "https://stellar.expert/explorer/public/tx/9fe43d3a3ff8c9de9fcd99558ef95cea0718a9a3416cf4a71bcea804b6e24b50"
+    },
+    {
+      "label": "shelf USTRY Open",
+      "hash": "1e1c7c6869391a5a4347473531bc2ab5e72e4a00fddd6f20fca384fe82a8bfa6",
+      "url": "https://stellar.expert/explorer/public/tx/1e1c7c6869391a5a4347473531bc2ab5e72e4a00fddd6f20fca384fe82a8bfa6"
+    },
+    {
+      "label": "shelf XLM Open",
+      "hash": "31c3e7fbf3534b8fca11e233f543ba891428e3c50cc7f881df0c67b994468357",
+      "url": "https://stellar.expert/explorer/public/tx/31c3e7fbf3534b8fca11e233f543ba891428e3c50cc7f881df0c67b994468357"
+    },
+    {
+      "label": "create fund aTRSY",
+      "hash": "0064e7fe93c765ccfb0a18f11454ba7fe8c4e65191378ae78dc6692c0f1c9206",
+      "url": "https://stellar.expert/explorer/public/tx/0064e7fe93c765ccfb0a18f11454ba7fe8c4e65191378ae78dc6692c0f1c9206"
+    },
+    {
+      "label": "create fund aBENJI",
+      "hash": "29f66fb498c9a13c005e69dc02be7067a5d289232e219da2b2aab943a36d1369",
+      "url": "https://stellar.expert/explorer/public/tx/29f66fb498c9a13c005e69dc02be7067a5d289232e219da2b2aab943a36d1369"
+    },
+    {
+      "label": "trustline USDC",
+      "hash": "d5ebbd218df07dba2b8b6fa2181e0794830236a30fe44c9b12e6cf8027d26ca1",
+      "url": "https://stellar.expert/explorer/public/tx/d5ebbd218df07dba2b8b6fa2181e0794830236a30fe44c9b12e6cf8027d26ca1"
+    },
+    {
+      "label": "buy USDC",
+      "hash": "37f6cf743c2c57a02d134e897088e09fb62d6f64e57e48c057efb9986d6981df",
+      "url": "https://stellar.expert/explorer/public/tx/37f6cf743c2c57a02d134e897088e09fb62d6f64e57e48c057efb9986d6981df"
+    },
+    {
+      "label": "trustline USDY",
+      "hash": "70626f332aef77764169e7bd4911ac183b7daef509bab8649a902a30fb6f567a",
+      "url": "https://stellar.expert/explorer/public/tx/70626f332aef77764169e7bd4911ac183b7daef509bab8649a902a30fb6f567a"
+    },
+    {
+      "label": "buy USDY",
+      "hash": "5abb5a41b84f4e2e3f0b64b9f0cc3aae91fe71a7a2e414a75015d59ada4e976a",
+      "url": "https://stellar.expert/explorer/public/tx/5abb5a41b84f4e2e3f0b64b9f0cc3aae91fe71a7a2e414a75015d59ada4e976a"
+    },
+    {
+      "label": "trustline USTRY",
+      "hash": "60fb1f751b3e37eabc28a1dadb6033d412cf4229faa766aadf216a8ba1ebe161",
+      "url": "https://stellar.expert/explorer/public/tx/60fb1f751b3e37eabc28a1dadb6033d412cf4229faa766aadf216a8ba1ebe161"
+    },
+    {
+      "label": "buy USTRY",
+      "hash": "e756df6d4a8d61c917befe91c68e312355d85cd57b1709e5e0bc2844c2e9ee94",
+      "url": "https://stellar.expert/explorer/public/tx/e756df6d4a8d61c917befe91c68e312355d85cd57b1709e5e0bc2844c2e9ee94"
+    },
+    {
+      "label": "trustline CETES",
+      "hash": "47aa30159eaf088bb7b94a973b34efabd1c1d7e0e4e95da26a600af5810b07bd",
+      "url": "https://stellar.expert/explorer/public/tx/47aa30159eaf088bb7b94a973b34efabd1c1d7e0e4e95da26a600af5810b07bd"
+    },
+    {
+      "label": "buy CETES",
+      "hash": "72cce1966a614d60e99a26aeceadafc4a818799cdbc928e885aee3a1195beae4",
+      "url": "https://stellar.expert/explorer/public/tx/72cce1966a614d60e99a26aeceadafc4a818799cdbc928e885aee3a1195beae4"
+    },
+    {
+      "label": "issue aTRSY",
+      "hash": "94489b5be5bdba25d51a29212a2d96075f74de2eb2ad46be468767ad50eb7c66",
+      "url": "https://stellar.expert/explorer/public/tx/94489b5be5bdba25d51a29212a2d96075f74de2eb2ad46be468767ad50eb7c66"
+    },
+    {
+      "label": "trustline DEMOMMF",
+      "hash": "35412da3822bef70f6c824b1cb4fe201bf77bb246ebdb48eaf730e2c1c6f44f4",
+      "url": "https://stellar.expert/explorer/public/tx/35412da3822bef70f6c824b1cb4fe201bf77bb246ebdb48eaf730e2c1c6f44f4"
+    },
+    {
+      "label": "issuer authorizes investor for DEMOMMF",
+      "hash": "c3ae8981d822a743c8b355cb35f6449bf013ad7ef3f071ad861bec35c4075caa",
+      "url": "https://stellar.expert/explorer/public/tx/c3ae8981d822a743c8b355cb35f6449bf013ad7ef3f071ad861bec35c4075caa"
+    },
+    {
+      "label": "pay investor DEMOMMF",
+      "hash": "20c98eb7859919a2eed7bbb42af0cf78cc3428eb3f46fc23029583df11c713de",
+      "url": "https://stellar.expert/explorer/public/tx/20c98eb7859919a2eed7bbb42af0cf78cc3428eb3f46fc23029583df11c713de"
+    },
+    {
+      "label": "allowlist investor on aRAIL",
+      "hash": "b7bbd30cbb5e3cece5cd7a35ed5c1f08ded5ece58fdf5c42d2598625d9c8cfab",
+      "url": "https://stellar.expert/explorer/public/tx/b7bbd30cbb5e3cece5cd7a35ed5c1f08ded5ece58fdf5c42d2598625d9c8cfab"
+    },
+    {
+      "label": "issuer authorizes fund for DEMOMMF",
+      "hash": "73cbec3c624226ff92ea1ff33f2b72f5c99ec1e59d4553eec9d5ac3d5824a291",
+      "url": "https://stellar.expert/explorer/public/tx/73cbec3c624226ff92ea1ff33f2b72f5c99ec1e59d4553eec9d5ac3d5824a291"
+    },
+    {
+      "label": "issue aRAIL",
+      "hash": "784b760deb1d908896985c513ada38d9968576a67c56488769054f2d24814698",
+      "url": "https://stellar.expert/explorer/public/tx/784b760deb1d908896985c513ada38d9968576a67c56488769054f2d24814698"
+    },
+    {
+      "label": "clawback drill DEMOMMF from aRAIL",
+      "hash": "f692a96a8aa7e1ec742ecb4fe1efbaef54e2c81bb5150d39e428e5949f893fa0",
+      "url": "https://stellar.expert/explorer/public/tx/f692a96a8aa7e1ec742ecb4fe1efbaef54e2c81bb5150d39e428e5949f893fa0"
+    },
+    {
+      "label": "redeem aRAIL",
+      "hash": "1fbd0e1a0d80303d243d60282a2b1360c9760e4e6ad21b3d5a71084a094062f0",
+      "url": "https://stellar.expert/explorer/public/tx/1fbd0e1a0d80303d243d60282a2b1360c9760e4e6ad21b3d5a71084a094062f0"
+    },
+    {
+      "label": "deploy nav",
+      "hash": "ed8b608cc08bff0e76df40110388bb1eb2eae026af274cceecad19af40469344",
+      "url": "https://stellar.expert/explorer/public/tx/ed8b608cc08bff0e76df40110388bb1eb2eae026af274cceecad19af40469344"
+    },
+    {
+      "label": "nav route XLM",
+      "hash": "b73d8e996a691a6534ca483121aa9f630faa5ab07ab9670f241f2860dee88a17",
+      "url": "https://stellar.expert/explorer/public/tx/b73d8e996a691a6534ca483121aa9f630faa5ab07ab9670f241f2860dee88a17"
+    },
+    {
+      "label": "nav route USDC",
+      "hash": "14ce5d14ab25b3aa6b98888ef6487789b3349ee2c5a5b5a3e4f6412f5f8bd2a5",
+      "url": "https://stellar.expert/explorer/public/tx/14ce5d14ab25b3aa6b98888ef6487789b3349ee2c5a5b5a3e4f6412f5f8bd2a5"
+    },
+    {
+      "label": "nav route USDY",
+      "hash": "696706072fdbc3b67e6f379943e11f7e840806d39c31107a795c76c343a3dccb",
+      "url": "https://stellar.expert/explorer/public/tx/696706072fdbc3b67e6f379943e11f7e840806d39c31107a795c76c343a3dccb"
+    },
+    {
+      "label": "nav route USTRY",
+      "hash": "93c2d17338eb30cc806fd1ca97eb64d0d9b7bc8ab5ed2a8e87ee97a3ef2fa29e",
+      "url": "https://stellar.expert/explorer/public/tx/93c2d17338eb30cc806fd1ca97eb64d0d9b7bc8ab5ed2a8e87ee97a3ef2fa29e"
+    },
+    {
+      "label": "nav route CETES",
+      "hash": "d934fcae82438ba17eb15e3bfddd2ce4c31ab397e599a6348956e26a7a40e858",
+      "url": "https://stellar.expert/explorer/public/tx/d934fcae82438ba17eb15e3bfddd2ce4c31ab397e599a6348956e26a7a40e858"
+    },
+    {
+      "label": "nav route BENJI",
+      "hash": "f160ce25662a71236984e20d3f7a3938131c44f6c944b68b2f9c65af53c64999",
+      "url": "https://stellar.expert/explorer/public/tx/f160ce25662a71236984e20d3f7a3938131c44f6c944b68b2f9c65af53c64999"
+    }
+  ],
+  "fund_wasm": "32677e1a2abdbfb57c0f2da513aeed864aa081d604b192cde062f859ff4c446d",
+  "admin": "GDZOF2M4U5UTJRU2SX2MWZMNXTCNGN4V5B7WLEQCZTS4NFO3SFV7XGQN",
+  "release": "v0.2.0",
+  "shelf_done": true,
+  "seeded": {
+    "aTRSY": true,
+    "aRAIL": true
+  },
+  "nav_routes_done": true
+}

@@ -51,8 +51,6 @@ step .contracts.platform || "$S" deploy
 step '.assets.USDC' || "$S" mainnet-assets
 step '.assets.DEMOMMF' || "$S" issue-asset DEMOMMF "$DEMO_ISSUER_IDENTITY" permissioned
 step '.shelf_done' || { "$S" shelf; put '.shelf_done = true'; }
-step '.contracts.nav' || "$S" nav-deploy
-step '.nav_routes_done' || { "$S" mainnet-nav-routes; put '.nav_routes_done = true'; }
 
 if ! step '.contracts.funds.aTRSY'; then
   "$S" create-fund "Alloy Stellar Treasury" aTRSY Open \
@@ -84,6 +82,9 @@ if ! step '.seeded.aRAIL'; then
   "$S" redeem aRAIL 10000000
   put '.seeded.aRAIL = true'
 fi
+
+step '.contracts.nav' || "$S" nav-deploy
+step '.nav_routes_done' || { "$S" mainnet-nav-routes; put '.nav_routes_done = true'; }
 
 "$S" status aTRSY
 "$S" nav aTRSY
