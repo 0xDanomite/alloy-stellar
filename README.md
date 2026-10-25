@@ -20,6 +20,11 @@ can switch off.
 - The EVM codebase is private. This repository is new, public, and
   everything in it was written at HackMeridian.
 
+## How It Works
+
+[docs/how-it-works.md](docs/how-it-works.md): the accounting, the guarantees and
+the tests that hold them, issuer rails, and verifiable builds.
+
 ## License
 
 [Apache-2.0](LICENSE)
