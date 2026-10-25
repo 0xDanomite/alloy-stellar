@@ -2,7 +2,10 @@
   "contracts": {
     "platform": "CAZJIYK3WGFJPNSB3TSUIPDZ4AP5MFRS6SHWVUY7QJONB3BNTI4IP75B",
     "funds": {
-      "aDEMO": "CBWGXZ6P2CHWPYAROQOQPN4TUX7VPJ4NR4MXWSSRGS22KXJKLITE3KHG"
+      "aDEMO": "CBWGXZ6P2CHWPYAROQOQPN4TUX7VPJ4NR4MXWSSRGS22KXJKLITE3KHG",
+      "aTRSY": "CD63YQBPSENOMIZSDJ2M6YXPJZ4MIZ66M5ZNQUDMSK5OGZ5DHVASL25P",
+      "aBENJI": "CCICOWUGYVXNYPKG3XWEFGMOYDLSDBD6AKIRVEMO72KG5MM37TN7AAOF",
+      "aRAIL": "CDS4XL3LUPTDK7GKC7YRTHNEENFS3HRMUZO56BRYOTUZFV2WGVQSK5NQ"
     }
   },
   "assets": {
@@ -22,6 +25,36 @@
       "asset": "native",
       "contract": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
       "status": "open"
+    },
+    "tUSDC": {
+      "asset": "tUSDC:GAU5QXB2N53WHMFUDFWZ3BBJU7WFQDHRE3CDPPJW27JHUOI3D5SQARDZ",
+      "contract": "CAXK2UYTGZTA7DGBHKLC5WOBK5CFD74P3A5LCRRGNC5SXF56SBQPN3OJ",
+      "status": "open",
+      "issuer_identity": "alloy-t-issuer"
+    },
+    "tUSDY": {
+      "asset": "tUSDY:GAU5QXB2N53WHMFUDFWZ3BBJU7WFQDHRE3CDPPJW27JHUOI3D5SQARDZ",
+      "contract": "CAPD53IVR4YLMH3QRXG4BVM5QFGCSAQNNK3PN2472OHWHZSYA4QUWOHF",
+      "status": "open",
+      "issuer_identity": "alloy-t-issuer"
+    },
+    "tUSTRY": {
+      "asset": "tUSTRY:GAU5QXB2N53WHMFUDFWZ3BBJU7WFQDHRE3CDPPJW27JHUOI3D5SQARDZ",
+      "contract": "CBHNYRZOFQGIBG4JXQZTTJUM6OXC5GH66YCDOPNHJVHGTEL4QKR3I7SP",
+      "status": "open",
+      "issuer_identity": "alloy-t-issuer"
+    },
+    "tCETES": {
+      "asset": "tCETES:GAU5QXB2N53WHMFUDFWZ3BBJU7WFQDHRE3CDPPJW27JHUOI3D5SQARDZ",
+      "contract": "CCVZ2D5LASC3XFQTUORBF3QN3EOHKQG6MG6VWUMU6VFHC63DJXUOROOI",
+      "status": "open",
+      "issuer_identity": "alloy-t-issuer"
+    },
+    "tBENJI": {
+      "asset": "tBENJI:GBEOBHDJ6NK5RRNBWHDK6MWJETIXKCNTLCFNLOCW4C6756H2G5Q5ZCCQ",
+      "contract": "CDEBCNVZXQDW2S5VBNGPYSUP5SHRMH7OPFZXRWHN7BOCSK73ZPPJ7TUB",
+      "status": "permissioned",
+      "issuer_identity": "alloy-t-benji-issuer"
     }
   },
   "txs": [
@@ -104,9 +137,270 @@
       "label": "set fund wasm",
       "hash": "5d21c982c31535469d0f5e9ad7e116171e4052d36d31e5b8ce765b1a6ecdd149",
       "url": "https://stellar.expert/explorer/testnet/tx/5d21c982c31535469d0f5e9ad7e116171e4052d36d31e5b8ce765b1a6ecdd149"
+    },
+    {
+      "label": "issuer flags tUSDC",
+      "hash": "fec759d425a5e7201693c7b2d618348fa72a1021228cb5d22fe54dd57c70347c",
+      "url": "https://stellar.expert/explorer/testnet/tx/fec759d425a5e7201693c7b2d618348fa72a1021228cb5d22fe54dd57c70347c"
+    },
+    {
+      "label": "deploy SAC tUSDC",
+      "hash": "4bdfd47bff1b70f6d2d119fa752b21d47033f12494658b54e5cd2861dabaa2ba",
+      "url": "https://stellar.expert/explorer/testnet/tx/4bdfd47bff1b70f6d2d119fa752b21d47033f12494658b54e5cd2861dabaa2ba"
+    },
+    {
+      "label": "issuer flags tUSDY",
+      "hash": "ed7c52806cbb172b9f088f43ddbc95a517add58076e56e2ed41899383b7eb581",
+      "url": "https://stellar.expert/explorer/testnet/tx/ed7c52806cbb172b9f088f43ddbc95a517add58076e56e2ed41899383b7eb581"
+    },
+    {
+      "label": "deploy SAC tUSDY",
+      "hash": "94f16f7f01b758d39971a9a9d3f095eebd55757d1f5fb01a615fab6b19948ad6",
+      "url": "https://stellar.expert/explorer/testnet/tx/94f16f7f01b758d39971a9a9d3f095eebd55757d1f5fb01a615fab6b19948ad6"
+    },
+    {
+      "label": "issuer flags tUSTRY",
+      "hash": "7e99fb919c98fc12e482aa1948322d0ac41d3a4528a450a4b3d698ae44d737d4",
+      "url": "https://stellar.expert/explorer/testnet/tx/7e99fb919c98fc12e482aa1948322d0ac41d3a4528a450a4b3d698ae44d737d4"
+    },
+    {
+      "label": "deploy SAC tUSTRY",
+      "hash": "44a3bf6dd2ba1f62f572f78900b04a0493465501f3dabd6785a4a653cd457dea",
+      "url": "https://stellar.expert/explorer/testnet/tx/44a3bf6dd2ba1f62f572f78900b04a0493465501f3dabd6785a4a653cd457dea"
+    },
+    {
+      "label": "issuer flags tCETES",
+      "hash": "cf912c395ca8f166a675ac89e268a893d068982c04349e2b9da415cffad8ce61",
+      "url": "https://stellar.expert/explorer/testnet/tx/cf912c395ca8f166a675ac89e268a893d068982c04349e2b9da415cffad8ce61"
+    },
+    {
+      "label": "deploy SAC tCETES",
+      "hash": "49bc4f0c9e03b5f681dabc17effbe9cac17bedbb7757644ede31053b8e6a8cd1",
+      "url": "https://stellar.expert/explorer/testnet/tx/49bc4f0c9e03b5f681dabc17effbe9cac17bedbb7757644ede31053b8e6a8cd1"
+    },
+    {
+      "label": "issuer flags tBENJI",
+      "hash": "4b87125a7514136b37420cd87b2628b635dcc52d3f18aee142fdde751b26612d",
+      "url": "https://stellar.expert/explorer/testnet/tx/4b87125a7514136b37420cd87b2628b635dcc52d3f18aee142fdde751b26612d"
+    },
+    {
+      "label": "deploy SAC tBENJI",
+      "hash": "22b288a0a6bb94b5234cc79e38c9e594569e00e41781a3c3f15db3240f618474",
+      "url": "https://stellar.expert/explorer/testnet/tx/22b288a0a6bb94b5234cc79e38c9e594569e00e41781a3c3f15db3240f618474"
+    },
+    {
+      "label": "maker trustline tUSDC",
+      "hash": "c73455d81ab7030e69e345600361edd40bbddca0f7272fb96a4f32ace2127abb",
+      "url": "https://stellar.expert/explorer/testnet/tx/c73455d81ab7030e69e345600361edd40bbddca0f7272fb96a4f32ace2127abb"
+    },
+    {
+      "label": "maker inventory tUSDC",
+      "hash": "301ec3d48648c8a80c58c43a4a377f9cb3bafc8ddffa6d2011f2eb383f863f29",
+      "url": "https://stellar.expert/explorer/testnet/tx/301ec3d48648c8a80c58c43a4a377f9cb3bafc8ddffa6d2011f2eb383f863f29"
+    },
+    {
+      "label": "ask tUSDC",
+      "hash": "5b3b193acc7cc187aa3779450df5ce22ac10a39bf38958bbe4c1458fef97b17d",
+      "url": "https://stellar.expert/explorer/testnet/tx/5b3b193acc7cc187aa3779450df5ce22ac10a39bf38958bbe4c1458fef97b17d"
+    },
+    {
+      "label": "bid tUSDC",
+      "hash": "ed3d1d8d5bc308da01a34e904bb3a35a57e9f8c271b2130369cd936d96eb317e",
+      "url": "https://stellar.expert/explorer/testnet/tx/ed3d1d8d5bc308da01a34e904bb3a35a57e9f8c271b2130369cd936d96eb317e"
+    },
+    {
+      "label": "maker trustline tUSDY",
+      "hash": "f76296171bbd90e223945cf7272a1efc61bce194aaa9e71d36ab7ef10ac5a36a",
+      "url": "https://stellar.expert/explorer/testnet/tx/f76296171bbd90e223945cf7272a1efc61bce194aaa9e71d36ab7ef10ac5a36a"
+    },
+    {
+      "label": "maker inventory tUSDY",
+      "hash": "4be06fee4e267d4ee60484ad1bfb8e4acc9ae947d9e60917d88f3eceb742b26b",
+      "url": "https://stellar.expert/explorer/testnet/tx/4be06fee4e267d4ee60484ad1bfb8e4acc9ae947d9e60917d88f3eceb742b26b"
+    },
+    {
+      "label": "ask tUSDY",
+      "hash": "8cc4771c0186fb17b4cd7b153ed31282f68af98828f8a96937361c9a82885207",
+      "url": "https://stellar.expert/explorer/testnet/tx/8cc4771c0186fb17b4cd7b153ed31282f68af98828f8a96937361c9a82885207"
+    },
+    {
+      "label": "bid tUSDY",
+      "hash": "dfc00f992d6c77a2856e0c1ce76a9fb5557678487a1644259c4b67c86e682282",
+      "url": "https://stellar.expert/explorer/testnet/tx/dfc00f992d6c77a2856e0c1ce76a9fb5557678487a1644259c4b67c86e682282"
+    },
+    {
+      "label": "maker trustline tUSTRY",
+      "hash": "ff65c0acf48741ba0f280fd44adc12fc7b5ddc17f104b89d091881107bc3720f",
+      "url": "https://stellar.expert/explorer/testnet/tx/ff65c0acf48741ba0f280fd44adc12fc7b5ddc17f104b89d091881107bc3720f"
+    },
+    {
+      "label": "maker inventory tUSTRY",
+      "hash": "f3236759d22190359cf0f1afd1e3c4f48cc2ff42517f83797a491c9342462d5c",
+      "url": "https://stellar.expert/explorer/testnet/tx/f3236759d22190359cf0f1afd1e3c4f48cc2ff42517f83797a491c9342462d5c"
+    },
+    {
+      "label": "ask tUSTRY",
+      "hash": "43dc55f30c53b633eb0be351f6accf5c48ed8e80b140e6f8e209407ca0e7f73e",
+      "url": "https://stellar.expert/explorer/testnet/tx/43dc55f30c53b633eb0be351f6accf5c48ed8e80b140e6f8e209407ca0e7f73e"
+    },
+    {
+      "label": "bid tUSTRY",
+      "hash": "e48214e25fa1b6cd961ecdefc2050b70a24d7fdcbbc2b608a2ee7510cf9cf0a4",
+      "url": "https://stellar.expert/explorer/testnet/tx/e48214e25fa1b6cd961ecdefc2050b70a24d7fdcbbc2b608a2ee7510cf9cf0a4"
+    },
+    {
+      "label": "maker trustline tCETES",
+      "hash": "6a0a824ab9019fc62dbf0043abe63077dfe7d0abb2f7fdd1364646335acb1dea",
+      "url": "https://stellar.expert/explorer/testnet/tx/6a0a824ab9019fc62dbf0043abe63077dfe7d0abb2f7fdd1364646335acb1dea"
+    },
+    {
+      "label": "maker inventory tCETES",
+      "hash": "f5d80b56da447289d0759cb65e87d5a276f10f8bac61ec1e982bee8f42d2008e",
+      "url": "https://stellar.expert/explorer/testnet/tx/f5d80b56da447289d0759cb65e87d5a276f10f8bac61ec1e982bee8f42d2008e"
+    },
+    {
+      "label": "ask tCETES",
+      "hash": "ecb59d48b6c6fa7f5a0ee5834e31182216dd83fc94de24a99f35411ced75150b",
+      "url": "https://stellar.expert/explorer/testnet/tx/ecb59d48b6c6fa7f5a0ee5834e31182216dd83fc94de24a99f35411ced75150b"
+    },
+    {
+      "label": "bid tCETES",
+      "hash": "0ce2ea56774a829f6c1dddbd38e2fd2dad83904ce718630f8178100a23ca836b",
+      "url": "https://stellar.expert/explorer/testnet/tx/0ce2ea56774a829f6c1dddbd38e2fd2dad83904ce718630f8178100a23ca836b"
+    },
+    {
+      "label": "shelf DEMOMMF Permissioned",
+      "hash": "c1a8678bfb10a0ae0e6a4c29cd7e2031ec68ab98300cd34e04dfb84aeb732610",
+      "url": "https://stellar.expert/explorer/testnet/tx/c1a8678bfb10a0ae0e6a4c29cd7e2031ec68ab98300cd34e04dfb84aeb732610"
+    },
+    {
+      "label": "shelf TBILL Open",
+      "hash": "24d5b426413d3909a526ae85f445c5ad7b942a642409f39501bf0b3256f2841a",
+      "url": "https://stellar.expert/explorer/testnet/tx/24d5b426413d3909a526ae85f445c5ad7b942a642409f39501bf0b3256f2841a"
+    },
+    {
+      "label": "shelf XLM Open",
+      "hash": "7a5afb089e43ea48dd521fb11330f1dc58533f200982c4cd3d2314a908fe19e1",
+      "url": "https://stellar.expert/explorer/testnet/tx/7a5afb089e43ea48dd521fb11330f1dc58533f200982c4cd3d2314a908fe19e1"
+    },
+    {
+      "label": "shelf tBENJI Permissioned",
+      "hash": "3d09f1d0a4587ea63e9d7617d9949b4a7b0f1dab96850dc6efd922b5ad585bd9",
+      "url": "https://stellar.expert/explorer/testnet/tx/3d09f1d0a4587ea63e9d7617d9949b4a7b0f1dab96850dc6efd922b5ad585bd9"
+    },
+    {
+      "label": "shelf tCETES Open",
+      "hash": "42805ca3b70c441b1719f812f8f39c50fa5c2478bbe184358b8f8ecb3cafbb7d",
+      "url": "https://stellar.expert/explorer/testnet/tx/42805ca3b70c441b1719f812f8f39c50fa5c2478bbe184358b8f8ecb3cafbb7d"
+    },
+    {
+      "label": "shelf tUSDC Open",
+      "hash": "7cef5f2514f6a375f87fff9cc856d0b4e226d29b6c2ce2073ebbd94bc84e02a2",
+      "url": "https://stellar.expert/explorer/testnet/tx/7cef5f2514f6a375f87fff9cc856d0b4e226d29b6c2ce2073ebbd94bc84e02a2"
+    },
+    {
+      "label": "shelf tUSDY Open",
+      "hash": "5c36de02112ff24d2ef94aa52169c5a41e3f18aac61c29b3e7713e42307162b2",
+      "url": "https://stellar.expert/explorer/testnet/tx/5c36de02112ff24d2ef94aa52169c5a41e3f18aac61c29b3e7713e42307162b2"
+    },
+    {
+      "label": "shelf tUSTRY Open",
+      "hash": "33c76d88f81320eabe814fa503b21dd8309a65ee8d9d6062b4b668e70ae83f80",
+      "url": "https://stellar.expert/explorer/testnet/tx/33c76d88f81320eabe814fa503b21dd8309a65ee8d9d6062b4b668e70ae83f80"
+    },
+    {
+      "label": "create fund aTRSY",
+      "hash": "44be9e2250b5b4eb53cb2fb2293541928d11847cc71929e3360b7e3dd73806e7",
+      "url": "https://stellar.expert/explorer/testnet/tx/44be9e2250b5b4eb53cb2fb2293541928d11847cc71929e3360b7e3dd73806e7"
+    },
+    {
+      "label": "create fund aBENJI",
+      "hash": "e8b1a2bf02ccab10c8726014abb43d08d1dad1247ea63ef297cf160f76882951",
+      "url": "https://stellar.expert/explorer/testnet/tx/e8b1a2bf02ccab10c8726014abb43d08d1dad1247ea63ef297cf160f76882951"
+    },
+    {
+      "label": "create fund aRAIL",
+      "hash": "2c14ba3e0c602c2c7f9b860c4d65b1a13c6cec69832ff010dd076af17fce2cd2",
+      "url": "https://stellar.expert/explorer/testnet/tx/2c14ba3e0c602c2c7f9b860c4d65b1a13c6cec69832ff010dd076af17fce2cd2"
+    },
+    {
+      "label": "trustline tUSDC",
+      "hash": "aef68274e2db81c7beec4036ac93122b857aeb828b46e45a975c130b586367f9",
+      "url": "https://stellar.expert/explorer/testnet/tx/aef68274e2db81c7beec4036ac93122b857aeb828b46e45a975c130b586367f9"
+    },
+    {
+      "label": "buy tUSDC",
+      "hash": "8fb837a08043bd066b1a995d196f81199dbe64354a9cb1d95a3cd2d7344097bd",
+      "url": "https://stellar.expert/explorer/testnet/tx/8fb837a08043bd066b1a995d196f81199dbe64354a9cb1d95a3cd2d7344097bd"
+    },
+    {
+      "label": "trustline tUSDY",
+      "hash": "81dc0a521a72d44fc5496fafe765012a87fe76580d14b12b7f4be5e6286a4672",
+      "url": "https://stellar.expert/explorer/testnet/tx/81dc0a521a72d44fc5496fafe765012a87fe76580d14b12b7f4be5e6286a4672"
+    },
+    {
+      "label": "buy tUSDY",
+      "hash": "cd7522c4e41c7cd20fdff65a7de9170704591499b3d2958e4206e3d621097302",
+      "url": "https://stellar.expert/explorer/testnet/tx/cd7522c4e41c7cd20fdff65a7de9170704591499b3d2958e4206e3d621097302"
+    },
+    {
+      "label": "trustline tUSTRY",
+      "hash": "b984c9b7d1425540006c6f9d5dc0e79d77bd3c735173860eb1fded7186570e60",
+      "url": "https://stellar.expert/explorer/testnet/tx/b984c9b7d1425540006c6f9d5dc0e79d77bd3c735173860eb1fded7186570e60"
+    },
+    {
+      "label": "buy tUSTRY",
+      "hash": "609e69572c1865efbebfdcb6b91449179399c123fdc11f75036d4940efa0858d",
+      "url": "https://stellar.expert/explorer/testnet/tx/609e69572c1865efbebfdcb6b91449179399c123fdc11f75036d4940efa0858d"
+    },
+    {
+      "label": "trustline tCETES",
+      "hash": "42f8d5eed0b4dfd6e6850292eebe1ef527a88f1ee41930d4477987a5a43ed1f3",
+      "url": "https://stellar.expert/explorer/testnet/tx/42f8d5eed0b4dfd6e6850292eebe1ef527a88f1ee41930d4477987a5a43ed1f3"
+    },
+    {
+      "label": "buy tCETES",
+      "hash": "a3e4f73d9b29b9d341117fac2117cc517af3d545ff20623c00c0b50e79b8e075",
+      "url": "https://stellar.expert/explorer/testnet/tx/a3e4f73d9b29b9d341117fac2117cc517af3d545ff20623c00c0b50e79b8e075"
+    },
+    {
+      "label": "issue aTRSY",
+      "hash": "15bfea93255763ce8374f44cc38f93ef8ec38a4b851a7be08774bf6e41ad525d",
+      "url": "https://stellar.expert/explorer/testnet/tx/15bfea93255763ce8374f44cc38f93ef8ec38a4b851a7be08774bf6e41ad525d"
+    },
+    {
+      "label": "allowlist investor on aRAIL",
+      "hash": "b2ca96db3c023a2f3c56e904beb9d2900f82a4eef5863a9a493183785543d1b9",
+      "url": "https://stellar.expert/explorer/testnet/tx/b2ca96db3c023a2f3c56e904beb9d2900f82a4eef5863a9a493183785543d1b9"
+    },
+    {
+      "label": "issuer authorizes fund for DEMOMMF",
+      "hash": "6cbab463af646dd84ef263a688f2341aa8259986c71e66615e85b99e005578af",
+      "url": "https://stellar.expert/explorer/testnet/tx/6cbab463af646dd84ef263a688f2341aa8259986c71e66615e85b99e005578af"
+    },
+    {
+      "label": "issue aRAIL",
+      "hash": "cb01841b9fa2010fabe97309ec3ee1dd9209b41e253f7e3998f9d9c6f237d89d",
+      "url": "https://stellar.expert/explorer/testnet/tx/cb01841b9fa2010fabe97309ec3ee1dd9209b41e253f7e3998f9d9c6f237d89d"
+    },
+    {
+      "label": "clawback drill DEMOMMF from aRAIL",
+      "hash": "3d8c310f14aae2d5dd450d5fc25d50efdc5ed373d36dcde9013f08051cb4bd14",
+      "url": "https://stellar.expert/explorer/testnet/tx/3d8c310f14aae2d5dd450d5fc25d50efdc5ed373d36dcde9013f08051cb4bd14"
+    },
+    {
+      "label": "redeem aRAIL",
+      "hash": "314017fa204f3d5e315b2bfa2511e4920a66dc112dbd4532b197a1e8148ebc1d",
+      "url": "https://stellar.expert/explorer/testnet/tx/314017fa204f3d5e315b2bfa2511e4920a66dc112dbd4532b197a1e8148ebc1d"
     }
   ],
   "fund_wasm": "32677e1a2abdbfb57c0f2da513aeed864aa081d604b192cde062f859ff4c446d",
   "admin": "GBQMIVPBVDVZFCK6MQVSNC7I3HJQ5PYES27NJVKZKS7EUVDQZ2MY6QJX",
-  "release": "local"
+  "release": "local",
+  "market_done": true,
+  "shelf_v2": true,
+  "seeded": {
+    "aTRSY": true,
+    "aRAIL": true
+  }
 }
