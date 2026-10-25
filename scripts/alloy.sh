@@ -15,30 +15,48 @@ cmd_build() {
   ls -la "$WASM_DIR"/alloy_*.wasm
 }
 
+# Path to a contract's wasm. With RELEASE_TAG set, the attested binary from
+# that GitHub release (SEP-0055 verified build); otherwise a local build.
+# Mainnet only ever deploys release binaries.
+REPO_SLUG="${REPO_SLUG:-0xDanomite/alloy-stellar}"
+wasm_path() {
+  local package="$1"
+  if [ -z "${RELEASE_TAG:-}" ]; then
+    [ "$NETWORK" = mainnet ] && { echo "mainnet deploys need RELEASE_TAG (a verified build)" >&2; exit 1; }
+    echo "$WASM_DIR/${package//-/_}.wasm"
+    return
+  fi
+  local dir="$ROOT/target/release-wasm/$RELEASE_TAG"
+  mkdir -p "$dir"
+  gh release download "$RELEASE_TAG" -R "$REPO_SLUG" -p "${package}_v*.wasm" -D "$dir" --clobber >&2
+  gh attestation verify "$(ls "$dir"/"${package}"_v*.wasm | head -1)" -R "$REPO_SLUG" >&2
+  ls "$dir"/"${package}"_v*.wasm | head -1
+}
+
 cmd_deploy() {
   ensure_identity "$ADMIN_IDENTITY"
   ensure_identity "$MANAGER_IDENTITY"
-  cmd_build >/dev/null
+  [ -n "${RELEASE_TAG:-}" ] || cmd_build >/dev/null
   local admin fund_wasm platform
   admin="$(addr "$ADMIN_IDENTITY")"
   fund_wasm="$(run_tx "upload fund wasm" stellar contract upload \
-    --wasm "$WASM_DIR/alloy_fund.wasm" --source-account "$ADMIN_IDENTITY")"
+    --wasm "$(wasm_path alloy-fund)" --source-account "$ADMIN_IDENTITY")"
   platform="$(run_tx "deploy platform" stellar contract deploy \
-    --wasm "$WASM_DIR/alloy_platform.wasm" --source-account "$ADMIN_IDENTITY" \
+    --wasm "$(wasm_path alloy-platform)" --source-account "$ADMIN_IDENTITY" \
     -- --admin "$admin" --fund_wasm "$fund_wasm")"
-  put --arg p "$platform" --arg w "$fund_wasm" --arg a "$admin" \
-    '.contracts.platform = $p | .fund_wasm = $w | .admin = $a'
+  put --arg p "$platform" --arg w "$fund_wasm" --arg a "$admin" --arg r "${RELEASE_TAG:-local}" \
+    '.contracts.platform = $p | .fund_wasm = $w | .admin = $a | .release = $r'
   invoke "allowlist manager" "$platform" "$ADMIN_IDENTITY" \
     set_manager --manager "$(addr "$MANAGER_IDENTITY")" --allowed true >/dev/null
   echo "platform: $EXPERT/contract/$platform"
 }
 
 cmd_set_fund_wasm() {
-  cmd_build >/dev/null
+  [ -n "${RELEASE_TAG:-}" ] || cmd_build >/dev/null
   local platform fund_wasm
   platform="$(get .contracts.platform)"
   fund_wasm="$(run_tx "upload fund wasm" stellar contract upload \
-    --wasm "$WASM_DIR/alloy_fund.wasm" --source-account "$ADMIN_IDENTITY")"
+    --wasm "$(wasm_path alloy-fund)" --source-account "$ADMIN_IDENTITY")"
   invoke "set fund wasm" "$platform" "$ADMIN_IDENTITY" set_fund_wasm --wasm_hash "$fund_wasm" >/dev/null
   put --arg w "$fund_wasm" '.fund_wasm = $w'
   echo "fund wasm: $fund_wasm"
@@ -70,6 +88,51 @@ cmd_add_asset() {
   put --arg c "$code" --arg a "$asset" --arg id "$id" --arg m "$mode" \
     '.assets[$c] = {asset: $a, contract: $id, status: $m}'
   echo "$code: contract $id"
+}
+
+# Pinned mainnet issuers, read from Horizon and each issuer's stellar.toml on
+# 2026-10-25. Lookalike issuers are common; never resolve these by code.
+MAINNET_ASSETS=(
+  "XLM - open"
+  "USDC GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN open"
+  "USDY GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6 open"
+  "USTRY GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC open"
+  "CETES GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC open"
+  "BENJI GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5 permissioned"
+)
+
+cmd_mainnet_assets() {
+  [ "$NETWORK" = mainnet ] || { echo "mainnet only" >&2; exit 1; }
+  local entry
+  for entry in "${MAINNET_ASSETS[@]}"; do
+    # shellcheck disable=SC2086
+    cmd_add_asset $entry
+  done
+}
+
+USDC_ISSUER=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+
+# buy CODE AMOUNT_STROOPS [IDENTITY] : buy an exact amount with XLM on the SDEX,
+# routing only direct or through Circle USDC so no unvetted token is touched.
+cmd_buy() {
+  local code="$1" amount="$2" identity="${3:-$MANAGER_IDENTITY}" asset account quote send_max path
+  asset="$(get ".assets[\"$code\"].asset")"
+  account="$(addr "$identity")"
+  if ! curl -s "$HORIZON_URL/accounts/$account" | jq -e --arg a "$asset" \
+      '.balances[] | select((.asset_code + ":" + .asset_issuer) == $a)' >/dev/null; then
+    run_tx "trustline $code" stellar tx new change-trust --source-account "$identity" --line "$asset" >/dev/null
+  fi
+  quote="$(curl -s "$HORIZON_URL/paths/strict-receive?source_assets=native&destination_asset_type=credit_alphanum$([ ${#code} -le 4 ] && echo 4 || echo 12)&destination_asset_code=$code&destination_asset_issuer=${asset#*:}&destination_amount=$(echo "scale=7; $amount / 10000000" | bc)" \
+    | jq -c --arg usdc "$USDC_ISSUER" '._embedded.records
+        | map(select(all(.path[]; .asset_type == "native" or (.asset_code == "USDC" and .asset_issuer == $usdc))))
+        | if length == 0 then null else min_by(.source_amount | tonumber) end')"
+  [ "$quote" != null ] || { echo "no path to $code" >&2; exit 1; }
+  send_max="$(jq -r '.source_amount | tonumber * 1.02 * 10000000 | floor' <<<"$quote")"
+  path="$(jq -r '[.path[] | if .asset_type == "native" then "native" else .asset_code + ":" + .asset_issuer end] | join(",")' <<<"$quote")"
+  echo "buying $code: up to $(jq -r .source_amount <<<"$quote") XLM (+2%) via [${path:-direct}]"
+  run_tx "buy $code" stellar tx new path-payment-strict-receive --source-account "$identity" \
+    --send-asset native --send-max "$send_max" --destination "$account" \
+    --dest-asset "$asset" --dest-amount "$amount" ${path:+--path "$path"} >/dev/null
 }
 
 cmd_shelf() {
@@ -189,6 +252,8 @@ case "$command" in
   set-fund-wasm) cmd_set_fund_wasm ;;
   issue-asset) cmd_issue_asset "$@" ;;
   add-asset) cmd_add_asset "$@" ;;
+  mainnet-assets) cmd_mainnet_assets ;;
+  buy) cmd_buy "$@" ;;
   shelf) cmd_shelf ;;
   create-fund) cmd_create_fund "$@" ;;
   authorize-fund) cmd_authorize_fund "$@" ;;
@@ -198,5 +263,5 @@ case "$command" in
   redeem) cmd_redeem "$@" ;;
   clawback-drill) cmd_clawback_drill "$@" ;;
   status) cmd_status "$@" ;;
-  *) sed -n 2,8p "$0"; echo "commands: build deploy set-fund-wasm issue-asset add-asset shelf create-fund authorize-fund fund-investor allowlist issue redeem clawback-drill status"; exit 1 ;;
+  *) sed -n 2,8p "$0"; echo "commands: build deploy set-fund-wasm issue-asset add-asset mainnet-assets buy shelf create-fund authorize-fund fund-investor allowlist issue redeem clawback-drill status"; exit 1 ;;
 esac
