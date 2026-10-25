@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import { complianceLabel, IssuerFlags, IssuerName, strandColor } from "../components/fund-bits";
+import { complianceLabel, headlineValue, IssuerFlags, IssuerName, OracleNote, strandColor } from "../components/fund-bits";
 import { InvestPanel } from "../components/InvestPanel";
 import { RedeemPanel } from "../components/RedeemPanel";
 import { CopyId, Figure, Usd } from "../components/ui";
@@ -11,21 +11,30 @@ import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
 import { NotFound } from "./NotFound";
 
+const COLUMNS = {
+  oracle: "md:grid-cols-[1.4fr_0.9fr_0.9fr_1.2fr_0.8fr_0.9fr]",
+  market: "md:grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr]",
+};
+
 function Composition({ fund }: { fund: Fund }) {
+  const columns = fund.hasOracle ? COLUMNS.oracle : COLUMNS.market;
+  const { value: shareValue } = headlineValue(fund);
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
-      <div className="hidden grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr] gap-4 border-b px-5 py-3 text-[0.8125rem] text-muted-foreground md:grid">
+      <div className={`hidden gap-4 border-b px-5 py-3 text-[0.8125rem] text-muted-foreground md:grid ${columns}`}>
         <span>Asset</span>
         <span className="text-right">Per share</span>
         <span className="text-right">Fund holds</span>
-        <span className="text-right">Price (USDC)</span>
+        {fund.hasOracle && <span className="text-right">Oracle (USD)</span>}
+        <span className="text-right">{fund.hasOracle ? "Market (USDC)" : "Price (USDC)"}</span>
         <span className="text-right">Value per share</span>
       </div>
       <ul className="divide-y">
         {fund.components.map((leg, i) => {
-          const legValue = leg.priceUsdc === null ? null : unitsToNumber(leg.unitsPerShare) * leg.priceUsdc;
+          const price = fund.navPerShare !== null ? (leg.oracle?.priceUsd ?? null) : leg.priceUsdc;
+          const legValue = price === null ? null : unitsToNumber(leg.unitsPerShare) * price;
           return (
-            <li key={leg.token} className="grid grid-cols-1 gap-x-6 gap-y-1 px-5 py-4 sm:grid-cols-2 md:grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr] md:items-center">
+            <li key={leg.token} className={`grid grid-cols-1 gap-x-6 gap-y-1 px-5 py-4 sm:grid-cols-2 md:items-center ${columns}`}>
               <div className="mb-1 flex min-w-0 items-start gap-3 sm:col-span-2 md:col-span-1 md:mb-0">
                 <span className="mt-1 h-8 w-1 shrink-0 rounded-full" style={{ background: strandColor(i) }} aria-hidden />
                 <div className="min-w-0">
@@ -47,7 +56,18 @@ function Composition({ fund }: { fund: Fund }) {
               </div>
               <Cell label="Per share" value={formatAmount(leg.unitsPerShare)} />
               <Cell label="Fund holds" value={formatAmount(leg.holding, 2)} />
-              <Cell label="Price" value={<Usd value={leg.priceUsdc} />} />
+              {fund.hasOracle && (
+                <Cell
+                  label="Oracle"
+                  value={
+                    <>
+                      <Usd value={leg.oracle?.priceUsd ?? null} />
+                      <OracleNote leg={leg} />
+                    </>
+                  }
+                />
+              )}
+              <Cell label={fund.hasOracle ? "Market" : "Price"} value={<Usd value={leg.priceUsdc} />} />
               <Cell label="Value per share" value={<Usd value={legValue} />} />
             </li>
           );
@@ -55,7 +75,7 @@ function Composition({ fund }: { fund: Fund }) {
       </ul>
       <div className="flex items-baseline justify-between gap-4 border-t bg-surface-sunken px-5 py-4">
         <span className="text-label">One share</span>
-        <Usd value={fund.valuePerShare} className="text-figure" />
+        <Usd value={shareValue} className="text-figure" />
       </div>
     </div>
   );
@@ -130,25 +150,33 @@ export function FundPage() {
 
             <div className="mt-8 flex flex-wrap items-end gap-x-12 gap-y-6">
               <div>
-                <div className="text-[0.8125rem] text-muted-foreground">Value per share</div>
+                <div className="text-[0.8125rem] text-muted-foreground">
+                  {f?.navPerShare != null ? "NAV per share (oracle)" : "Value per share"}
+                </div>
                 {!f ? (
                   <Figure value={undefined} width="8ch" className="text-figure-xl" />
-                ) : f.valuePerShare === null ? (
+                ) : headlineValue(f).value === null ? (
                   <span className="text-figure-lg text-muted-foreground">unpriced</span>
                 ) : (
-                  <Usd value={f.valuePerShare} className="text-figure-xl" />
+                  <Usd value={headlineValue(f).value} className="text-figure-xl" />
                 )}
               </div>
+              {f?.navPerShare != null && (
+                <div>
+                  <div className="text-[0.8125rem] text-muted-foreground">Market value (SDEX)</div>
+                  <Usd value={f.valuePerShare} className="text-figure-lg" />
+                </div>
+              )}
               <div>
                 <div className="text-[0.8125rem] text-muted-foreground">Shares issued</div>
                 <Figure value={f ? formatAmount(f.totalSupply, 4) : undefined} className="text-figure-lg" />
               </div>
             </div>
-            {f && f.valuePerShare === null && (
+            {f && headlineValue(f).value === null && (
               <p className="mt-3 max-w-[40rem] text-[0.875rem] text-muted-foreground">
                 {isMainnet
-                  ? "At least one asset has no market price on the Stellar DEX right now, so we don't show a total."
-                  : "Testnet assets have no real market, so nothing here is priced."}
+                  ? "At least one asset has no fresh oracle price or market price on the Stellar DEX right now, so we don't show a total."
+                  : "Testnet assets have no oracle feeds and no real market, so nothing here is priced."}
               </p>
             )}
             {f && (
@@ -165,7 +193,10 @@ export function FundPage() {
             <h2 className="text-heading">What one share holds</h2>
             <p className="mt-1 max-w-[42rem] text-muted-foreground">
               Amounts come from the fund's own balances divided by shares issued, so a clawback or a donation shows up here
-              immediately. Prices are what one unit sells for in USDC on the Stellar DEX right now.
+              immediately.{" "}
+              {f?.hasOracle
+                ? "Oracle prices come from RedStone and Reflector through Alloy's read-only NAV contract; the market column is what one unit sells for in USDC on the Stellar DEX right now, kept as a cross-check."
+                : "Prices are what one unit sells for in USDC on the Stellar DEX right now."}
             </p>
             <div className="mt-5">{f ? <Composition fund={f} /> : <div className="skeleton h-64 w-full rounded-xl" />}</div>
           </section>

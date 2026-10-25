@@ -15,7 +15,7 @@ export interface DeploymentTx {
 }
 
 export interface Deployments {
-  contracts: { platform: string; funds: Record<string, string> };
+  contracts: { platform: string; funds: Record<string, string>; nav?: string };
   assets: Record<string, DeploymentAsset>;
   txs: DeploymentTx[];
 }
@@ -57,6 +57,16 @@ export const links = {
   repo: env.VITE_REPO_URL || "https://github.com/0xDanomite/alloy-stellar",
   deck: env.VITE_DECK_URL || null,
 };
+
+export const oracles = {
+  redstone: { label: "RedStone", url: "https://redstone.finance" },
+  reflector: { label: "Reflector", url: "https://reflector.network" },
+} as const;
+
+/** The nav contract labels each route with a source symbol. */
+export function oracleFor(source: string) {
+  return source === "redstone" || source === "reflector" ? oracles[source] : null;
+}
 
 export const expert = {
   tx: (hash: string) => `${endpoints.expertUrl}/tx/${hash}`,
