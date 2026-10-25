@@ -60,6 +60,7 @@ enum DataKey {
     Shelf,
     Manager(Address),
     ShelfStatus(Address),
+    IsFund(Address),
 }
 
 #[contractevent(topics = ["fund_created"])]
@@ -207,6 +208,11 @@ impl Platform {
         let mut funds = read_list(&env, &DataKey::Funds);
         funds.push_back(fund.clone());
         write_list(&env, &DataKey::Funds, &funds);
+        let key = DataKey::IsFund(fund.clone());
+        env.storage().persistent().set(&key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, ENTRY_THRESHOLD, ENTRY_BUMP);
 
         FundCreated {
             fund: fund.clone(),
@@ -282,6 +288,12 @@ impl Platform {
 
     pub fn fund_wasm(env: Env) -> BytesN<32> {
         env.storage().instance().get(&DataKey::FundWasm).unwrap()
+    }
+
+    /// The authority on whether a fund is genuine. A contract can name this
+    /// platform in its own storage; only funds created here return true.
+    pub fn is_fund(env: Env, fund: Address) -> bool {
+        env.storage().persistent().has(&DataKey::IsFund(fund))
     }
 
     pub fn funds(env: Env) -> Vec<Address> {

@@ -189,3 +189,34 @@ fn admin_actions_require_admin_auth() {
     assert_eq!(auths.len(), 1);
     assert_eq!(auths[0].0, s.platform.admin());
 }
+
+#[test]
+fn only_platform_created_funds_are_genuine() {
+    let s = setup();
+    let x = String::from_str(&s.env, "x");
+    let real = s.platform.create_fund(
+        &s.manager,
+        &x,
+        &x,
+        &components(&s.env, &[&s.usdc]),
+        &Compliance::Open,
+        &salt(&s.env, 9),
+    );
+    let spoof = s.env.register(
+        fund::WASM,
+        (
+            s.platform.address.clone(),
+            s.manager.clone(),
+            x.clone(),
+            x,
+            components(&s.env, &[&s.usdc]),
+            Compliance::Open,
+        ),
+    );
+    assert_eq!(
+        fund::Client::new(&s.env, &spoof).platform(),
+        s.platform.address
+    );
+    assert!(s.platform.is_fund(&real));
+    assert!(!s.platform.is_fund(&spoof));
+}

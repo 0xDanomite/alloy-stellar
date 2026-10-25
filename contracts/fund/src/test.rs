@@ -1,12 +1,38 @@
 extern crate std;
 
 use soroban_sdk::{
+    contract, contractimpl,
     testutils::{Address as _, IssuerFlags},
     token::{StellarAssetClient, TokenClient},
     vec, Address, Env, String, Vec,
 };
 
-use crate::{Compliance, Component, Fund, FundClient, FundError, SHARE_SCALE};
+use crate::{Compliance, Component, Fund, FundClient, FundError, ShelfStatus, SHARE_SCALE};
+
+/// Classes every token Open except the one stored under "perm".
+#[contract]
+struct MockPlatform;
+
+#[contractimpl]
+impl MockPlatform {
+    pub fn set_permissioned(env: Env, token: Address) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("perm"), &token);
+    }
+
+    pub fn shelf_status(env: Env, token: Address) -> ShelfStatus {
+        let perm: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("perm"));
+        if perm == Some(token) {
+            ShelfStatus::Permissioned
+        } else {
+            ShelfStatus::Open
+        }
+    }
+}
 
 struct Asset<'a> {
     token: TokenClient<'a>,
@@ -52,7 +78,12 @@ fn setup<'a>(compliance: Compliance, permissioned: [bool; 3]) -> Setup<'a> {
             initial_units: units,
         });
     }
-    let platform = Address::generate(&env);
+    let platform = env.register(MockPlatform, ());
+    for (asset, p) in assets.iter().zip(permissioned) {
+        if p {
+            MockPlatformClient::new(&env, &platform).set_permissioned(&asset.token.address);
+        }
+    }
     let manager = Address::generate(&env);
     let id = env.register(
         Fund,
@@ -278,6 +309,7 @@ fn transfer_from_spends_allowance() {
 #[should_panic]
 fn rejects_duplicate_components() {
     let env = Env::default();
+    env.mock_all_auths();
     let asset = create_asset(&env, false);
     let name = String::from_str(&env, "x");
     let dup = vec![
@@ -362,4 +394,32 @@ fn clawback_below_owed_reserve_never_blocks_redeem() {
 
     assert_eq!(s.fund.withdraw_owed(&a, &a, &leg), 1_000_000);
     assert_eq!(s.fund.owed(&a, &leg), INITIAL_UNITS[2] - 1_000_000);
+}
+
+#[test]
+fn manager_cannot_open_a_fund_holding_a_permissioned_asset() {
+    let s = setup(Compliance::Allowlist, [false, false, true]);
+    assert_eq!(
+        s.fund.try_set_compliance(&Compliance::Open),
+        Err(Ok(FundError::PermissionedComponent.into()))
+    );
+    assert_eq!(s.fund.compliance(), Compliance::Allowlist);
+}
+
+#[test]
+fn issue_is_blocked_while_a_leg_is_short_of_owed_claims() {
+    let s = setup(Compliance::Open, [false, false, true]);
+    let a = funded_investor(&s, 1_000 * SHARE_SCALE);
+    let b = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&a, &a, &SHARE_SCALE);
+    s.fund.issue(&b, &b, &SHARE_SCALE);
+    let leg = s.assets[2].token.address.clone();
+    s.fund
+        .redeem(&a, &a, &SHARE_SCALE, &vec![&s.env, leg.clone()]);
+    let held = s.assets[2].token.balance(&s.fund.address);
+    s.assets[2].admin.clawback(&s.fund.address, &(held - 1));
+    assert_eq!(
+        s.fund.try_issue(&b, &b, &SHARE_SCALE),
+        Err(Ok(FundError::ReserveShortfall.into()))
+    );
 }
