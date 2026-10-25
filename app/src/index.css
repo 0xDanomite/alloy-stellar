@@ -24,13 +24,14 @@
   font-display: swap;
 }
 
-/* The Ledger Register: Vellum, Ink, Iris (the one accent), Verdigris, Garnet, Bullion. */
+/* The Ledger Register, tuned to Stellar: Iris leans to Stellar Lilac (#b7ace8),
+   Verdigris to Stellar Teal (#00a7b5), and Generous Gold (#fdda24) marks mainnet only. */
 :root {
   --radius: 1rem;
-  --background: oklch(0.978 0.012 288);
+  --background: oklch(0.982 0.004 292);
   --foreground: oklch(0.24 0.022 288);
   --card: oklch(1 0 0 / 0.82);
-  --primary: oklch(0.48 0.2 288);
+  --primary: oklch(0.5 0.17 292);
   --primary-foreground: oklch(0.98 0.01 288);
   --secondary: oklch(0.955 0.02 288);
   --muted-foreground: oklch(0.5 0.02 288);
@@ -38,14 +39,14 @@
   --accent-foreground: oklch(0.3 0.05 288);
   --destructive: oklch(0.55 0.19 25);
   --border: oklch(0.9 0.02 288);
-  --ring: oklch(0.48 0.2 288);
+  --ring: oklch(0.5 0.17 292);
   --surface-sunken: oklch(0.955 0.016 288);
-  --success: oklch(0.52 0.11 165);
+  --success: oklch(0.56 0.1 205);
   --warning: oklch(0.62 0.14 70);
   --warning-surface: oklch(0.96 0.04 80);
-  --chart-1: oklch(0.48 0.2 288);
-  --chart-2: oklch(0.52 0.11 165);
-  --chart-3: oklch(0.62 0.14 70);
+  --chart-1: oklch(0.5 0.17 292);
+  --chart-2: oklch(0.56 0.1 205);
+  --chart-3: oklch(0.78 0.16 95);
   --chart-4: oklch(0.52 0.09 250);
   --chart-5: oklch(0.45 0.15 345);
   --shadow-overlay: 0 1px 2px oklch(0.24 0.02 288 / 0.05), 0 12px 40px oklch(0.4 0.08 288 / 0.12);
@@ -53,32 +54,34 @@
   --logo-b: #7c5cff;
   --logo-c: #5b3fd4;
   color-scheme: light;
+  --gold: oklch(0.89 0.18 95);
+  --gold-foreground: oklch(0.18 0 0);
 }
 
 .dark {
-  --background: oklch(0.195 0.012 288);
+  --background: oklch(0.18 0.005 292);
   --foreground: oklch(0.955 0.006 288);
-  --card: oklch(0.235 0.014 288);
-  --primary: oklch(0.8 0.09 288);
+  --card: oklch(0.225 0.008 292);
+  --primary: oklch(0.78 0.08 292);
   --primary-foreground: oklch(0.18 0.04 288);
-  --secondary: oklch(0.29 0.018 288);
+  --secondary: oklch(0.27 0.012 292);
   --muted-foreground: oklch(0.7 0.02 288);
   --accent: oklch(0.34 0.035 288);
   --accent-foreground: oklch(0.955 0.006 288);
   --destructive: oklch(0.72 0.14 25);
   --border: oklch(1 0 0 / 12%);
-  --ring: oklch(0.8 0.09 288);
-  --surface-sunken: oklch(0.17 0.012 288);
-  --success: oklch(0.75 0.12 165);
+  --ring: oklch(0.78 0.08 292);
+  --surface-sunken: oklch(0.16 0.005 292);
+  --success: oklch(0.7 0.11 205);
   --warning: oklch(0.75 0.13 75);
   --warning-surface: oklch(0.27 0.04 75);
-  --chart-1: oklch(0.8 0.09 288);
-  --chart-2: oklch(0.75 0.12 165);
-  --chart-3: oklch(0.75 0.13 75);
+  --chart-1: oklch(0.78 0.08 292);
+  --chart-2: oklch(0.7 0.11 205);
+  --chart-3: oklch(0.89 0.18 95);
   --chart-4: oklch(0.7 0.09 250);
   --chart-5: oklch(0.6 0.15 345);
   --shadow-overlay: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px oklch(0 0 0 / 0.45);
-  --logo-a: #a99af0;
+  --logo-a: #b7ace8;
   --logo-b: #beb2f6;
   --logo-c: #ab9df0;
   color-scheme: dark;
@@ -103,6 +106,8 @@
   --color-ring: var(--ring);
   --color-surface-sunken: var(--surface-sunken);
   --color-success: var(--success);
+  --color-gold: var(--gold);
+  --color-gold-foreground: var(--gold-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
   --color-chart-1: var(--chart-1);

@@ -176,7 +176,7 @@ export function FundPage() {
               <p className="mt-3 max-w-[40rem] text-[0.875rem] text-muted-foreground">
                 {isMainnet
                   ? "At least one asset has no fresh oracle price or market price on the Stellar DEX right now, so we don't show a total."
-                  : "Testnet assets have no oracle feeds and no real market, so nothing here is priced."}
+                  : "An asset has no price on the testnet market right now, so we don't show a total."}
               </p>
             )}
             {f && (

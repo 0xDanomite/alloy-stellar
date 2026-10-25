@@ -25,7 +25,42 @@ const files = import.meta.glob<Deployments>("../../../deployments/*.json", {
   import: "default",
 });
 
-export const network: Network = import.meta.env.VITE_NETWORK === "mainnet" ? "mainnet" : "testnet";
+const NETWORK_KEY = "alloy.network";
+
+/** Networks this build has a deployment for, mainnet first. */
+export const availableNetworks: Network[] = (["mainnet", "testnet"] as const).filter(
+  (n) => files[`../../../deployments/${n}.json`] !== undefined,
+);
+
+function storedNetwork(): string | null {
+  try {
+    return localStorage.getItem(NETWORK_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function pickNetwork(): Network {
+  const wanted = [
+    new URLSearchParams(window.location.search).get("network"),
+    storedNetwork(),
+    import.meta.env.VITE_NETWORK,
+  ];
+  const valid = wanted.find((n): n is Network => availableNetworks.includes(n as Network));
+  return valid ?? availableNetworks[0] ?? "testnet";
+}
+
+/** Chosen once per page load; switching reloads so no module mixes networks. */
+export const network: Network = pickNetwork();
+
+export function switchNetwork(next: Network) {
+  try {
+    localStorage.setItem(NETWORK_KEY, next);
+  } catch {
+    // Without storage the choice still rides on the URL.
+  }
+  window.location.assign(`/?network=${next}`);
+}
 
 const ENDPOINTS = {
   testnet: {
@@ -45,8 +80,8 @@ const ENDPOINTS = {
 const env = import.meta.env;
 
 export const endpoints = {
-  rpcUrl: env.VITE_RPC_URL || ENDPOINTS[network].rpcUrl,
-  horizonUrl: env.VITE_HORIZON_URL || ENDPOINTS[network].horizonUrl,
+  rpcUrl: ENDPOINTS[network].rpcUrl,
+  horizonUrl: ENDPOINTS[network].horizonUrl,
   expertUrl: ENDPOINTS[network].expertUrl,
   passphrase: ENDPOINTS[network].passphrase,
 };

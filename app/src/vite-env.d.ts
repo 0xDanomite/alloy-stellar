@@ -2,8 +2,6 @@
 
 interface ImportMetaEnv {
   readonly VITE_NETWORK?: string;
-  readonly VITE_RPC_URL?: string;
-  readonly VITE_HORIZON_URL?: string;
   readonly VITE_DECK_URL?: string;
   readonly VITE_REPO_URL?: string;
 }
