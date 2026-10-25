@@ -27,7 +27,8 @@ export type ShelfStatus = "Unlisted" | "Open" | "Permissioned";
 export type Compliance = "Open" | "Allowlist";
 
 interface PlatformMethods {
-  funds(): AT<string[]>;
+  fund_count(): AT<number>;
+  funds(args: { start: number; limit: number }): AT<string[]>;
   shelf_status(args: { token: string }): AT<Tagged<ShelfStatus>>;
 }
 
@@ -329,13 +330,24 @@ async function loadFund(id: string): Promise<Fund> {
   };
 }
 
+const FUNDS_PAGE = 50;
+
+async function registeredFundIds(platform: Awaited<ReturnType<typeof platformClient>>): Promise<string[]> {
+  const count = await read(platform.fund_count());
+  const pages = [];
+  for (let start = 0; start < count; start += FUNDS_PAGE) {
+    pages.push(read(platform.funds({ start, limit: FUNDS_PAGE })));
+  }
+  return (await Promise.all(pages)).flat();
+}
+
 let fundsCache: Promise<Fund[]> | null = null;
 
 /** Every fund the platform recognizes. The platform's registry is the authority, never fund self-reports. */
 export function listFunds(fresh = false): Promise<Fund[]> {
   if (!fundsCache || fresh) {
     fundsCache = platformClient()
-      .then((platform) => read(platform.funds()))
+      .then(registeredFundIds)
       .then((ids) => Promise.all(ids.map(loadFund)));
     fundsCache.catch(() => {
       fundsCache = null;
