@@ -9,14 +9,14 @@
 # alloy-main-manager, alloy-main-issuer by default). Fund only the admin with
 # ~95 XLM; the script opens the manager (40 XLM) and issuer (10 XLM) from it.
 # ALLOY_YES=1 skips the confirmation prompt. Contracts come from the attested GitHub
-# release RELEASE_TAG (default v0.1.0), never a local build. Resumable: steps already in
+# release RELEASE_TAG (default v0.2.0), never a local build. Resumable: steps already in
 # deployments/mainnet.json are skipped.
 set -euo pipefail
 export NETWORK=mainnet
 export ADMIN_IDENTITY="${ADMIN_IDENTITY:-alloy-main-admin}"
 export MANAGER_IDENTITY="${MANAGER_IDENTITY:-alloy-main-manager}"
 export DEMO_ISSUER_IDENTITY="${DEMO_ISSUER_IDENTITY:-alloy-main-issuer}"
-export RELEASE_TAG="${RELEASE_TAG:-v0.1.0}"
+export RELEASE_TAG="${RELEASE_TAG:-v0.2.0}"
 export INVESTOR_IDENTITY="${INVESTOR_IDENTITY:-$MANAGER_IDENTITY}"
 S="$(dirname "$0")/alloy.sh"
 . "$(dirname "$0")/lib.sh"
@@ -51,6 +51,8 @@ step .contracts.platform || "$S" deploy
 step '.assets.USDC' || "$S" mainnet-assets
 step '.assets.DEMOMMF' || "$S" issue-asset DEMOMMF "$DEMO_ISSUER_IDENTITY" permissioned
 step '.shelf_done' || { "$S" shelf; put '.shelf_done = true'; }
+step '.contracts.nav' || "$S" nav-deploy
+step '.nav_routes_done' || { "$S" mainnet-nav-routes; put '.nav_routes_done = true'; }
 
 if ! step '.contracts.funds.aTRSY'; then
   "$S" create-fund "Alloy Stellar Treasury" aTRSY Open \
@@ -84,5 +86,6 @@ if ! step '.seeded.aRAIL'; then
 fi
 
 "$S" status aTRSY
+"$S" nav aTRSY
 "$S" status aRAIL
 echo "aBENJI waits for Franklin: set_authorized on $(get .contracts.funds.aBENJI)"
