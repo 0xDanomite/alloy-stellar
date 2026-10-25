@@ -7,10 +7,12 @@
 #
 # Needs identities you created yourself (`stellar keys generate <name>` then
 # fund them from your wallet): alloy-admin (~40 XLM), alloy-manager (~40 XLM),
-# alloy-demo-issuer (~10 XLM). Resumable: steps already in
+# alloy-demo-issuer (~10 XLM). Contracts come from the attested GitHub
+# release RELEASE_TAG (default v0.1.0), never a local build. Resumable: steps already in
 # deployments/mainnet.json are skipped.
 set -euo pipefail
 export NETWORK=mainnet
+export RELEASE_TAG="${RELEASE_TAG:-v0.1.0}"
 export INVESTOR_IDENTITY="${INVESTOR_IDENTITY:-alloy-manager}"
 S="$(dirname "$0")/alloy.sh"
 . "$(dirname "$0")/lib.sh"

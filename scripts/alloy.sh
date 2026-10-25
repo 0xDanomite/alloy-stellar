@@ -15,30 +15,49 @@ cmd_build() {
   ls -la "$WASM_DIR"/alloy_*.wasm
 }
 
+# Path to a contract's wasm. With RELEASE_TAG set, the attested binary from
+# that GitHub release (SEP-0055 verified build); otherwise a local build.
+# Mainnet only ever deploys release binaries.
+REPO_SLUG="${REPO_SLUG:-0xDanomite/alloy-stellar}"
+BUILD_CLI_VERSION="25.1.0"
+wasm_path() {
+  local package="$1"
+  if [ -z "${RELEASE_TAG:-}" ]; then
+    [ "$NETWORK" = mainnet ] && { echo "mainnet deploys need RELEASE_TAG (a verified build)" >&2; exit 1; }
+    echo "$WASM_DIR/${package//-/_}.wasm"
+    return
+  fi
+  local dir="$ROOT/target/release-wasm/$RELEASE_TAG"
+  mkdir -p "$dir"
+  gh release download "${RELEASE_TAG}_${package}_cli${BUILD_CLI_VERSION}" -R "$REPO_SLUG" \
+    -p '*.wasm' -D "$dir" --clobber >&2
+  ls "$dir"/"${package}"_v*.wasm | head -1
+}
+
 cmd_deploy() {
   ensure_identity "$ADMIN_IDENTITY"
   ensure_identity "$MANAGER_IDENTITY"
-  cmd_build >/dev/null
+  [ -n "${RELEASE_TAG:-}" ] || cmd_build >/dev/null
   local admin fund_wasm platform
   admin="$(addr "$ADMIN_IDENTITY")"
   fund_wasm="$(run_tx "upload fund wasm" stellar contract upload \
-    --wasm "$WASM_DIR/alloy_fund.wasm" --source-account "$ADMIN_IDENTITY")"
+    --wasm "$(wasm_path alloy-fund)" --source-account "$ADMIN_IDENTITY")"
   platform="$(run_tx "deploy platform" stellar contract deploy \
-    --wasm "$WASM_DIR/alloy_platform.wasm" --source-account "$ADMIN_IDENTITY" \
+    --wasm "$(wasm_path alloy-platform)" --source-account "$ADMIN_IDENTITY" \
     -- --admin "$admin" --fund_wasm "$fund_wasm")"
-  put --arg p "$platform" --arg w "$fund_wasm" --arg a "$admin" \
-    '.contracts.platform = $p | .fund_wasm = $w | .admin = $a'
+  put --arg p "$platform" --arg w "$fund_wasm" --arg a "$admin" --arg r "${RELEASE_TAG:-local}" \
+    '.contracts.platform = $p | .fund_wasm = $w | .admin = $a | .release = $r'
   invoke "allowlist manager" "$platform" "$ADMIN_IDENTITY" \
     set_manager --manager "$(addr "$MANAGER_IDENTITY")" --allowed true >/dev/null
   echo "platform: $EXPERT/contract/$platform"
 }
 
 cmd_set_fund_wasm() {
-  cmd_build >/dev/null
+  [ -n "${RELEASE_TAG:-}" ] || cmd_build >/dev/null
   local platform fund_wasm
   platform="$(get .contracts.platform)"
   fund_wasm="$(run_tx "upload fund wasm" stellar contract upload \
-    --wasm "$WASM_DIR/alloy_fund.wasm" --source-account "$ADMIN_IDENTITY")"
+    --wasm "$(wasm_path alloy-fund)" --source-account "$ADMIN_IDENTITY")"
   invoke "set fund wasm" "$platform" "$ADMIN_IDENTITY" set_fund_wasm --wasm_hash "$fund_wasm" >/dev/null
   put --arg w "$fund_wasm" '.fund_wasm = $w'
   echo "fund wasm: $fund_wasm"
