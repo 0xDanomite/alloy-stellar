@@ -70,7 +70,7 @@ const ENDPOINTS = {
     passphrase: "Test SDF Network ; September 2015",
   },
   mainnet: {
-    rpcUrl: "https://mainnet.sorobanrpc.com",
+    rpcUrl: "https://rpc.lightsail.network",
     horizonUrl: "https://horizon.stellar.org",
     expertUrl: "https://stellar.expert/explorer/public",
     passphrase: "Public Global Stellar Network ; September 2015",
