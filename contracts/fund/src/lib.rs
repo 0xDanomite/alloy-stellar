@@ -411,15 +411,16 @@ impl Fund {
         events::InvestorSet { investor, allowed }.publish(&env);
     }
 
-    /// Opening the fund to anyone is refused while the platform classes any
-    /// component as permissioned: the issuer's holder rules must keep holding.
+    /// Opening the fund to anyone needs every component classed exactly
+    /// `Open` on the platform shelf; permissioned or delisted legs keep the
+    /// allowlist on.
     pub fn set_compliance(env: Env, compliance: Compliance) {
         storage::manager(&env).require_auth();
         storage::bump_instance(&env);
         if compliance == Compliance::Open {
             let platform = PlatformClient::new(&env, &storage::platform(&env));
             for component in storage::components(&env).iter() {
-                if platform.shelf_status(&component.token) == ShelfStatus::Permissioned {
+                if platform.shelf_status(&component.token) != ShelfStatus::Open {
                     panic_with_error!(&env, FundError::PermissionedComponent);
                 }
             }
