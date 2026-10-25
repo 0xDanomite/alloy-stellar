@@ -9,14 +9,17 @@
 //! Redemption has no pause and no manager gate. If one leg cannot be paid
 //! (an issuer froze the recipient, say), the redeemer can skip it and claim
 //! it later with `withdraw_owed`; the other legs still pay out.
+//!
+//! `platform()` is whatever the deployer passed in. Whether a fund is genuine
+//! is answered by the platform (`is_fund`), never by the fund itself.
 #![no_std]
 
 mod events;
 mod storage;
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, panic_with_error, token::TokenClient, Address, Env,
-    String, Vec,
+    contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
+    token::TokenClient, Address, Env, String, Vec,
 };
 
 use storage::Config;
@@ -42,6 +45,22 @@ pub enum FundError {
     UnknownComponent = 10,
     Overflow = 11,
     InvalidExpiration = 12,
+    PermissionedComponent = 13,
+    ReserveShortfall = 14,
+}
+
+/// Mirrors `alloy_platform::ShelfStatus`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShelfStatus {
+    Unlisted,
+    Open,
+    Permissioned,
+}
+
+#[contractclient(name = "PlatformClient")]
+pub trait PlatformInterface {
+    fn shelf_status(env: Env, token: Address) -> ShelfStatus;
 }
 
 #[contract]
@@ -85,6 +104,11 @@ fn issue_amounts(env: &Env, shares: i128) -> Vec<i128> {
     let supply = storage::supply(env);
     let mut amounts = Vec::new(env);
     for component in storage::components(env).iter() {
+        // A clawback that cut into owed claims leaves the leg impaired; new
+        // money must not paper over it.
+        if held(env, &component.token) < storage::reserved(env, &component.token) {
+            panic_with_error!(env, FundError::ReserveShortfall);
+        }
         let amount = if supply == 0 {
             mul_div(env, component.initial_units, shares, SHARE_SCALE, true)
         } else {
@@ -387,9 +411,20 @@ impl Fund {
         events::InvestorSet { investor, allowed }.publish(&env);
     }
 
+    /// Opening the fund to anyone needs every component classed exactly
+    /// `Open` on the platform shelf; permissioned or delisted legs keep the
+    /// allowlist on.
     pub fn set_compliance(env: Env, compliance: Compliance) {
         storage::manager(&env).require_auth();
         storage::bump_instance(&env);
+        if compliance == Compliance::Open {
+            let platform = PlatformClient::new(&env, &storage::platform(&env));
+            for component in storage::components(&env).iter() {
+                if platform.shelf_status(&component.token) != ShelfStatus::Open {
+                    panic_with_error!(&env, FundError::PermissionedComponent);
+                }
+            }
+        }
         storage::set_compliance(&env, compliance);
         events::ComplianceSet { compliance }.publish(&env);
     }
