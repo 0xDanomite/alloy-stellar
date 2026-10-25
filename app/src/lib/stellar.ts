@@ -50,6 +50,24 @@ interface FundMethods {
   withdraw_owed(args: { owner: string; to: string; token: string }): AT<bigint>;
 }
 
+interface NavQuoteRaw {
+  price: bigint;
+  timestamp: bigint;
+  source: string;
+  divergence_bps?: number | null;
+}
+
+interface NavLegRaw extends NavQuoteRaw {
+  token: string;
+  units_per_share: bigint;
+  value_usd: bigint;
+}
+
+interface NavMethods {
+  nav(args: { fund: string }): AT<contract.Result<{ per_share_usd: bigint; legs: NavLegRaw[]; total_usd: bigint }>>;
+  price(args: { token: string }): AT<contract.Result<NavQuoteRaw>>;
+}
+
 interface SacMethods {
   name(): AT<string>;
   authorized(args: { id: string }): AT<boolean>;
@@ -91,6 +109,7 @@ async function read<T>(tx: AT<T>): Promise<T> {
 const platformClients = clientCache<PlatformMethods>();
 const fundClient = clientCache<FundMethods>();
 const sacClient = clientCache<SacMethods>();
+const navClient = clientCache<NavMethods>();
 const platformClient = () => platformClients(requireDeployments().contracts.platform);
 
 function requireDeployments() {
@@ -258,11 +277,70 @@ async function priceInUsdc(asset: Asset): Promise<number | null> {
 }
 
 
+const ORACLE_SCALE = 1e8;
+
+export interface OracleQuote {
+  priceUsd: number;
+  source: string;
+  /** Unix seconds of the oldest reading behind the price. */
+  timestamp: number;
+  /** Primary vs secondary oracle, when both were fresh. */
+  divergenceBps: number | null;
+}
+
+interface OracleNav {
+  perShare: number | null;
+  total: number | null;
+  quotes: Map<string, OracleQuote>;
+}
+
+function toQuote(raw: NavQuoteRaw): OracleQuote {
+  return {
+    priceUsd: Number(raw.price) / ORACLE_SCALE,
+    source: raw.source,
+    timestamp: Number(raw.timestamp),
+    divergenceBps: raw.divergence_bps ?? null,
+  };
+}
+
+/**
+ * The nav contract's view of a fund. A full NAV needs every leg fresh; when
+ * one is not, each leg is priced on its own so the rest still show.
+ */
+async function loadOracleNav(fundId: string, tokens: string[]): Promise<OracleNav | null> {
+  const navId = deployments?.contracts.nav;
+  if (!navId) return null;
+  const nav = await navClient(navId);
+  try {
+    const result = (await read(nav.nav({ fund: fundId }))).unwrap();
+    return {
+      perShare: Number(result.per_share_usd) / ORACLE_SCALE,
+      total: Number(result.total_usd) / ORACLE_SCALE,
+      quotes: new Map(result.legs.map((leg) => [leg.token, toQuote(leg)])),
+    };
+  } catch {
+    const quotes = await Promise.all(
+      tokens.map((token) =>
+        read(nav.price({ token }))
+          .then((r) => [token, toQuote(r.unwrap())] as const)
+          .catch(() => null),
+      ),
+    );
+    return {
+      perShare: null,
+      total: null,
+      quotes: new Map(quotes.filter((q) => q !== null)),
+    };
+  }
+}
+
 export interface FundComponent extends AssetInfo {
   shelfStatus: ShelfStatus;
   unitsPerShare: bigint;
   holding: bigint;
   priceUsdc: number | null;
+  /** Null when no nav contract is deployed or no oracle has a fresh price. */
+  oracle: OracleQuote | null;
   /** Only read for shelf-permissioned assets; null elsewhere. */
   fundAuthorized: boolean | null;
 }
@@ -274,7 +352,12 @@ export interface Fund {
   compliance: Compliance;
   totalSupply: bigint;
   components: FundComponent[];
+  /** From SDEX prices, in USDC. */
   valuePerShare: number | null;
+  /** From the nav contract, in USD; null unless every leg has a fresh oracle price. */
+  navPerShare: number | null;
+  navTotal: number | null;
+  hasOracle: boolean;
   awaitingIssuer: FundComponent[];
 }
 
@@ -292,6 +375,10 @@ async function loadFund(id: string): Promise<Fund> {
     read(fund.units_per_share()),
   ]);
 
+  const oracleNav = loadOracleNav(
+    id,
+    components.map((c) => c.token),
+  ).catch(() => null);
   const legs = await Promise.all(
     components.map(async (component, i): Promise<FundComponent> => {
       const [info, shelf] = await Promise.all([
@@ -310,10 +397,13 @@ async function loadFund(id: string): Promise<Fund> {
         unitsPerShare: units[i] ?? 0n,
         holding: holdings[i] ?? 0n,
         priceUsdc,
+        oracle: null,
         fundAuthorized,
       };
     }),
   );
+  const oracle = await oracleNav;
+  for (const leg of legs) leg.oracle = oracle?.quotes.get(leg.token) ?? null;
 
   const priced = legs.every((leg) => leg.priceUsdc !== null);
   return {
@@ -326,6 +416,9 @@ async function loadFund(id: string): Promise<Fund> {
     valuePerShare: priced
       ? legs.reduce((sum, leg) => sum + unitsToNumber(leg.unitsPerShare) * (leg.priceUsdc ?? 0), 0)
       : null,
+    navPerShare: oracle?.perShare ?? null,
+    navTotal: oracle?.total ?? null,
+    hasOracle: oracle !== null,
     awaitingIssuer: legs.filter((leg) => leg.fundAuthorized === false),
   };
 }

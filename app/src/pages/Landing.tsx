@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { FundCard, SkeletonCard, strandColor } from "../components/fund-bits";
-import { deployments, links, network } from "../lib/config";
+import { deployments, links, network, oracles } from "../lib/config";
 import { explain, listFunds, type Fund } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
 
@@ -64,6 +64,10 @@ const BUILT_ON_STELLAR = [
   {
     term: "Issuer authorization and clawback",
     body: "Issuers that approve each holder have to approve the fund too, and those that can claw back still can. Share value is read from what the fund actually holds, so it stays right after a clawback.",
+  },
+  {
+    term: "Oracle prices",
+    body: "RedStone and Reflector price each asset through SEP-40 feeds. A read-only NAV contract falls back from one oracle to the other when a feed goes stale and reports how far apart they are. Issue and redeem never consult a price.",
   },
   {
     term: "SDEX path payments",
@@ -145,6 +149,10 @@ export function Landing() {
             </div>
           ))}
         </dl>
+        <p className="mt-8 text-[0.9375rem] text-muted-foreground">
+          Prices: <a href={oracles.redstone.url} target="_blank" rel="noreferrer" className="text-primary underline-offset-4 hover:underline">RedStone</a> and{" "}
+          <a href={oracles.reflector.url} target="_blank" rel="noreferrer" className="text-primary underline-offset-4 hover:underline">Reflector</a> oracles
+        </p>
         <div className="mt-10 flex flex-wrap gap-x-6 gap-y-2 text-label">
           <a href={links.repo} target="_blank" rel="noreferrer" className="text-primary underline-offset-4 hover:underline">
             Read the source on GitHub

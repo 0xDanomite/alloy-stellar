@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
-import { links } from "../lib/config";
+import { links, oracles } from "../lib/config";
 import { shortId } from "../lib/format";
 import { useWallet } from "../lib/wallet";
 import { AlloyMark, Button, NetworkBadge, ThemeToggle } from "./ui";
@@ -68,6 +68,11 @@ export function Layout() {
           {links.deck && (
             <a href={links.deck} target="_blank" rel="noreferrer" className="hover:text-foreground">Deck</a>
           )}
+          <span>
+            Prices:{" "}
+            <a href={oracles.redstone.url} target="_blank" rel="noreferrer" className="hover:text-foreground">RedStone</a> and{" "}
+            <a href={oracles.reflector.url} target="_blank" rel="noreferrer" className="hover:text-foreground">Reflector</a> oracles
+          </span>
           <span className="sm:ml-auto">Unaudited contracts. Small amounts only.</span>
         </div>
       </footer>

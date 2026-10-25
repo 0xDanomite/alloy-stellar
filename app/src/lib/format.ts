@@ -41,3 +41,10 @@ export function formatUsd(value: number): string {
 export function shortId(id: string, head = 4, tail = 4): string {
   return id.length <= head + tail + 1 ? id : `${id.slice(0, head)}…${id.slice(-tail)}`;
 }
+
+export function formatAge(seconds: number): string {
+  if (seconds < 90) return "just now";
+  if (seconds < 90 * 60) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 48 * 3600) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
+}

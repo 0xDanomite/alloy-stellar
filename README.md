@@ -23,7 +23,8 @@ can switch off.
 ## How It Works
 
 [docs/how-it-works.md](docs/how-it-works.md): the accounting, the guarantees and
-the tests that hold them, issuer rails, and verifiable builds.
+the tests that hold them, issuer rails, oracle pricing, and verifiable
+builds.
 
 ## License
 

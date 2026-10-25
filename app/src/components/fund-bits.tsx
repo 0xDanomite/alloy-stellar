@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { formatAmount } from "../lib/format";
+import { oracleFor } from "../lib/config";
+import { formatAge, formatAmount } from "../lib/format";
 import { DEMO_ISSUER_LABEL } from "../lib/issuers";
 import type { Fund, FundComponent } from "../lib/stellar";
 import { Usd } from "./ui";
@@ -28,6 +29,45 @@ export function IssuerFlags({ leg }: { leg: FundComponent }) {
       {benjiFlags && ", the same flags as BENJI"}
     </span>
   );
+}
+
+/** Oracle vs SDEX gap above which a leg is flagged for a second look. */
+export const MARKET_GAP_FLAG = 0.02;
+
+export function marketGap(leg: FundComponent): number | null {
+  if (!leg.oracle || leg.priceUsdc === null) return null;
+  return Math.abs(leg.priceUsdc - leg.oracle.priceUsd) / leg.oracle.priceUsd;
+}
+
+export function OracleSource({ source }: { source: string }) {
+  const known = oracleFor(source);
+  if (!known) return <span>{source}</span>;
+  return (
+    <a href={known.url} target="_blank" rel="noreferrer" className="hover:text-foreground">
+      {known.label}
+    </a>
+  );
+}
+
+export function OracleNote({ leg }: { leg: FundComponent }) {
+  if (!leg.oracle) return null;
+  const age = Math.max(0, Date.now() / 1000 - leg.oracle.timestamp);
+  const gap = marketGap(leg);
+  return (
+    <span className="block text-[0.8125rem] text-muted-foreground">
+      <OracleSource source={leg.oracle.source} />, {formatAge(age)}
+      {leg.oracle.divergenceBps !== null && `, oracles ${(leg.oracle.divergenceBps / 100).toFixed(2)}% apart`}
+      {gap !== null && gap > MARKET_GAP_FLAG && (
+        <span className="block text-warning">market is {(gap * 100).toFixed(1)}% off the oracle</span>
+      )}
+    </span>
+  );
+}
+
+/** Oracle NAV when every leg has a fresh oracle price, else the SDEX value. */
+export function headlineValue(fund: Fund): { value: number | null; basis: "oracle" | "market" } {
+  if (fund.navPerShare !== null) return { value: fund.navPerShare, basis: "oracle" };
+  return { value: fund.valuePerShare, basis: "market" };
 }
 
 const STRAND_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -69,8 +109,10 @@ export function FundCard({ fund }: { fund: Fund }) {
 
       <div className="mt-5 flex items-end justify-between gap-4">
         <div>
-          <div className="text-[0.8125rem] text-muted-foreground">Value per share</div>
-          <Usd value={fund.valuePerShare} className="text-figure" />
+          <div className="text-[0.8125rem] text-muted-foreground">
+            {headlineValue(fund).basis === "oracle" ? "NAV per share (oracle)" : "Value per share"}
+          </div>
+          <Usd value={headlineValue(fund).value} className="text-figure" />
         </div>
         <div className="text-right">
           <div className="text-[0.8125rem] text-muted-foreground">Shares issued</div>
