@@ -94,9 +94,19 @@
       "label": "redeem aDEMO",
       "hash": "ce4cf11218f79f9777df168ab01d0738fc9af08d3d1fc3c4cc7bcea9bd2ab655",
       "url": "https://stellar.expert/explorer/testnet/tx/ce4cf11218f79f9777df168ab01d0738fc9af08d3d1fc3c4cc7bcea9bd2ab655"
+    },
+    {
+      "label": "upload fund wasm",
+      "hash": "bc0e20ae084a66d43d69d9e566ecbf0000722a2f42c833eba693afae08e47774",
+      "url": "https://stellar.expert/explorer/testnet/tx/bc0e20ae084a66d43d69d9e566ecbf0000722a2f42c833eba693afae08e47774"
+    },
+    {
+      "label": "set fund wasm",
+      "hash": "5d21c982c31535469d0f5e9ad7e116171e4052d36d31e5b8ce765b1a6ecdd149",
+      "url": "https://stellar.expert/explorer/testnet/tx/5d21c982c31535469d0f5e9ad7e116171e4052d36d31e5b8ce765b1a6ecdd149"
     }
   ],
-  "fund_wasm": "c8fb9924c0f70d51c1d04e693e9d2c6f8b43c41656d9530dea3539d0c9efec57",
+  "fund_wasm": "32677e1a2abdbfb57c0f2da513aeed864aa081d604b192cde062f859ff4c446d",
   "admin": "GBQMIVPBVDVZFCK6MQVSNC7I3HJQ5PYES27NJVKZKS7EUVDQZ2MY6QJX",
   "release": "local"
 }
