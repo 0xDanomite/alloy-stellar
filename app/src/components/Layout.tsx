@@ -25,15 +25,16 @@ function WalletButton() {
 export function Layout() {
   const { error } = useWallet();
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-20 border-b bg-background/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
+    <div className="relative isolate flex min-h-dvh flex-col">
+      <div className="atmosphere pointer-events-none fixed inset-0 -z-10" aria-hidden />
+      <header className="sticky top-0 z-20 border-b bg-background/70 backdrop-blur-md">
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-2 px-4 sm:gap-3 sm:px-6">
           <Link to="/" className="flex items-center gap-2" aria-label="Alloy on Stellar, home">
-            <AlloyMark className="h-5 w-auto" />
-            <span className="font-display text-[1.0625rem] font-semibold">Alloy</span>
+            <AlloyMark className="h-[18px] w-auto" />
+            <span className="hidden text-[0.9375rem] font-semibold tracking-[0.18em] min-[420px]:inline">ALLOY</span>
           </Link>
           <NetworkSwitch />
-          <nav className="ml-auto flex items-center gap-1">
+          <nav className="ml-auto flex items-center gap-0.5 sm:gap-1">
             <NavLink
               to="/built"
               className={({ isActive }) =>
@@ -57,7 +58,7 @@ export function Layout() {
         <Outlet />
       </main>
 
-      <footer className="border-t">
+      <footer className="border-t bg-background/60 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-8 text-[0.875rem] text-muted-foreground sm:px-6">
           <span className="flex items-center gap-2">
             <AlloyMark className="h-4 w-auto" />
