@@ -340,6 +340,7 @@ fn rejects_duplicate_components() {
 fn twelve_component_issue_and_redeem_fit_mainnet_limits() {
     let env = Env::default();
     env.mock_all_auths();
+    env.cost_estimate().disable_resource_limits();
     let investor = Address::generate(&env);
     let mut components = Vec::new(&env);
     let mut assets = std::vec::Vec::new();
@@ -364,10 +365,17 @@ fn twelve_component_issue_and_redeem_fit_mainnet_limits() {
         ),
     );
     let fund = FundClient::new(&env, &id);
+    // Limits are disabled because the test harness records auth inside the
+    // same budget; the asserts below hold the contract to a tenth of the
+    // mainnet caps (100M instructions, 200 write entries) instead.
     fund.issue(&investor, &investor, &SHARE_SCALE);
-    std::println!("issue x12: {:?}", env.cost_estimate().resources());
+    let issue = env.cost_estimate().resources();
     fund.redeem(&investor, &investor, &SHARE_SCALE, &Vec::new(&env));
-    std::println!("redeem x12: {:?}", env.cost_estimate().resources());
+    let redeem = env.cost_estimate().resources();
+    for cost in [issue, redeem] {
+        assert!(cost.instructions < 10_000_000, "{:?}", cost);
+        assert!(cost.write_entries < 40, "{:?}", cost);
+    }
     assert_eq!(assets[11].token.balance(&investor), 1_000 * SHARE_SCALE);
 }
 
@@ -421,5 +429,39 @@ fn issue_is_blocked_while_a_leg_is_short_of_owed_claims() {
     assert_eq!(
         s.fund.try_issue(&b, &b, &SHARE_SCALE),
         Err(Ok(FundError::ReserveShortfall.into()))
+    );
+}
+
+#[test]
+fn leftovers_in_an_empty_fund_go_to_the_manager_not_the_next_investor() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let alice = funded_investor(&s, 1_000 * SHARE_SCALE);
+    let bob = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&alice, &alice, &(10 * SHARE_SCALE));
+    s.fund.burn(&alice, &(10 * SHARE_SCALE));
+
+    let paid = s.fund.issue(&bob, &bob, &1);
+    assert_eq!(paid, vec![&s.env, 1, 2, 1]);
+    let got = s.fund.redeem(&bob, &bob, &1, &Vec::new(&s.env));
+    for (g, p) in got.iter().zip(paid.iter()) {
+        assert!(g <= p);
+    }
+    for (asset, units) in s.assets.iter().zip(INITIAL_UNITS) {
+        assert_eq!(s.fund.owed(&s.manager, &asset.token.address), 10 * units);
+    }
+    s.fund
+        .withdraw_owed(&s.manager, &s.manager, &s.assets[0].token.address);
+    assert_eq!(s.assets[0].token.balance(&s.manager), 10 * INITIAL_UNITS[0]);
+}
+
+#[test]
+fn approve_rejects_expiry_beyond_max_ttl() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let a = Address::generate(&s.env);
+    let spender = Address::generate(&s.env);
+    let too_far = s.env.ledger().sequence() + s.env.storage().max_ttl() + 1;
+    assert_eq!(
+        s.fund.try_approve(&a, &spender, &1, &too_far),
+        Err(Ok(FundError::InvalidExpiration.into()))
     );
 }

@@ -133,6 +133,35 @@ fn redeem_amounts(env: &Env, shares: i128) -> Vec<i128> {
     amounts
 }
 
+/// Whatever an empty fund still holds (a donation, a pre-seed, shares burned
+/// instead of redeemed) is not the next investor's windfall: it becomes an
+/// owed claim of the manager, and the first share prices at initial units.
+fn credit_leftovers_to_manager(env: &Env) {
+    let manager = storage::manager(env);
+    for component in storage::components(env).iter() {
+        let leftover = available(env, &component.token);
+        if leftover > 0 {
+            storage::set_owed(
+                env,
+                &manager,
+                &component.token,
+                storage::owed(env, &manager, &component.token) + leftover,
+            );
+            storage::set_reserved(
+                env,
+                &component.token,
+                storage::reserved(env, &component.token) + leftover,
+            );
+            events::LeftoverCredited {
+                manager: manager.clone(),
+                token: component.token.clone(),
+                amount: leftover,
+            }
+            .publish(env);
+        }
+    }
+}
+
 fn mint(env: &Env, to: &Address, shares: i128) {
     storage::set_balance(env, to, storage::balance(env, to) + shares);
     storage::set_supply(env, storage::supply(env) + shares);
@@ -236,6 +265,9 @@ impl Fund {
         storage::bump_instance(&env);
         require_positive(&env, shares);
         require_can_hold(&env, &to);
+        if storage::supply(&env) == 0 {
+            credit_leftovers_to_manager(&env);
+        }
 
         let amounts = issue_amounts(&env, shares);
         if amounts.iter().all(|amount| amount == 0) {
@@ -308,6 +340,7 @@ impl Fund {
             to,
             shares,
             amounts: amounts.clone(),
+            skip,
         }
         .publish(&env);
         amounts
@@ -460,7 +493,11 @@ impl Fund {
         if amount < 0 {
             panic_with_error!(&env, FundError::InvalidAmount);
         }
-        if amount > 0 && expiration_ledger < env.ledger().sequence() {
+        let sequence = env.ledger().sequence();
+        if amount > 0
+            && (expiration_ledger < sequence
+                || expiration_ledger > sequence + env.storage().max_ttl())
+        {
             panic_with_error!(&env, FundError::InvalidExpiration);
         }
         storage::set_allowance(&env, &from, &spender, amount, expiration_ledger);

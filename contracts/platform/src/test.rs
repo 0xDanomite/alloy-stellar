@@ -82,7 +82,7 @@ fn creates_a_working_fund() {
         &Compliance::Open,
         &salt(&s.env, 1),
     );
-    assert_eq!(s.platform.funds(), vec![&s.env, id.clone()]);
+    assert_eq!(s.platform.funds(&0, &50), vec![&s.env, id.clone()]);
 
     let fund = fund::Client::new(&s.env, &id);
     assert_eq!(fund.name(), name);
@@ -219,4 +219,80 @@ fn only_platform_created_funds_are_genuine() {
     );
     assert!(s.platform.is_fund(&real));
     assert!(!s.platform.is_fund(&spoof));
+}
+
+#[test]
+fn funds_page_through_indexed_entries() {
+    let s = setup();
+    let x = String::from_str(&s.env, "x");
+    let mut created = std::vec::Vec::new();
+    for n in 0..5u8 {
+        created.push(s.platform.create_fund(
+            &s.manager,
+            &x,
+            &x,
+            &components(&s.env, &[&s.usdc]),
+            &Compliance::Open,
+            &salt(&s.env, 20 + n),
+        ));
+    }
+    assert_eq!(s.platform.fund_count(), 5);
+    let page = s.platform.funds(&1, &2);
+    assert_eq!(page, vec![&s.env, created[1].clone(), created[2].clone()]);
+    assert_eq!(s.platform.funds(&4, &10).len(), 1);
+    assert_eq!(s.platform.funds(&9, &10).len(), 0);
+}
+
+#[test]
+fn same_salt_from_two_managers_yields_two_funds() {
+    let s = setup();
+    let other = Address::generate(&s.env);
+    s.platform.set_manager(&other, &true);
+    let x = String::from_str(&s.env, "x");
+    let basket = components(&s.env, &[&s.usdc]);
+    let a = s.platform.create_fund(
+        &s.manager,
+        &x,
+        &x,
+        &basket,
+        &Compliance::Open,
+        &salt(&s.env, 30),
+    );
+    let b = s.platform.create_fund(
+        &other,
+        &x,
+        &x,
+        &basket,
+        &Compliance::Open,
+        &salt(&s.env, 30),
+    );
+    assert_ne!(a, b);
+}
+
+#[test]
+fn real_platform_keeps_a_permissioned_fund_on_its_allowlist() {
+    let s = setup();
+    let x = String::from_str(&s.env, "x");
+    let id = s.platform.create_fund(
+        &s.manager,
+        &x,
+        &x,
+        &components(&s.env, &[&s.usdc, &s.benji_like]),
+        &Compliance::Allowlist,
+        &salt(&s.env, 40),
+    );
+    let fund = fund::Client::new(&s.env, &id);
+    assert!(fund.try_set_compliance(&fund::Compliance::Open).is_err());
+
+    let open_only = s.platform.create_fund(
+        &s.manager,
+        &x,
+        &x,
+        &components(&s.env, &[&s.usdc]),
+        &Compliance::Allowlist,
+        &salt(&s.env, 41),
+    );
+    let fund = fund::Client::new(&s.env, &open_only);
+    fund.set_compliance(&fund::Compliance::Open);
+    assert_eq!(fund.compliance(), fund::Compliance::Open);
 }
