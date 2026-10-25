@@ -13,6 +13,8 @@ import { FreighterModule } from "@creit.tech/stellar-wallets-kit/modules/freight
 import { xBullModule } from "@creit.tech/stellar-wallets-kit/modules/xbull";
 import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
 import { deployments, endpoints, expert, network } from "./config";
+import { addressVal, dataKey, instanceKey, instanceStorage, keyId, native, readEntries, variantKey } from "./ledger";
+import { SPECS } from "./specs";
 import { ONE, toDecimalString, unitsToNumber } from "./format";
 import { CIRCLE_USDC_ISSUER, DEMO_ISSUER_LABEL, PINNED_MAINNET_ISSUERS, UNVERIFIED_ISSUER_LABEL } from "./issuers";
 
@@ -86,21 +88,32 @@ export const horizon = new Horizon.Server(endpoints.horizonUrl);
 export const isMainnet = network === "mainnet";
 
 
-function clientCache<T>() {
+function clientOptions(contractId: string, publicKey?: string): contract.ClientOptions {
+  return {
+    contractId,
+    rpcUrl: endpoints.rpcUrl,
+    networkPassphrase: endpoints.passphrase,
+    publicKey,
+    signTransaction: publicKey ? signWithWallet : undefined,
+  };
+}
+
+/** Our contracts' interfaces ship with the app (see specs.ts), so building a client costs no request. */
+function bundledClient<T>(entries: readonly string[]) {
+  const spec = new contract.Spec([...entries]);
+  return (contractId: string, publicKey?: string): Promise<contract.Client & T> =>
+    Promise.resolve(new contract.Client(spec, clientOptions(contractId, publicKey)) as contract.Client & T);
+}
+
+/** Interfaces we do not ship (other issuers' asset contracts) are fetched once and cached. */
+function fetchedClient<T>() {
   const cache = new Map<string, Promise<contract.Client & T>>();
-  return (contractId: string, publicKey?: string): Promise<contract.Client & T> => {
-    const key = `${contractId}:${publicKey ?? ""}`;
-    let pending = cache.get(key);
+  return (contractId: string): Promise<contract.Client & T> => {
+    let pending = cache.get(contractId);
     if (!pending) {
-      pending = contract.Client.from<T>({
-        contractId,
-        rpcUrl: endpoints.rpcUrl,
-        networkPassphrase: endpoints.passphrase,
-        publicKey,
-        signTransaction: publicKey ? signWithWallet : undefined,
-      });
-      pending.catch(() => cache.delete(key));
-      cache.set(key, pending);
+      pending = contract.Client.from<T>(clientOptions(contractId));
+      pending.catch(() => cache.delete(contractId));
+      cache.set(contractId, pending);
     }
     return pending;
   };
@@ -127,10 +140,10 @@ async function read<T>(tx: AT<T>): Promise<T> {
   return assembled.result;
 }
 
-const platformClients = clientCache<PlatformMethods>();
-const fundClient = clientCache<FundMethods>();
-const sacClient = clientCache<SacMethods>();
-const navClient = clientCache<NavMethods>();
+const platformClients = bundledClient<PlatformMethods>(SPECS.platform);
+const fundClient = bundledClient<FundMethods>(SPECS.fund);
+const sacClient = fetchedClient<SacMethods>();
+const navClient = bundledClient<NavMethods>(SPECS.nav);
 const platformClient = () => platformClients(requireDeployments().contracts.platform);
 
 function requireDeployments() {
@@ -281,8 +294,21 @@ function pathIsAllowed(path: { asset_type: string; asset_code?: string; asset_is
   );
 }
 
+const priceCache = new Map<string, { at: number; price: Promise<number | null> }>();
+const PRICE_TTL_MS = 30_000;
+
+/** One market quote per asset per 30 s, shared across every fund that holds it. */
+function priceInUsdc(asset: Asset): Promise<number | null> {
+  const key = asset.isNative() ? "native" : `${asset.getCode()}:${asset.getIssuer()}`;
+  const cached = priceCache.get(key);
+  if (cached && Date.now() - cached.at < PRICE_TTL_MS) return cached.price;
+  const price = quoteInUsdc(asset);
+  priceCache.set(key, { at: Date.now(), price });
+  return price;
+}
+
 /** USDC received for 1 unit on the network's own DEX, or null where there is no book. */
-async function priceInUsdc(asset: Asset): Promise<number | null> {
+async function quoteInUsdc(asset: Asset): Promise<number | null> {
   if (!QUOTE_USDC) return null;
   if (asset.equals(QUOTE_USDC)) return 1;
   try {
@@ -382,44 +408,88 @@ export interface Fund {
   awaitingIssuer: FundComponent[];
 }
 
-async function loadFund(id: string): Promise<Fund> {
-  const fund = await fundClient(id);
-  const platform = await platformClient();
-  const knownSymbol = Object.entries(deployments?.contracts.funds ?? {}).find(([, cid]) => cid === id)?.[0];
-  const [name, symbol, compliance, totalSupply, components, holdings, units] = await Promise.all([
-    read(fund.name()),
-    knownSymbol ? Promise.resolve(knownSymbol) : read(fund.symbol()),
-    read(fund.compliance()),
-    read(fund.total_supply()),
-    read(fund.components()),
-    read(fund.holdings()),
-    read(fund.units_per_share()),
-  ]);
+interface FundState {
+  id: string;
+  name: string;
+  symbol: string;
+  compliance: Compliance;
+  totalSupply: bigint;
+  components: { token: string; initialUnits: bigint; held: bigint; reserved: bigint; shelf: ShelfStatus; fundAuthorized: boolean }[];
+}
 
-  const oracleNav = loadOracleNav(
+const SHARE_SCALE = 10_000_000n;
+const unitTag = (value: unknown): string => (Array.isArray(value) ? String(value[0]) : String(value));
+const asBigInt = (value: unknown): bigint => (typeof value === "bigint" ? value : 0n);
+
+/**
+ * Reads every fund's state in two batched ledger requests: first each fund's
+ * config and platform registration, then every asset balance, owed reserve,
+ * shelf status and issuer authorization those configs point at. Funds the
+ * platform has not registered are dropped.
+ */
+async function readFundStates(ids: string[]): Promise<FundState[]> {
+  const platform = requireDeployments().contracts.platform;
+  const isFundKey = (id: string) => dataKey(platform, variantKey("IsFund", addressVal(id)));
+  const first = await readEntries(ids.flatMap((id) => [instanceKey(id), isFundKey(id)]));
+
+  const configs = ids
+    .filter((id) => native(first.get(keyId(isFundKey(id)))) === true)
+    .map((id) => ({ id, storage: instanceStorage(first.get(keyId(instanceKey(id)))) }))
+    .filter(({ storage }) => storage.size > 0);
+
+  const balanceKey = (token: string, holder: string) => dataKey(token, variantKey("Balance", addressVal(holder)));
+  const reservedKey = (fund: string, token: string) => dataKey(fund, variantKey("Reserved", addressVal(token)));
+  const shelfKey = (token: string) => dataKey(platform, variantKey("ShelfStatus", addressVal(token)));
+  const componentsOf = (storage: Map<string, unknown>) =>
+    (storage.get("Components") as { token: string; initial_units: bigint }[] | undefined) ?? [];
+
+  const second = await readEntries(
+    configs.flatMap(({ id, storage }) =>
+      componentsOf(storage).flatMap((c) => [balanceKey(c.token, id), reservedKey(id, c.token), shelfKey(c.token)]),
+    ),
+  );
+
+  return configs.map(({ id, storage }) => ({
     id,
-    components.map((c) => c.token),
+    name: String(storage.get("Name") ?? ""),
+    symbol: String(storage.get("Symbol") ?? ""),
+    compliance: unitTag(storage.get("Compliance")) as Compliance,
+    totalSupply: asBigInt(storage.get("Supply")),
+    components: componentsOf(storage).map((c) => {
+      const balance = native(second.get(keyId(balanceKey(c.token, id)))) as
+        | { amount: bigint; authorized: boolean }
+        | undefined;
+      const shelf = native(second.get(keyId(shelfKey(c.token))));
+      return {
+        token: c.token,
+        initialUnits: c.initial_units,
+        held: balance?.amount ?? 0n,
+        reserved: asBigInt(native(second.get(keyId(reservedKey(id, c.token))))),
+        shelf: (shelf === undefined ? "Unlisted" : unitTag(shelf)) as ShelfStatus,
+        fundAuthorized: balance?.authorized ?? false,
+      };
+    }),
+  }));
+}
+
+/** Mirrors the fund contract: holdings net of owed claims, units from holdings over supply. */
+async function toFund(state: FundState): Promise<Fund> {
+  const oracleNav = loadOracleNav(
+    state.id,
+    state.components.map((c) => c.token),
   ).catch(() => null);
   const legs = await Promise.all(
-    components.map(async (component, i): Promise<FundComponent> => {
-      const [info, shelf] = await Promise.all([
-        assetInfo(component.token),
-        read(platform.shelf_status({ token: component.token })),
-      ]);
-      const [priceUsdc, fundAuthorized] = await Promise.all([
-        priceInUsdc(info.asset),
-        shelf.tag === "Permissioned"
-          ? sacClient(component.token).then((sac) => read(sac.authorized({ id })))
-          : Promise.resolve(null),
-      ]);
+    state.components.map(async (c): Promise<FundComponent> => {
+      const info = await assetInfo(c.token);
+      const holding = c.held > c.reserved ? c.held - c.reserved : 0n;
       return {
         ...info,
-        shelfStatus: shelf.tag,
-        unitsPerShare: units[i] ?? 0n,
-        holding: holdings[i] ?? 0n,
-        priceUsdc,
+        shelfStatus: c.shelf,
+        unitsPerShare: state.totalSupply === 0n ? c.initialUnits : (holding * SHARE_SCALE) / state.totalSupply,
+        holding,
+        priceUsdc: await priceInUsdc(info.asset),
         oracle: null,
-        fundAuthorized,
+        fundAuthorized: c.shelf === "Permissioned" ? c.fundAuthorized : null,
       };
     }),
   );
@@ -428,11 +498,11 @@ async function loadFund(id: string): Promise<Fund> {
 
   const priced = legs.every((leg) => leg.priceUsdc !== null);
   return {
-    id,
-    name,
-    symbol,
-    compliance: compliance.tag,
-    totalSupply,
+    id: state.id,
+    name: state.name,
+    symbol: Object.entries(deployments?.contracts.funds ?? {}).find(([, cid]) => cid === state.id)?.[0] ?? state.symbol,
+    compliance: state.compliance,
+    totalSupply: state.totalSupply,
     components: legs,
     valuePerShare: priced
       ? legs.reduce((sum, leg) => sum + unitsToNumber(leg.unitsPerShare) * (leg.priceUsdc ?? 0), 0)
@@ -442,6 +512,11 @@ async function loadFund(id: string): Promise<Fund> {
     hasOracle: oracle !== null,
     awaitingIssuer: legs.filter((leg) => leg.fundAuthorized === false),
   };
+}
+
+async function loadFunds(ids: string[]): Promise<Fund[]> {
+  const states = await withRetry(() => readFundStates(ids));
+  return Promise.all(states.map(toFund));
 }
 
 const FUNDS_PAGE = 50;
@@ -464,8 +539,10 @@ let fundsCache: Promise<Fund[]> | null = null;
 /** Every fund the platform recognizes. The platform's registry is the authority, never fund self-reports. */
 export function listFunds(fresh = false): Promise<Fund[]> {
   if (!fundsCache || fresh) {
-    fundsCache = withRetry(() => platformClient().then(registeredFundIds))
-      .then((ids) => Promise.all(ids.map((id) => withRetry(() => loadFund(id)))));
+    const launched = Object.values(requireDeployments().contracts.funds);
+    fundsCache = (launched.length ? Promise.resolve(launched) : withRetry(() => platformClient().then(registeredFundIds))).then(
+      loadFunds,
+    );
     fundsCache.catch(() => {
       fundsCache = null;
     });
