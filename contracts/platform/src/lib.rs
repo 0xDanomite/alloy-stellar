@@ -8,9 +8,11 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
-    BytesN, ContractExecutable, Env, String, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error,
+    xdr::ToXdr, Address, Bytes, BytesN, ContractExecutable, Env, String, Vec,
 };
+
+pub const MAX_PAGE: u32 = 50;
 
 const DAY_IN_LEDGERS: u32 = 17_280;
 const INSTANCE_BUMP: u32 = 30 * DAY_IN_LEDGERS;
@@ -56,7 +58,8 @@ pub enum PlatformError {
 enum DataKey {
     Admin,
     FundWasm,
-    Funds,
+    FundCount,
+    FundAt(u32),
     Shelf,
     Manager(Address),
     ShelfStatus(Address),
@@ -193,6 +196,11 @@ impl Platform {
         }
 
         let wasm: BytesN<32> = env.storage().instance().get(&DataKey::FundWasm).unwrap();
+        // Salts are namespaced per manager so nobody can front-run another
+        // manager's precomputed fund address.
+        let mut seed: Bytes = manager.clone().to_xdr(&env);
+        seed.append(&Bytes::from(salt));
+        let salt: BytesN<32> = env.crypto().sha256(&seed).into();
         let fund = env.deployer().with_current_contract(salt).deploy_contract(
             ContractExecutable::Wasm(wasm),
             (
@@ -205,14 +213,19 @@ impl Platform {
             ),
         );
 
-        let mut funds = read_list(&env, &DataKey::Funds);
-        funds.push_back(fund.clone());
-        write_list(&env, &DataKey::Funds, &funds);
-        let key = DataKey::IsFund(fund.clone());
-        env.storage().persistent().set(&key, &true);
+        // One entry per fund, never a growing list: a single entry has a size
+        // cap, and this platform is not upgradeable.
+        let index = Self::fund_count(env.clone());
         env.storage()
-            .persistent()
-            .extend_ttl(&key, ENTRY_THRESHOLD, ENTRY_BUMP);
+            .instance()
+            .set(&DataKey::FundCount, &(index + 1));
+        let persistent = env.storage().persistent();
+        let at = DataKey::FundAt(index);
+        persistent.set(&at, &fund);
+        persistent.extend_ttl(&at, ENTRY_THRESHOLD, ENTRY_BUMP);
+        let genuine = DataKey::IsFund(fund.clone());
+        persistent.set(&genuine, &true);
+        persistent.extend_ttl(&genuine, ENTRY_THRESHOLD, ENTRY_BUMP);
 
         FundCreated {
             fund: fund.clone(),
@@ -293,11 +306,36 @@ impl Platform {
     /// The authority on whether a fund is genuine. A contract can name this
     /// platform in its own storage; only funds created here return true.
     pub fn is_fund(env: Env, fund: Address) -> bool {
-        env.storage().persistent().has(&DataKey::IsFund(fund))
+        let key = DataKey::IsFund(fund);
+        let storage = env.storage().persistent();
+        let genuine = storage.has(&key);
+        if genuine {
+            storage.extend_ttl(&key, ENTRY_THRESHOLD, ENTRY_BUMP);
+        }
+        genuine
     }
 
-    pub fn funds(env: Env) -> Vec<Address> {
-        read_list(&env, &DataKey::Funds)
+    pub fn fund_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::FundCount)
+            .unwrap_or(0)
+    }
+
+    /// Funds in creation order; `limit` is capped at `MAX_PAGE`.
+    pub fn funds(env: Env, start: u32, limit: u32) -> Vec<Address> {
+        let count = Self::fund_count(env.clone());
+        let end = count.min(start.saturating_add(limit.min(MAX_PAGE)));
+        let storage = env.storage().persistent();
+        let mut funds = Vec::new(&env);
+        for index in start..end {
+            let key = DataKey::FundAt(index);
+            if let Some(fund) = storage.get::<DataKey, Address>(&key) {
+                storage.extend_ttl(&key, ENTRY_THRESHOLD, ENTRY_BUMP);
+                funds.push_back(fund);
+            }
+        }
+        funds
     }
 
     pub fn shelf(env: Env) -> Vec<Address> {

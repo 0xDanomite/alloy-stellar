@@ -53,6 +53,16 @@ pub struct Redeem {
     pub to: Address,
     pub shares: i128,
     pub amounts: Vec<i128>,
+    pub skip: Vec<Address>,
+}
+
+#[contractevent(topics = ["leftover_credited"])]
+pub struct LeftoverCredited {
+    #[topic]
+    pub manager: Address,
+    #[topic]
+    pub token: Address,
+    pub amount: i128,
 }
 
 #[contractevent(topics = ["withdraw_owed"])]
