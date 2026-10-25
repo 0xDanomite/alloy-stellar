@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import { complianceLabel, headlineValue, IssuerFlags, IssuerName, OracleNote, strandColor } from "../components/fund-bits";
+import { AssetDot, complianceLabel, FundAvatar, headlineValue, HoldsChips, IssuerFlags, IssuerName, OracleNote } from "../components/fund-bits";
+import { ArrowLeft } from "../components/icons";
 import { InvestPanel } from "../components/InvestPanel";
 import { RedeemPanel } from "../components/RedeemPanel";
 import { CopyId, Figure, Usd } from "../components/ui";
 import { deployments, expert } from "../lib/config";
-import { formatAmount, unitsToNumber } from "../lib/format";
+import { formatAmount, formatUsd, unitsToNumber } from "../lib/format";
+import { fundValueUsd } from "../lib/fund-math";
 import { explain, findFund, isMainnet, loadPosition, type Fund } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
@@ -20,7 +22,7 @@ function Composition({ fund }: { fund: Fund }) {
   const columns = fund.hasOracle ? COLUMNS.oracle : COLUMNS.market;
   const { value: shareValue } = headlineValue(fund);
   return (
-    <div className="overflow-hidden rounded-xl border bg-card">
+    <div className="panel overflow-hidden rounded-2xl">
       <div className={`hidden gap-4 border-b px-5 py-3 text-[0.8125rem] text-muted-foreground md:grid ${columns}`}>
         <span>Asset</span>
         <span className="text-right">Per share</span>
@@ -36,7 +38,7 @@ function Composition({ fund }: { fund: Fund }) {
           return (
             <li key={leg.token} className={`grid grid-cols-1 gap-x-6 gap-y-1 px-5 py-4 sm:grid-cols-2 md:items-center ${columns}`}>
               <div className="mb-1 flex min-w-0 items-start gap-3 sm:col-span-2 md:col-span-1 md:mb-0">
-                <span className="mt-1 h-8 w-1 shrink-0 rounded-full" style={{ background: strandColor(i) }} aria-hidden />
+                <span className="mt-0.5"><AssetDot code={leg.code} index={i} /></span>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     {leg.issuer ? (
@@ -73,7 +75,7 @@ function Composition({ fund }: { fund: Fund }) {
           );
         })}
       </ul>
-      <div className="flex items-baseline justify-between gap-4 border-t bg-surface-sunken px-5 py-4">
+      <div className="flex items-baseline justify-between gap-4 border-t bg-surface-sunken/60 px-5 py-4">
         <span className="text-label">One share</span>
         <Usd value={shareValue} className="text-figure" />
       </div>
@@ -92,7 +94,7 @@ function Cell({ label, value }: { label: string; value: ReactNode }) {
 
 function AwaitingIssuer({ fund }: { fund: Fund }) {
   return (
-    <div className="rounded-xl border border-warning/40 bg-warning-surface p-5">
+    <div className="rounded-2xl border border-warning/40 bg-warning-surface p-5">
       <h2 className="text-heading">Waiting on issuer authorization</h2>
       <p className="mt-2 max-w-[42rem]">
         {fund.awaitingIssuer.map((l) => l.code).join(", ")} can only be held by addresses its issuer has approved. Issuing
@@ -135,50 +137,81 @@ export function FundPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:py-14">
-      <Link to="/#funds" className="text-label text-muted-foreground hover:text-foreground">
+      <Link to="/#funds" className="inline-flex items-center gap-1.5 text-label text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-4" />
         All funds
       </Link>
 
       <div className="mt-6 grid gap-10 lg:grid-cols-[1fr_24rem]">
         <div className="min-w-0 space-y-8">
           <header>
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="font-display text-[clamp(2.25rem,6vw,3.25rem)] leading-none font-semibold">{f ? f.symbol : <span className="skeleton w-40">fund</span>}</h1>
-              {f && <span className="rounded-full bg-secondary px-2.5 py-0.5 text-[0.75rem] font-medium">{complianceLabel(f)}</span>}
-            </div>
-            <p className="mt-2 text-[1.0625rem] text-muted-foreground">{f ? f.name : <span className="skeleton w-48">loading</span>}</p>
-
-            <div className="mt-8 flex flex-wrap items-end gap-x-12 gap-y-6">
-              <div>
-                <div className="text-[0.8125rem] text-muted-foreground">
-                  {f?.navPerShare != null ? "NAV per share (oracle)" : "Value per share"}
+            <div className="flex items-start gap-4">
+              {f ? <FundAvatar fund={f} className="size-14 text-[0.8125rem]" /> : <span className="skeleton size-14 rounded-full" />}
+              <div className="min-w-0 flex-1">
+                <h1 className="font-display text-[clamp(1.75rem,4.5vw,2.5rem)] leading-[1.08] font-semibold">
+                  {f ? f.name : <span className="skeleton w-64">loading</span>}
+                </h1>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-filing text-muted-foreground">{f ? f.symbol : "fund"}</span>
+                  {f && <span className="chip px-2 py-0.5 text-[0.75rem] text-muted-foreground">{complianceLabel(f)}</span>}
                 </div>
-                {!f ? (
-                  <Figure value={undefined} width="8ch" className="text-figure-xl" />
-                ) : headlineValue(f).value === null ? (
-                  <span className="text-figure-lg text-muted-foreground">unpriced</span>
-                ) : (
-                  <Usd value={headlineValue(f).value} className="text-figure-xl" />
+              </div>
+            </div>
+
+            <div className="panel mt-8 rounded-2xl p-5 sm:p-6">
+              <div className="flex flex-wrap items-end gap-x-10 gap-y-6">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-filing text-muted-foreground">
+                      {f?.navPerShare != null ? "NAV per share" : "Value per share"}
+                    </span>
+                    {f && headlineValue(f).value !== null && (
+                      <span className="chip px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground">
+                        {headlineValue(f).basis === "oracle" ? "oracle" : "SDEX"}
+                      </span>
+                    )}
+                  </div>
+                  {!f ? (
+                    <Figure value={undefined} width="8ch" className="text-figure-xl" />
+                  ) : headlineValue(f).value === null ? (
+                    <span className="text-figure-lg text-muted-foreground">unpriced</span>
+                  ) : (
+                    <Usd value={headlineValue(f).value} className="text-figure-xl" />
+                  )}
+                </div>
+                {f?.navPerShare != null && (
+                  <div>
+                    <div className="text-filing text-muted-foreground">Market value (SDEX)</div>
+                    <Usd value={f.valuePerShare} className="text-figure-lg" />
+                  </div>
+                )}
+                <div>
+                  <div className="text-filing text-muted-foreground">Shares issued</div>
+                  <Figure value={f ? formatAmount(f.totalSupply, 4) : undefined} className="text-figure-lg" />
+                </div>
+                {f && fundValueUsd(f) !== null && f.totalSupply > 0n && (
+                  <div>
+                    <div className="text-filing text-muted-foreground">In the fund</div>
+                    <span className="num text-figure-lg">${formatUsd(fundValueUsd(f) ?? 0)}</span>
+                  </div>
                 )}
               </div>
-              {f?.navPerShare != null && (
-                <div>
-                  <div className="text-[0.8125rem] text-muted-foreground">Market value (SDEX)</div>
-                  <Usd value={f.valuePerShare} className="text-figure-lg" />
+              {f && headlineValue(f).value === null && (
+                <p className="mt-3 max-w-[40rem] text-[0.875rem] text-muted-foreground">
+                  {isMainnet
+                    ? "At least one asset has no fresh oracle price or market price on the Stellar DEX right now, so we don't show a total."
+                    : "An asset has no price on the testnet market right now, so we don't show a total."}
+                </p>
+              )}
+              {f && (
+                <div className="mt-6 border-t pt-5">
+                  <p className="text-filing text-muted-foreground">Holds</p>
+                  <div className="mt-2">
+                    <HoldsChips fund={f} limit={8} />
+                  </div>
                 </div>
               )}
-              <div>
-                <div className="text-[0.8125rem] text-muted-foreground">Shares issued</div>
-                <Figure value={f ? formatAmount(f.totalSupply, 4) : undefined} className="text-figure-lg" />
-              </div>
             </div>
-            {f && headlineValue(f).value === null && (
-              <p className="mt-3 max-w-[40rem] text-[0.875rem] text-muted-foreground">
-                {isMainnet
-                  ? "At least one asset has no fresh oracle price or market price on the Stellar DEX right now, so we don't show a total."
-                  : "An asset has no price on the testnet market right now, so we don't show a total."}
-              </p>
-            )}
             {f && (
               <div className="mt-5 flex flex-wrap items-center gap-3 text-[0.875rem]">
                 <span className="text-muted-foreground">Fund contract</span>
@@ -190,7 +223,8 @@ export function FundPage() {
           {f && f.awaitingIssuer.length > 0 && <AwaitingIssuer fund={f} />}
 
           <section>
-            <h2 className="text-heading">What one share holds</h2>
+            <p className="text-filing text-muted-foreground">Composition</p>
+            <h2 className="mt-1 font-display text-[1.375rem] font-semibold">What one share holds</h2>
             <p className="mt-1 max-w-[42rem] text-muted-foreground">
               Amounts come from the fund's own balances divided by shares issued, so a clawback or a donation shows up here
               immediately.{" "}
@@ -198,12 +232,12 @@ export function FundPage() {
                 ? "Oracle prices come from RedStone and Reflector through Alloy's read-only NAV contract; the market column is what one unit sells for in USDC on the Stellar DEX right now, kept as a cross-check."
                 : "Prices are what one unit sells for in USDC on the Stellar DEX right now."}
             </p>
-            <div className="mt-5">{f ? <Composition fund={f} /> : <div className="skeleton h-64 w-full rounded-xl" />}</div>
+            <div className="mt-5">{f ? <Composition fund={f} /> : <div className="skeleton h-64 w-full rounded-2xl" />}</div>
           </section>
         </div>
 
         <aside className="lg:sticky lg:top-24 lg:self-start">
-          <div className="rounded-xl border bg-card shadow-overlay">
+          <div className="panel rounded-2xl shadow-overlay">
             <div className="grid grid-cols-2 border-b p-1.5" role="tablist">
               {(["invest", "redeem"] as const).map((t) => (
                 <button
@@ -212,7 +246,7 @@ export function FundPage() {
                   type="button"
                   aria-selected={tab === t}
                   onClick={() => setTab(t)}
-                  className={`rounded-md py-2 text-label ${tab === t ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`rounded-full py-2 text-label ${tab === t ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   {t === "invest" ? "Invest" : "Redeem"}
                 </button>
