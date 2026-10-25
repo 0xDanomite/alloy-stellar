@@ -72,6 +72,51 @@ cmd_add_asset() {
   echo "$code: contract $id"
 }
 
+# Pinned mainnet issuers, read from Horizon and each issuer's stellar.toml on
+# 2026-10-25. Lookalike issuers are common; never resolve these by code.
+MAINNET_ASSETS=(
+  "XLM - open"
+  "USDC GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN open"
+  "USDY GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6 open"
+  "USTRY GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC open"
+  "CETES GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC open"
+  "BENJI GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5 permissioned"
+)
+
+cmd_mainnet_assets() {
+  [ "$NETWORK" = mainnet ] || { echo "mainnet only" >&2; exit 1; }
+  local entry
+  for entry in "${MAINNET_ASSETS[@]}"; do
+    # shellcheck disable=SC2086
+    cmd_add_asset $entry
+  done
+}
+
+USDC_ISSUER=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+
+# buy CODE AMOUNT_STROOPS [IDENTITY] : buy an exact amount with XLM on the SDEX,
+# routing only direct or through Circle USDC so no unvetted token is touched.
+cmd_buy() {
+  local code="$1" amount="$2" identity="${3:-$MANAGER_IDENTITY}" asset account quote send_max path
+  asset="$(get ".assets[\"$code\"].asset")"
+  account="$(addr "$identity")"
+  if ! curl -s "$HORIZON_URL/accounts/$account" | jq -e --arg a "$asset" \
+      '.balances[] | select((.asset_code + ":" + .asset_issuer) == $a)' >/dev/null; then
+    run_tx "trustline $code" stellar tx new change-trust --source-account "$identity" --line "$asset" >/dev/null
+  fi
+  quote="$(curl -s "$HORIZON_URL/paths/strict-receive?source_assets=native&destination_asset_type=credit_alphanum$([ ${#code} -le 4 ] && echo 4 || echo 12)&destination_asset_code=$code&destination_asset_issuer=${asset#*:}&destination_amount=$(echo "scale=7; $amount / 10000000" | bc)" \
+    | jq -c --arg usdc "$USDC_ISSUER" '._embedded.records
+        | map(select(all(.path[]; .asset_type == "native" or (.asset_code == "USDC" and .asset_issuer == $usdc))))
+        | if length == 0 then null else min_by(.source_amount | tonumber) end')"
+  [ "$quote" != null ] || { echo "no path to $code" >&2; exit 1; }
+  send_max="$(jq -r '.source_amount | tonumber * 1.02 * 10000000 | floor' <<<"$quote")"
+  path="$(jq -r '[.path[] | if .asset_type == "native" then "native" else .asset_code + ":" + .asset_issuer end] | join(",")' <<<"$quote")"
+  echo "buying $code: up to $(jq -r .source_amount <<<"$quote") XLM (+2%) via [${path:-direct}]"
+  run_tx "buy $code" stellar tx new path-payment-strict-receive --source-account "$identity" \
+    --send-asset native --send-max "$send_max" --destination "$account" \
+    --dest-asset "$asset" --dest-amount "$amount" ${path:+--path "$path"} >/dev/null
+}
+
 cmd_shelf() {
   local platform; platform="$(get .contracts.platform)"
   for code in $(jq -r '.assets | keys[]' "$DEPLOYMENTS"); do
@@ -189,6 +234,8 @@ case "$command" in
   set-fund-wasm) cmd_set_fund_wasm ;;
   issue-asset) cmd_issue_asset "$@" ;;
   add-asset) cmd_add_asset "$@" ;;
+  mainnet-assets) cmd_mainnet_assets ;;
+  buy) cmd_buy "$@" ;;
   shelf) cmd_shelf ;;
   create-fund) cmd_create_fund "$@" ;;
   authorize-fund) cmd_authorize_fund "$@" ;;
@@ -198,5 +245,5 @@ case "$command" in
   redeem) cmd_redeem "$@" ;;
   clawback-drill) cmd_clawback_drill "$@" ;;
   status) cmd_status "$@" ;;
-  *) sed -n 2,8p "$0"; echo "commands: build deploy set-fund-wasm issue-asset add-asset shelf create-fund authorize-fund fund-investor allowlist issue redeem clawback-drill status"; exit 1 ;;
+  *) sed -n 2,8p "$0"; echo "commands: build deploy set-fund-wasm issue-asset add-asset mainnet-assets buy shelf create-fund authorize-fund fund-investor allowlist issue redeem clawback-drill status"; exit 1 ;;
 esac
