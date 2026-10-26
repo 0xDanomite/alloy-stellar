@@ -1,6 +1,6 @@
 import { Asset, BASE_FEE, Operation, TransactionBuilder, contract, nativeToScVal, scValToNative, xdr } from "@stellar/stellar-sdk";
 import { endpoints, platformSlot, SOROSWAP_ROUTER } from "./config";
-import { candidatePairs, maxIn, minOut, pairKey, routeFromUsdc, zapPaths, type LegRoute } from "./zap-math";
+import { candidatePairs, legDepth, maxIn, minOut, pairKey, routeFromUsdc, zapPaths, type LegDepth, type LegRoute } from "./zap-math";
 import {
   ChainError,
   QUOTE_USDC,
@@ -139,32 +139,79 @@ function requireRouter(): string {
   return SOROSWAP_ROUTER;
 }
 
+export interface LegQuote {
+  token: string;
+  code: string;
+  /** USDC this leg costs (issue) or pays (redeem) on Soroswap; the USDC leg at face value. */
+  usdc: bigint;
+  depth: LegDepth;
+}
+
+/** The legs whose pools are too thin for this size, by code. */
+function thinLegs(legs: LegQuote[]): string[] {
+  return legs.filter((l) => l.depth.thin).map((l) => l.code);
+}
+
+export function thinMessage(codes: string[]): string | null {
+  if (!codes.length) return null;
+  return `${joinCodes(codes)}: Soroswap ${codes.length === 1 ? "pool" : "pools"} too thin for this size, more than 3% off the oracle price.`;
+}
+
+/** The leg's oracle price from the fund's NAV legs, else its SDEX price, else null. */
+function legPrice(fund: Fund, index: number): number | null {
+  const leg = fund.components[index];
+  return leg?.oracle?.priceUsd ?? leg?.priceUsdc ?? null;
+}
+
+const UNQUOTED: LegDepth = { fair: null, worseBps: null, thin: false };
+
+/**
+ * One router quote per routed leg for `amounts`, judged against the leg's
+ * oracle value. A pool the router can't quote at this size counts as thin.
+ */
+async function quoteLegs(fund: Fund, plan: ZapPlan, amounts: bigint[], direction: "issue" | "redeem"): Promise<LegQuote[]> {
+  const router = requireRouter();
+  const method = direction === "issue" ? "router_get_amounts_in" : "router_get_amounts_out";
+  return Promise.all(
+    plan.routes.map(async (route, i): Promise<LegQuote> => {
+      const amount = amounts[i] ?? 0n;
+      const base = { token: route.token, code: route.code };
+      if (amount <= 0n) return { ...base, usdc: 0n, depth: UNQUOTED };
+      if (!route.path) return { ...base, usdc: amount, depth: UNQUOTED };
+      const path = direction === "issue" ? route.path : [...route.path].reverse();
+      const usdc = await view(router, method, [amountArg(amount), pathArg(path)], toAmounts).then(
+        (out) => (direction === "issue" ? out[0] : out[out.length - 1]) ?? 0n,
+        (err: unknown) => {
+          if (err instanceof ChainError) return 0n;
+          throw err;
+        },
+      );
+      const depth = legDepth(usdc, amount, legPrice(fund, i), direction);
+      return { ...base, usdc, depth: usdc > 0n ? depth : { ...depth, thin: true } };
+    }),
+  );
+}
+
 export interface IssueQuote {
   /** USDC the basket costs on Soroswap right now. */
   usdc: bigint;
   /** The most the transaction may spend: the quote plus 1%. */
   maxUsdc: bigint;
+  legs: LegQuote[];
+  /** Codes of legs too thin for this size; the USDC path should not be offered. */
+  thin: string[];
 }
 
 /**
  * Prices `shares` the way `issue_with_usdc` buys them: the fund's own
- * `quote_issue`, then `router_get_amounts_in` for each leg on its route.
+ * `quote_issue`, then `router_get_amounts_in` for each leg on its route,
+ * each leg checked against its oracle value.
  */
 export async function quoteZapIssue(fund: Fund, plan: ZapPlan, shares: bigint): Promise<IssueQuote> {
   pathsOrThrow(plan, "issue");
-  const router = requireRouter();
-  const needs = await quoteIssue(fund, shares);
-  const costs = await Promise.all(
-    plan.routes.map(async (route, i) => {
-      const need = needs[i] ?? 0n;
-      if (need <= 0n) return 0n;
-      if (!route.path) return need;
-      const amounts = await view(router, "router_get_amounts_in", [amountArg(need), pathArg(route.path)], toAmounts);
-      return amounts[0] ?? 0n;
-    }),
-  );
-  const usdc = costs.reduce((sum, c) => sum + c, 0n);
-  return { usdc, maxUsdc: maxIn(usdc) };
+  const legs = await quoteLegs(fund, plan, await quoteIssue(fund, shares), "issue");
+  const usdc = legs.reduce((sum, l) => sum + l.usdc, 0n);
+  return { usdc, maxUsdc: maxIn(usdc), legs, thin: thinLegs(legs) };
 }
 
 export interface RedeemQuote {
@@ -173,33 +220,30 @@ export interface RedeemQuote {
   minUsdc: bigint;
   /** True when the quote is a simulation of the owner's own `redeem_to_usdc`, false for a router estimate. */
   simulated: boolean;
+  legs: LegQuote[];
+  thin: string[];
 }
 
 /**
- * Prices a redemption to USDC. With an owner who holds the shares, it
- * simulates their `redeem_to_usdc` exactly; otherwise it estimates from
- * `quote_redeem` and `router_get_amounts_out` per leg.
+ * Prices a redemption to USDC: `quote_redeem`, then `router_get_amounts_out`
+ * per leg, each checked against its oracle value. With an owner who holds
+ * the shares, the total comes from simulating their own `redeem_to_usdc`.
  */
 export async function quoteZapRedeem(fund: Fund, plan: ZapPlan, shares: bigint, owner: string | null): Promise<RedeemQuote> {
   const paths = pathsOrThrow(plan, "redeem");
-  if (owner) {
-    const client = await zapClient(plan.zap, owner);
-    const usdc = await read(client.redeem_to_usdc({ owner, fund: fund.id, shares, min_usdc: 0n, paths }));
-    return { usdc, minUsdc: minOut(usdc), simulated: true };
+  const [legs, simulation] = await Promise.allSettled([
+    quoteRedeem(fund, shares).then((amounts) => quoteLegs(fund, plan, amounts, "redeem")),
+    owner ? zapClient(plan.zap, owner).then((client) => read(client.redeem_to_usdc({ owner, fund: fund.id, shares, min_usdc: 0n, paths }))) : null,
+  ]);
+  if (legs.status === "rejected") throw legs.reason;
+  const thin = thinLegs(legs.value);
+  if (thin.length) {
+    const usdc = legs.value.reduce((sum, l) => sum + l.usdc, 0n);
+    return { usdc, minUsdc: minOut(usdc), simulated: false, legs: legs.value, thin };
   }
-  const router = requireRouter();
-  const amounts = await quoteRedeem(fund, shares);
-  const outs = await Promise.all(
-    plan.routes.map(async (route, i) => {
-      const amount = amounts[i] ?? 0n;
-      if (amount <= 0n) return 0n;
-      if (!route.path) return amount;
-      const out = await view(router, "router_get_amounts_out", [amountArg(amount), pathArg([...route.path].reverse())], toAmounts);
-      return out[out.length - 1] ?? 0n;
-    }),
-  );
-  const usdc = outs.reduce((sum, o) => sum + o, 0n);
-  return { usdc, minUsdc: minOut(usdc), simulated: false };
+  if (simulation.status === "rejected") throw simulation.reason;
+  const usdc = simulation.value ?? legs.value.reduce((sum, l) => sum + l.usdc, 0n);
+  return { usdc, minUsdc: minOut(usdc), simulated: simulation.value !== null, legs: legs.value, thin };
 }
 
 /** One signature: USDC in, shares out. Returns the USDC actually spent. */

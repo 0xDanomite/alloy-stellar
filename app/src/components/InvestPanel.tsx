@@ -4,7 +4,7 @@ import { explain, issue, planBasket, quoteIssue, submitClassic, type Fund, type 
 import { expert } from "../lib/config";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
-import { explainZap, quoteZapIssue, usdcWallet, zapIssue, zapPlan, type IssueQuote, type ZapPlan } from "../lib/zap";
+import { explainZap, quoteZapIssue, thinMessage, usdcWallet, zapIssue, zapPlan, type IssueQuote, type ZapPlan } from "../lib/zap";
 import { Button, CopyId, TxNotice, type TxPhase } from "./ui";
 import { ModeSwitch, SharesInput, Step } from "./panel-bits";
 import { AddUsdc, ZapQuote, ZapRoutes } from "./zap-bits";
@@ -190,14 +190,15 @@ export function InvestPanel({ fund, position, onChanged }: { fund: Fund; positio
   const zap = useAsync(() => zapPlan(fund), fund.id);
   const plan = zap.data ?? null;
   const zappable = plan !== null && plan.blocked === null && fund.setup?.open === true;
-  const mode: InvestMode = zappable ? (chosen ?? "usdc") : "basket";
-
-  const quote = useAsync(() => quoteIssue(fund, shares ?? 0n), valid && mode === "basket" ? `${fund.id}:${shares}` : null);
   const zapQuote = useAsync(
     () => (plan ? quoteZapIssue(fund, plan, shares ?? 0n) : Promise.reject(new Error("This fund can't take USDC."))),
-    valid && mode === "usdc" ? `zap:${fund.id}:${shares}` : null,
+    valid && zappable ? `zap:${fund.id}:${shares}` : null,
     quoteVersion,
   );
+  const thin = zapQuote.data?.thin ?? [];
+  const tooThin = thinMessage(thin);
+  const mode: InvestMode = zappable ? (chosen ?? (tooThin || zapQuote.error != null ? "basket" : "usdc")) : "basket";
+  const quote = useAsync(() => quoteIssue(fund, shares ?? 0n), valid && mode === "basket" ? `${fund.id}:${shares}` : null);
 
   const blockedByIssuer = fund.awaitingIssuer.length > 0;
   const notApproved = fund.compliance === "Allowlist" && position !== null && !position.isInvestor;
@@ -225,7 +226,8 @@ export function InvestPanel({ fund, position, onChanged }: { fund: Fund; positio
                 : null
             }
           />
-          <ZapRoutes plan={plan} direction="issue" />
+          <ZapRoutes plan={plan} direction="issue" thin={thin} />
+          {tooThin && <p className="text-[0.8125rem] text-destructive">{tooThin} Deposit the basket instead.</p>}
         </div>
       ) : (
         <div>
@@ -240,10 +242,17 @@ export function InvestPanel({ fund, position, onChanged }: { fund: Fund; positio
               </li>
             ))}
           </ul>
-          {plan?.blocked && (
+          {plan?.blocked ? (
             <p className="mt-3 text-[0.8125rem] text-muted-foreground">
               Paying with USDC in one signature needs a Soroswap pool for every asset. {plan.blocked}
             </p>
+          ) : (
+            zappable &&
+            tooThin && (
+              <p className="mt-3 text-[0.8125rem] text-muted-foreground">
+                Paying with USDC isn't offered at this size. {tooThin}
+              </p>
+            )
           )}
         </div>
       )}
@@ -270,7 +279,7 @@ export function InvestPanel({ fund, position, onChanged }: { fund: Fund; positio
           fund={fund}
           plan={plan}
           shares={shares}
-          quote={zapQuote.data}
+          quote={tooThin ? undefined : zapQuote.data}
           onDone={() => {
             setQuoteVersion((v) => v + 1);
             onChanged();

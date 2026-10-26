@@ -17,7 +17,7 @@ import {
 } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
-import { explainZap, quoteZapRedeem, usdcWallet, zapPlan, zapRedeem, type ZapPlan } from "../lib/zap";
+import { explainZap, quoteZapRedeem, thinMessage, usdcWallet, zapPlan, zapRedeem, type ZapPlan } from "../lib/zap";
 import { Button, TxNotice, type TxPhase } from "./ui";
 import { ModeSwitch, SharesInput } from "./panel-bits";
 import { AddUsdc, ZapQuote, ZapRoutes } from "./zap-bits";
@@ -145,33 +145,58 @@ const MODES = [
   { id: "assets", label: "Receive the assets" },
 ] as const;
 
+/**
+ * The USDC quote for redeeming `shares`, simulated on the owner's own
+ * shares when they hold them and can receive USDC. Loaded whether or not
+ * the USDC mode is showing, since its depth check picks the default mode.
+ */
+function useZapRedeem(fund: Fund, plan: ZapPlan | null, shares: bigint | null, position: Position | null) {
+  const { address } = useWallet();
+  const [walletVersion, setWalletVersion] = useState(0);
+  const [quoteVersion, setQuoteVersion] = useState(0);
+  const valid = shares !== null && shares > 0n;
+  const wallet = useAsync(() => usdcWallet(address ?? ""), plan && address ? `usdc:${address}` : null, walletVersion);
+  const holds = valid && position !== null && (shares ?? 0n) <= position.shares;
+  const owner = address && holds && wallet.data?.hasTrustline ? address : null;
+  const ready = !address || wallet.data !== undefined;
+  const quote = useAsync(
+    () => (plan ? quoteZapRedeem(fund, plan, shares ?? 0n, owner) : Promise.reject(new Error("This fund can't pay USDC."))),
+    plan && valid && fund.totalSupply > 0n && ready ? `zap-redeem:${fund.id}:${shares}:${owner ?? ""}` : null,
+    quoteVersion,
+  );
+  return {
+    wallet,
+    quote,
+    holds,
+    ready,
+    reloadWallet: () => setWalletVersion((v) => v + 1),
+    reloadAll: () => {
+      setWalletVersion((v) => v + 1);
+      setQuoteVersion((v) => v + 1);
+    },
+  };
+}
+
+type ZapRedeemState = ReturnType<typeof useZapRedeem>;
+
 function UsdcRedeem({
   fund,
   plan,
   shares,
-  position,
+  state,
   onDone,
 }: {
   fund: Fund;
   plan: ZapPlan;
   shares: bigint | null;
-  position: Position | null;
+  state: ZapRedeemState;
   onDone: () => void;
 }) {
   const { address } = useWallet();
-  const [walletVersion, setWalletVersion] = useState(0);
-  const [quoteVersion, setQuoteVersion] = useState(0);
   const [phase, setPhase] = useState<TxPhase>({ state: "idle" });
   const valid = shares !== null && shares > 0n;
-  const wallet = useAsync(() => usdcWallet(address ?? ""), address ? `usdc:${address}` : null, walletVersion);
-  const holds = valid && position !== null && (shares ?? 0n) <= position.shares;
-  const owner = address && holds && wallet.data?.hasTrustline ? address : null;
-  const ready = !address || wallet.data !== undefined;
-  const quote = useAsync(
-    () => quoteZapRedeem(fund, plan, shares ?? 0n, owner),
-    valid && fund.totalSupply > 0n && ready ? `zap-redeem:${fund.id}:${shares}:${owner ?? ""}` : null,
-    quoteVersion,
-  );
+  const { wallet, quote, holds, ready } = state;
+  const tooThin = thinMessage(quote.data?.thin ?? []);
 
   async function run() {
     if (!address || !shares || !quote.data) return;
@@ -183,8 +208,7 @@ function UsdcRedeem({
         message: `Redeemed ${formatAmount(shares)} ${fund.symbol} for ${formatAmount(result.result, 4)} USDC.`,
         url: result.url,
       });
-      setWalletVersion((v) => v + 1);
-      setQuoteVersion((v) => v + 1);
+      state.reloadAll();
       onDone();
     } catch (err) {
       setPhase({ state: "failed", message: explainZap(err) });
@@ -205,7 +229,8 @@ function UsdcRedeem({
               : null
           }
         />
-        <ZapRoutes plan={plan} direction="redeem" />
+        <ZapRoutes plan={plan} direction="redeem" thin={quote.data?.thin} />
+        {tooThin && <p className="text-[0.8125rem] text-destructive">{tooThin} Receive the assets instead.</p>}
         <p className="text-[0.8125rem] text-muted-foreground">
           The fund pays out its assets and Soroswap sells them for USDC, in one transaction. If the pools are thin,
           receive the assets instead: that path can't be switched off.
@@ -213,7 +238,7 @@ function UsdcRedeem({
       </div>
 
       {address && wallet.data && !wallet.data.hasTrustline ? (
-        <AddUsdc address={address} why="Receiving USDC needs it." onAdded={() => setWalletVersion((v) => v + 1)} />
+        <AddUsdc address={address} why="Receiving USDC needs it." onAdded={state.reloadWallet} />
       ) : (
         address && (
           <>
@@ -221,7 +246,7 @@ function UsdcRedeem({
               className="w-full"
               onClick={run}
               busy={phase.state === "working"}
-              disabled={!holds || !quote.data || !quote.data.simulated}
+              disabled={!holds || !quote.data || !quote.data.simulated || tooThin !== null}
             >
               Redeem {valid ? formatAmount(shares ?? 0n) : ""} {fund.symbol} for USDC
             </Button>
@@ -246,7 +271,9 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
   const zap = useAsync(() => zapPlan(fund), fund.id);
   const plan = zap.data ?? null;
   const zappable = plan !== null && plan.blocked === null;
-  const mode: RedeemMode = zappable ? (chosen ?? "usdc") : "assets";
+  const zapState = useZapRedeem(fund, zappable ? plan : null, shares, position);
+  const tooThin = thinMessage(zapState.quote.data?.thin ?? []);
+  const mode: RedeemMode = zappable ? (chosen ?? (tooThin || zapState.quote.error != null ? "assets" : "usdc")) : "assets";
 
   const quote = useAsync(
     () => quoteRedeem(fund, shares ?? 0n),
@@ -323,7 +350,7 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
             <p className="text-[0.875rem] text-muted-foreground">You don't hold any {fund.symbol} yet.</p>
           )}
           {tooMany && <p className="text-[0.875rem] text-destructive">That's more than the {formatAmount(position?.shares ?? 0n)} shares you hold.</p>}
-          <UsdcRedeem fund={fund} plan={plan} shares={shares} position={position} onDone={onChanged} />
+          <UsdcRedeem fund={fund} plan={plan} shares={shares} state={zapState} onDone={onChanged} />
           {!address && (
             <Button className="w-full" onClick={connect} busy={connecting}>
               Connect wallet to redeem
@@ -348,6 +375,9 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
             <p className="mt-3 text-[0.8125rem] text-muted-foreground">
               Redemption pays out the assets themselves, straight from the fund. No manager or issuer setting can turn it off.
             </p>
+            {zappable && tooThin && (
+              <p className="mt-2 text-[0.8125rem] text-muted-foreground">Receiving USDC isn't offered at this size. {tooThin}</p>
+            )}
           </div>
 
           {!address ? (

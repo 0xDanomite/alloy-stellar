@@ -290,9 +290,18 @@ What a fund needs for the zap:
   issuer calls `set_authorized(zap, true)`, because the zap holds the leg
   for the length of the transaction. No permissioned shelf asset has a
   Soroswap pool today, so in practice the zap serves open funds.
-- A Soroswap route for every non-USDC leg. Today that is XLM and USTRY
-  (see the liquidity table above), so funds of USDC, USTRY and XLM, such
-  as aLQD, are zappable; funds holding USDY, CETES or BENJI are not.
+- A usable Soroswap route for every non-USDC leg, which takes both a pool
+  and depth near the oracle price. The app routes a leg directly from
+  USDC when that pair exists, else through XLM when both pairs do. For the
+  size asked, it then compares each leg's router quote
+  (`router_get_amounts_in` to issue, `router_get_amounts_out` to redeem)
+  with the leg's oracle value from the NAV contract; a leg more than 3%
+  worse is marked "Soroswap pool too thin for this size" and the app
+  defaults to the basket or in-kind flow. A pool existing is not enough:
+  USDC/CETES and XLM/USDY pools exist but hold dust. Today XLM and USTRY
+  have real depth (see the liquidity table above), so funds of USDC,
+  USTRY and XLM, such as aLQD, are zappable at ordinary sizes; funds
+  holding USDY, CETES or BENJI are not.
 
 `redeem_to_usdc` cannot skip legs; if an issuer has frozen a leg, redeem
 in kind with `redeem` and its `skip` list instead. The zap does not check

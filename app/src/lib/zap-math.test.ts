@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidatePairs, maxIn, minOut, pairKey, routeFromUsdc, zapPaths } from "./zap-math";
+import { candidatePairs, legDepth, maxIn, minOut, pairKey, routeFromUsdc, zapPaths } from "./zap-math";
 
 const USDC = "CUSDC";
 const XLM = "CXLM";
@@ -65,6 +65,50 @@ describe("zapPaths", () => {
 
   it("needs no routes for an all-USDC fund", () => {
     expect(zapPaths([{ token: USDC, path: null }], USDC, "issue")).toEqual([]);
+  });
+});
+
+describe("legDepth", () => {
+  const ONE = 10_000_000n;
+
+  it("passes an issue quote within 3% of the oracle value", () => {
+    expect(legDepth(10_200_000n, ONE, 1, "issue")).toEqual({ fair: ONE, worseBps: 200, thin: false });
+  });
+
+  it("flags an issue quote more than 3% above the oracle value", () => {
+    expect(legDepth(10_310_000n, ONE, 1, "issue")).toMatchObject({ worseBps: 310, thin: true });
+  });
+
+  it("treats exactly 3% as still usable", () => {
+    expect(legDepth(10_300_000n, ONE, 1, "issue").thin).toBe(false);
+  });
+
+  it("flags a redeem quote more than 3% below the oracle value", () => {
+    expect(legDepth(9_600_000n, ONE, 1, "redeem")).toMatchObject({ worseBps: 400, thin: true });
+    expect(legDepth(9_800_000n, ONE, 1, "redeem").thin).toBe(false);
+  });
+
+  it("never flags a quote better than the oracle", () => {
+    expect(legDepth(9_000_000n, ONE, 1, "issue")).toMatchObject({ worseBps: -1000, thin: false });
+    expect(legDepth(11_000_000n, ONE, 1, "redeem")).toMatchObject({ worseBps: -1000, thin: false });
+  });
+
+  it("prices the amount at the leg's oracle price", () => {
+    expect(legDepth(20_000_000n, 5n * ONE, 0.4, "issue")).toEqual({ fair: 20_000_000n, worseBps: 0, thin: false });
+    expect(legDepth(21_000_000n, 5n * ONE, 0.4, "issue")).toMatchObject({ worseBps: 500, thin: true });
+  });
+
+  it("flags a pool that quotes nothing", () => {
+    expect(legDepth(0n, ONE, 1, "redeem").thin).toBe(true);
+  });
+
+  it("takes a custom tolerance", () => {
+    expect(legDepth(10_200_000n, ONE, 1, "issue", 100).thin).toBe(true);
+  });
+
+  it("passes legs it can't price", () => {
+    expect(legDepth(50n * ONE, ONE, null, "issue")).toEqual({ fair: null, worseBps: null, thin: false });
+    expect(legDepth(50n * ONE, 0n, 1, "issue").thin).toBe(false);
   });
 });
 
