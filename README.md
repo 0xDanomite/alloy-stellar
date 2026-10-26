@@ -54,6 +54,7 @@ redeem on Stellar mainnet.
 | Verifiable builds: CI builds tagged releases from source and attests them (SEP-0055); deploys use only those binaries | [release workflow](.github/workflows/release.yml), [v0.2.0](https://github.com/0xDanomite/alloy-stellar/releases/tag/v0.2.0) |
 | CLI for the whole journey, mainnet and testnet | [scripts/alloy.sh](scripts/alloy.sh), [scripts/mainnet-launch.sh](scripts/mainnet-launch.sh) |
 | App: funds, oracle NAV, buy-the-basket, redeem, testnet/mainnet switch | [app](app) |
+| Manager rebalancing (the Set-style trade module, on Soroban): the manager swaps one holding for another inside the fund, every share re-weights, and the contract rejects any fill worth under 99% at oracle prices | [fund contract](contracts/fund/src/lib.rs), [v0.3.0](https://github.com/0xDanomite/alloy-stellar/releases/tag/v0.3.0), [mainnet rebalance](https://stellar.expert/explorer/public/tx/4e6f2a9cb92a71face8823f4ce29c28189bd6fae5c6306cd29e3cd7462f257c5) |
 | Create and manage funds from the wallet: approved managers pick shelf assets and units per share, preview launch NAV, deploy with one signature, then switch access and approve investors | [create page](app/src/pages/CreatePage.tsx), [commit](https://github.com/0xDanomite/alloy-stellar/commit/65a3815) |
 
 What we learned about Stellar:
@@ -163,6 +164,8 @@ All on Stellar Mainnet:
 | Seed issue of aTRSY | [tx](https://stellar.expert/explorer/public/tx/94489b5be5bdba25d51a29212a2d96075f74de2eb2ad46be468767ad50eb7c66) |
 | Issuer authorizes aRAIL | [tx](https://stellar.expert/explorer/public/tx/73cbec3c624226ff92ea1ff33f2b72f5c99ec1e59d4553eec9d5ac3d5824a291) |
 | Clawback drill (1.0 to 0.75 DEMOMMF per share) | [tx](https://stellar.expert/explorer/public/tx/f692a96a8aa7e1ec742ecb4fe1efbaef54e2c81bb5150d39e428e5949f893fa0) |
+| Rebalance: aREBAL sells 0.1 USDC for 0.59 XLM, units per share 0.1/1.0 to 0.05/1.295 | [tx](https://stellar.expert/explorer/public/tx/4e6f2a9cb92a71face8823f4ce29c28189bd6fae5c6306cd29e3cd7462f257c5) |
+| Fund code v0.3.0 set on the platform | [tx](https://stellar.expert/explorer/public/tx/28f8cd13d8fddfabfe1cf37ec1bcb8057a311deb385715f96e3fcdd3747da468) |
 | Redeem after the clawback | [tx](https://stellar.expert/explorer/public/tx/1fbd0e1a0d80303d243d60282a2b1360c9760e4e6ad21b3d5a71084a094062f0) |
 
 Every transaction from the launch is in
@@ -215,15 +218,17 @@ The switch in the header moves between mainnet and testnet.
 - **Next steps:**
   1. An independent audit.
   2. Streaming fees and a timelocked admin.
-  3. Agent-run funds: a manager agent with a policy (target weights, drift
+  3. A cumulative loss budget and cooldown on rebalances, on top of the
+     per-trade 1% oracle bound.
+  4. Agent-run funds: a manager agent with a policy (target weights, drift
      bands, oracle-checked minimums, spend limits) rebalances through
      Soroswap's aggregator, which can now execute swaps on an agent's behalf.
      The manager sets the rules; the agent runs them; investors can still
      always redeem.
-  4. Fund-share NAV as a SEP-40 price feed, and an aTRSY/USDC pool, so fund
+  5. Fund-share NAV as a SEP-40 price feed, and an aTRSY/USDC pool, so fund
      shares work as collateral across Stellar DeFi.
-  5. Issuer authorizations, starting with BENJI.
-  6. Private, ZK-verified investor allowlists.
+  6. Issuer authorizations, starting with BENJI.
+  7. Private, ZK-verified investor allowlists.
 
 ## Run It
 
