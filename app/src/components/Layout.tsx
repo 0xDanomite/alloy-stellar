@@ -1,7 +1,10 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
-import { links, oracles } from "../lib/config";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { deployments, links, oracles } from "../lib/config";
 import { shortId } from "../lib/format";
+import { portfolio } from "../lib/portfolio";
+import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
+import { Bell } from "./icons";
 import { AlloyMark, Button, ThemeToggle } from "./ui";
 
 function WalletButton() {
@@ -10,7 +13,8 @@ function WalletButton() {
     return (
       <Button variant="secondary" onClick={disconnect} title={`Connected as ${address}. Click to disconnect.`}>
         <span className="size-2 rounded-full bg-success" aria-hidden />
-        <span className="num">{shortId(address)}</span>
+        <span className="num whitespace-nowrap sm:hidden">{shortId(address, 3, 3)}</span>
+        <span className="num hidden whitespace-nowrap sm:inline">{shortId(address)}</span>
       </Button>
     );
   }
@@ -19,6 +23,30 @@ function WalletButton() {
       <span className="sm:hidden">Connect</span>
       <span className="hidden sm:inline">Connect wallet</span>
     </Button>
+  );
+}
+
+function AttentionBell() {
+  const { address } = useWallet();
+  const { pathname } = useLocation();
+  const state = useAsync(() => portfolio(address ?? ""), deployments && address ? `${address}:${pathname}` : null);
+  if (!address) return null;
+  const count = state.data?.attention.length ?? 0;
+  const label = count ? `${count} ${count === 1 ? "item needs" : "items need"} attention` : "Nothing needs attention";
+  return (
+    <Link
+      to="/portfolio"
+      className="relative grid size-10 place-items-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"
+      aria-label={`Portfolio: ${label}`}
+      title={label}
+    >
+      <Bell />
+      {count > 0 && (
+        <span className="num absolute top-1 right-1 grid min-w-4 place-items-center rounded-full bg-warning px-1 text-[0.625rem] leading-4 font-semibold text-gold-foreground">
+          {count}
+        </span>
+      )}
+    </Link>
   );
 }
 
@@ -52,13 +80,22 @@ export function Layout() {
               <span className="hidden sm:inline">Create fund</span>
             </NavLink>
             <NavLink
-              to="/built"
+              to="/portfolio"
               className={({ isActive }) =>
                 `hidden rounded-md px-3 py-2 text-label hover:bg-secondary sm:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
               }
             >
+              Portfolio
+            </NavLink>
+            <NavLink
+              to="/built"
+              className={({ isActive }) =>
+                `hidden rounded-md px-3 py-2 text-label hover:bg-secondary lg:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
+              }
+            >
               What we built
             </NavLink>
+            <AttentionBell />
             <ThemeToggle />
             <WalletButton />
           </nav>

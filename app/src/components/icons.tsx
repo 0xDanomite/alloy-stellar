@@ -83,3 +83,10 @@ export const Swap = (p: { className?: string }) => (
     <path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5" />
   </Icon>
 );
+
+export const Bell = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2H4.5l1.5-2Z" />
+    <path d="M10 20.5a2 2 0 0 0 4 0" />
+  </Icon>
+);
