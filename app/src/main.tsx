@@ -10,6 +10,7 @@ import { FundsPage } from "./pages/FundsPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { Built } from "./pages/Built";
 import { CreatePage } from "./pages/CreatePage";
+import { AdminPage } from "./pages/AdminPage";
 import { NotFound } from "./pages/NotFound";
 
 const router = createBrowserRouter([
@@ -21,6 +22,7 @@ const router = createBrowserRouter([
       { path: "/fund/:id", element: <FundPage /> },
       { path: "/portfolio", element: <PortfolioPage /> },
       { path: "/create", element: <CreatePage /> },
+      { path: "/admin", element: <AdminPage /> },
       { path: "/built", element: <Built /> },
       { path: "*", element: <NotFound /> },
     ],

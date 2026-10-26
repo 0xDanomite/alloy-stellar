@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { planCashOut } from "../lib/cashout";
+import { expert } from "../lib/config";
 import { formatAmount, toDecimalString, toUnits } from "../lib/format";
 import {
   ChainError,
@@ -6,6 +8,7 @@ import {
   quoteRedeem,
   redeem,
   simulateRedeem,
+  submitClassic,
   unreceivableLegs,
   withdrawOwed,
   type Fund,
@@ -57,6 +60,82 @@ function OwedClaims({ fund, position, onChanged }: { fund: Fund; position: Posit
   );
 }
 
+/** After a redemption: sell the assets it paid out for USDC in one more signature. */
+function CashOut({ received }: { received: { leg: FundComponent; amount: bigint }[] }) {
+  const { address } = useWallet();
+  const [asked, setAsked] = useState(false);
+  const [version, setVersion] = useState(0);
+  const plan = useAsync(() => planCashOut(address ?? "", received), asked && address ? `cashout:${address}:${received.map((r) => `${r.leg.token}:${r.amount}`).join(",")}` : null, version);
+  const [phase, setPhase] = useState<TxPhase>({ state: "idle" });
+
+  async function sell() {
+    if (!address || !plan.data?.xdr) return;
+    setPhase({ state: "working", message: "Confirm the sale in your wallet…" });
+    try {
+      const hash = await submitClassic(plan.data.xdr, address);
+      setPhase({ state: "done", message: "Sold for USDC.", url: expert.tx(hash) });
+    } catch (err) {
+      setPhase({ state: "failed", message: explain(err) });
+      setVersion((v) => v + 1);
+    }
+  }
+
+  if (!asked) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4 text-[0.875rem]">
+        <span>Want dollars instead? Sell what you received for USDC.</span>
+        <Button variant="secondary" onClick={() => setAsked(true)}>
+          Quote USDC
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border p-4">
+      <h3 className="text-label">Cash out to USDC</h3>
+      {plan.loading && !plan.data && <p className="text-[0.875rem] text-muted-foreground">Quoting the Stellar DEX…</p>}
+      {plan.error != null && <p className="text-[0.875rem] text-destructive">{explain(plan.error)}</p>}
+      {plan.data && (
+        <>
+          <ul className="space-y-2 text-[0.875rem]">
+            {plan.data.legs.map((leg) => (
+              <li key={leg.code}>
+                <div className="flex justify-between gap-3">
+                  {leg.blocked ? (
+                    <span>{leg.code}</span>
+                  ) : (
+                    <span>
+                      Sell <span className="num">{formatAmount(leg.amount)}</span> {leg.code}
+                    </span>
+                  )}
+                  <span className="num">{leg.expected !== null ? `${formatAmount(leg.expected, 2)} USDC` : "kept"}</span>
+                </div>
+                <p className="text-muted-foreground">{leg.blocked ?? `${leg.route}, at least ${formatAmount(leg.minimum ?? 0n, 2)} USDC`}</p>
+              </li>
+            ))}
+          </ul>
+          {plan.data.xdr ? (
+            <>
+              <p className="text-[0.875rem]">
+                About <span className="num">{formatAmount(plan.data.totalExpected, 2)}</span> USDC, at least{" "}
+                <span className="num">{formatAmount(plan.data.totalMinimum, 2)}</span> if prices move up to 2% while you sign.
+                {plan.data.addsTrustline && " Adds USDC to your wallet first."}
+              </p>
+              <Button className="w-full" onClick={sell} busy={phase.state === "working"} disabled={phase.state === "done"}>
+                Sell for USDC
+              </Button>
+            </>
+          ) : (
+            <p className="text-[0.875rem] text-muted-foreground">Nothing here can be sold right now.</p>
+          )}
+        </>
+      )}
+      <TxNotice phase={phase} />
+    </div>
+  );
+}
+
 export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; position: Position | null; onChanged: () => void }) {
   const { address, connect, connecting } = useWallet();
   const [input, setInput] = useState("1");
@@ -64,6 +143,7 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
   const valid = shares !== null && shares > 0n;
   const [phase, setPhase] = useState<TxPhase>({ state: "idle" });
   const [skipOffer, setSkipOffer] = useState<FundComponent[] | null>(null);
+  const [received, setReceived] = useState<{ leg: FundComponent; amount: bigint }[] | null>(null);
 
   const quote = useAsync(() => quoteRedeem(fund, shares ?? 0n), valid && fund.totalSupply > 0n ? `${fund.id}:${shares}` : null);
   const tooMany = valid && position !== null && (shares ?? 0n) > position.shares;
@@ -73,8 +153,10 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
     setSkipOffer(null);
     setPhase({ state: "working", message: "Checking the redemption…" });
     const skipIds = skip.map((s) => s.token);
+    setReceived(null);
+    let amounts: bigint[];
     try {
-      await simulateRedeem(fund, address, shares, skipIds);
+      amounts = await simulateRedeem(fund, address, shares, skipIds);
     } catch (err) {
       if (err instanceof ChainError && skip.length === 0) {
         const legs = await unreceivableLegs(fund, address, err);
@@ -92,6 +174,11 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
       const result = await redeem(fund, address, shares, skipIds);
       const kept = skip.length ? ` ${skip.map((s) => s.code).join(", ")} is set aside for you to claim.` : "";
       setPhase({ state: "done", message: `Redeemed ${formatAmount(shares)} ${fund.symbol}.${kept}`, url: result.url });
+      setReceived(
+        fund.components
+          .map((leg, i) => ({ leg, amount: amounts[i] ?? 0n }))
+          .filter(({ leg, amount }) => amount > 0n && !skipIds.includes(leg.token)),
+      );
       onChanged();
     } catch (err) {
       setPhase({ state: "failed", message: explain(err) });
@@ -174,6 +261,7 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
             </Button>
           )}
           <TxNotice phase={phase} />
+          {phase.state === "done" && received && received.some((r) => r.leg.code !== "USDC") && <CashOut received={received} />}
           {position && <OwedClaims fund={fund} position={position} onChanged={onChanged} />}
         </>
       )}
