@@ -1,6 +1,6 @@
-use soroban_sdk::{contractevent, Address, Vec};
+use soroban_sdk::{contractevent, Address, String, Symbol, Vec};
 
-use crate::storage::Compliance;
+use crate::storage::{Compliance, Mandate};
 
 #[contractevent(topics = ["transfer"], data_format = "single-value")]
 pub struct Transfer {
@@ -108,4 +108,47 @@ pub struct Rebalanced {
 #[contractevent(topics = ["nav_set"], data_format = "single-value")]
 pub struct NavSet {
     pub nav: Address,
+}
+
+#[contractevent(topics = ["fee_init"], data_format = "single-value")]
+pub struct FeeInitialized {
+    pub rate_bps: u32,
+}
+
+#[contractevent(topics = ["fee_accrued"], data_format = "map")]
+pub struct FeeAccrued {
+    #[topic]
+    pub recipient: Address,
+    pub shares: i128,
+    pub platform_recipient: Option<Address>,
+    pub platform_shares: i128,
+}
+
+#[contractevent(topics = ["fee_recipient_set"], data_format = "single-value")]
+pub struct FeeRecipientSet {
+    pub recipient: Address,
+}
+
+#[contractevent(topics = ["platform_fee_set"], data_format = "map")]
+pub struct PlatformFeeSet {
+    #[topic]
+    pub recipient: Address,
+    pub share_bps: u32,
+}
+
+#[contractevent(topics = ["mandate_set"], data_format = "single-value")]
+pub struct MandateSet {
+    pub mandate: Mandate,
+}
+
+#[contractevent(topics = ["component_added"], data_format = "single-value")]
+pub struct ComponentAdded {
+    pub token: Address,
+}
+
+#[contractevent(topics = ["metadata_set"], data_format = "single-value")]
+pub struct MetadataSet {
+    #[topic]
+    pub key: Symbol,
+    pub value: String,
 }

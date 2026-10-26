@@ -81,6 +81,15 @@ simulates and needs no fee.
 | `set_compliance(Open \| Allowlist)` | manager | `Open` only if every component is `Open` on the shelf |
 | `rebalance(sell, sold, buy, bought)` | manager | Swap one component for another inside the fund, bounded by oracle prices |
 | `set_nav(nav)` | platform admin | The oracle that bounds rebalances |
+| `set_mandate(Locked \| Managed)`, `mandate()` | manager, once, before the first share | `Locked` (the default) fixes the basket; `Managed` allows rebalances and `add_component` |
+| `add_component(token)` | manager, `Managed` only | Adds a shelf asset at zero units; a permissioned one needs `Allowlist` |
+| `init_fee(rate_bps)` | manager, once, before the first share | Annual management fee, at most 500 bps, streamed as newly minted shares |
+| `accrue_fee()` | anyone | Mints the fee accrued so far; `issue` and `redeem` call it first |
+| `pending_fee()`, `fee()`, `fee_recipient()`, `platform_fee()` | anyone | Fee views |
+| `set_fee_recipient(recipient)` | manager | Where the manager's part of the fee is minted (default: the manager) |
+| `set_platform_fee(share_bps, recipient)` | platform admin | The platform's cut of the fee, at most 5000 bps of it |
+| `set_metadata(key, value)`, `metadata()` | manager / anyone | Up to 8 entries such as `description`, `strategy`, `website`, 512 bytes each; an empty value removes one |
+| `window_loss_ppb()`, `last_rebalance()` | anyone | Rebalance loss used in the rolling 24 hour window, and the last rebalance time |
 | SEP-41: `balance`, `transfer`, `transfer_from`, `approve`, `allowance`, `burn`, `burn_from`, `decimals`, `name`, `symbol` | | Standard token interface |
 
 **Platform**
@@ -185,6 +194,13 @@ NAV oracle prices (`MAX_REBALANCE_LOSS_BPS = 100`), or it fails with
 (`set_nav`), or it fails with `NoOracle`. Rebalance ships in fund code
 v0.3.0; funds are not upgradeable, so it is on aREBAL and funds created
 after it.
+
+From fund code v0.4.0 (not yet released) a rebalance also needs a
+`Managed` mandate (else `MandateLocked`), comes at least 60 seconds after
+the previous one (else `RebalanceCooldown`), and fails with
+`LossBudgetExceeded` once everything given up against the oracle inside a
+rolling 24 hours would pass 2% of fund value. A fund with no `set_nav`
+falls back to the NAV contract compiled into a `mainnet` build.
 
 ```
 stellar contract invoke --id CAZ7FRP7M5RMLGGOPQZNZMIEN7ACNLVBG7AOVEBGBCBYH6JVUCLTDCTD \

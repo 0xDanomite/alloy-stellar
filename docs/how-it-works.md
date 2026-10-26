@@ -36,6 +36,68 @@ rounds what you receive down.
 | A clawback never blocks redemption | Holdings floor at zero; owed claims rank ahead of holders | `clawback_below_owed_reserve_never_blocks_redeem` |
 | New money never covers an impaired asset | `issue` is refused while any asset holds less than it owes | `issue_is_blocked_while_a_leg_is_short_of_owed_claims` |
 | The fund is always solvent | Holdings cover every outstanding share at all times | `test_reference_model` (property test) |
+| The management fee never blocks a redemption | Accrual uses no external call and mints nothing on overflow | `fee_accrual_never_blocks_a_redemption` |
+| A locked fund's basket never changes | `Locked` is the default and can only be swapped for `Managed` before the first share | `a_fund_is_locked_unless_its_manager_chose_managed_before_the_first_share` |
+| A manager cannot bleed value through many small bad fills | Oracle losses across rebalances are capped at 2% of fund value per rolling 24 hours, one minute apart | `losses_inside_a_day_are_capped_at_two_percent_of_fund_value` |
+
+## Management fee
+
+A manager may set one annual fee, at most 5% (`MAX_FEE_BPS = 500`), with
+`init_fee` before the first share exists. It can never be changed after.
+The fee is paid in new shares, never in assets: for `t` seconds at rate
+`r`, the fund mints
+
+```
+supply * f / (1 - f),   f = r * t / one year
+```
+
+so the new shares own exactly `f` of the fund afterwards. `issue` and
+`redeem` accrue first, and anyone can call `accrue_fee`. `quote_issue` and
+`quote_redeem` include the pending fee, so a quote matches the call made in
+the same ledger. One accrual covers at most a year; time beyond that is
+not charged.
+
+The platform admin may take a cut of each fund's fee, at most half
+(`MAX_PLATFORM_SHARE_BPS = 5000`), minted to a recipient it names. The cut
+splits the fee; it never raises it. The manager's part goes to the manager
+or to a recipient the manager sets (who must pass the fund's allowlist).
+
+## Mandate
+
+Every fund is `Locked` or `Managed`, chosen once by the manager before the
+first share exists. A fund that never chooses is `Locked`, the safer
+reading for an investor: its components never change and it never
+rebalances, so a share always holds the same assets in the same
+proportions; only the fee, clawbacks and donations change the amounts. A `Managed` fund may
+rebalance and `add_component` any asset the platform shelf lists (a
+`Permissioned` one only with the investor allowlist on), up to 12
+components. An added asset starts at zero units and gains weight only
+through rebalances.
+
+## Metadata
+
+Managers describe a fund with `set_metadata(key, value)`: up to 8 entries
+(`description`, `strategy`, `website`, ...), 512 bytes each, read with
+`metadata()`. It is display data and changes nothing on chain.
+
+## Rebalance bounds
+
+Every rebalance is checked against the NAV oracle three ways:
+
+- each trade must return at least 99% of what leaves the fund;
+- what all trades gave up must stay within 2% of fund value over any
+  rolling 24 hours (`MAX_WINDOW_LOSS_BPS = 200`). Each losing trade is
+  logged with its loss as a share of fund value at that moment, and drops
+  out of the log a day later. At most 32 losing trades can be live at
+  once; gains are not logged and cost nothing;
+- trades are at least 60 seconds apart.
+
+A non-positive oracle price is refused (`BadPrice`). Legs the fund holds
+none of are not priced, so a newly added, still-empty asset needs no feed.
+
+The oracle is whatever the platform admin set with `set_nav`. A build
+with the `mainnet` cargo feature falls back to the mainnet NAV contract
+when none is set; default and `testnet` builds have no fallback.
 
 The property test drives random funds through random sequences of issues
 and partial redeems and compares every step against a fixed-unit basket
@@ -122,6 +184,8 @@ gh attestation verify alloy-fund_v0.1.0.wasm -R 0xDanomite/alloy-stellar
   quote and execution through an issuer clawback or freeze.
 - Oracle routes are set by a single admin key, like the platform; a
   wrong route mislabels share value on screen but cannot move assets.
+- Release builds compile no network feature, so released fund code has no
+  default oracle; the platform admin still sets one per fund.
 - An asset reclassified `Permissioned` after a fund opened does not force
   that fund back to an allowlist. The issuer's asset contract still refuses
   unauthorized holders.

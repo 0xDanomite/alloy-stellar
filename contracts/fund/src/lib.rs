@@ -12,22 +12,37 @@
 //!
 //! `platform()` is whatever the deployer passed in. Whether a fund is genuine
 //! is answered by the platform (`is_fund`), never by the fund itself.
+//!
+//! A streaming management fee, if the manager sets one, is paid by minting
+//! new shares, so it dilutes holders continuously and never moves an asset
+//! out of the fund. Accrual cannot fail, so it never blocks a redemption.
 #![no_std]
 
 mod events;
+mod network;
 mod storage;
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
-    token::TokenClient, Address, Env, String, Symbol, Vec,
+    token::TokenClient, Address, Env, Map, String, Symbol, Vec,
 };
 
-use storage::Config;
-pub use storage::{Compliance, Component};
+pub use storage::{Compliance, Component, FeeState, Mandate, PlatformFee};
+use storage::{Config, Loss};
 
 pub const SHARE_DECIMALS: u32 = 7;
 pub const SHARE_SCALE: i128 = 10_000_000;
 pub const MAX_COMPONENTS: u32 = 12;
+
+const BPS: i128 = 10_000;
+pub const YEAR_SECONDS: u64 = 365 * 24 * 60 * 60;
+/// Ceiling on the annual management fee: 5%.
+pub const MAX_FEE_BPS: u32 = 500;
+/// Ceiling on the platform's cut of the management fee: half.
+pub const MAX_PLATFORM_SHARE_BPS: u32 = 5_000;
+
+pub const MAX_METADATA_ENTRIES: u32 = 8;
+pub const MAX_METADATA_BYTES: u32 = 512;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -50,6 +65,17 @@ pub enum FundError {
     NoOracle = 15,
     PriceTooLow = 16,
     SameComponent = 17,
+    MandateLocked = 18,
+    MandateFixed = 19,
+    FundNotEmpty = 20,
+    FeeAlreadySet = 21,
+    FeeTooHigh = 22,
+    ShareTooHigh = 23,
+    NotOnShelf = 24,
+    MetadataTooLarge = 25,
+    LossBudgetExceeded = 26,
+    RebalanceCooldown = 27,
+    BadPrice = 28,
 }
 
 /// Mirrors `alloy_platform::ShelfStatus`.
@@ -84,6 +110,15 @@ pub trait NavInterface {
 
 /// The most value a rebalance may give up against oracle prices: 1%.
 pub const MAX_REBALANCE_LOSS_BPS: i128 = 100;
+/// The most value all rebalances together may give up against oracle prices
+/// within any `LOSS_WINDOW_SECONDS`, as a share of fund value: 2%.
+pub const MAX_WINDOW_LOSS_BPS: i128 = 200;
+pub const LOSS_WINDOW_SECONDS: u64 = 24 * 60 * 60;
+/// A losing rebalance is logged for one window; at most this many may be
+/// live at once, so the log has a fixed size.
+pub const MAX_WINDOW_LOSSES: u32 = 32;
+pub const MIN_REBALANCE_INTERVAL_SECONDS: u64 = 60;
+const PPB: i128 = 1_000_000_000;
 
 #[contract]
 pub struct Fund;
@@ -122,8 +157,7 @@ fn available(env: &Env, token: &Address) -> i128 {
     (held(env, token) - storage::reserved(env, token)).max(0)
 }
 
-fn issue_amounts(env: &Env, shares: i128) -> Vec<i128> {
-    let supply = storage::supply(env);
+fn issue_amounts(env: &Env, shares: i128, supply: i128) -> Vec<i128> {
     let mut amounts = Vec::new(env);
     for component in storage::components(env).iter() {
         // A clawback that cut into owed claims leaves the leg impaired; new
@@ -141,8 +175,7 @@ fn issue_amounts(env: &Env, shares: i128) -> Vec<i128> {
     amounts
 }
 
-fn redeem_amounts(env: &Env, shares: i128) -> Vec<i128> {
-    let supply = storage::supply(env);
+fn redeem_amounts(env: &Env, shares: i128, supply: i128) -> Vec<i128> {
     let mut amounts = Vec::new(env);
     for component in storage::components(env).iter() {
         let amount = if supply == 0 {
@@ -239,6 +272,179 @@ fn spend_allowance(env: &Env, from: &Address, spender: &Address, amount: i128) {
     );
 }
 
+/// Shares that pay the fee for `elapsed` seconds at `rate_bps` a year, sized
+/// so that after minting they own exactly that fraction of the fund:
+/// `supply * f / (1 - f)` with `f = rate * elapsed / year`. Elapsed time is
+/// capped at one year per accrual, which keeps `f` below one. An overflow
+/// mints nothing rather than fail, so accrual can never block a redemption.
+fn fee_shares(supply: i128, rate_bps: u32, elapsed: u64) -> i128 {
+    let accrued = i128::from(rate_bps) * i128::from(elapsed.min(YEAR_SECONDS));
+    let whole = BPS * i128::from(YEAR_SECONDS);
+    supply
+        .checked_mul(accrued)
+        .map_or(0, |numerator| numerator / (whole - accrued))
+}
+
+fn pending_fee_shares(env: &Env) -> i128 {
+    match storage::fee(env) {
+        Some(fee) => fee_shares(
+            storage::supply(env),
+            fee.rate_bps,
+            env.ledger().timestamp().saturating_sub(fee.last_accrual),
+        ),
+        None => 0,
+    }
+}
+
+fn accrue_fee(env: &Env) -> i128 {
+    let Some(mut fee) = storage::fee(env) else {
+        return 0;
+    };
+    let now = env.ledger().timestamp();
+    if now <= fee.last_accrual {
+        return 0;
+    }
+    let minted = fee_shares(storage::supply(env), fee.rate_bps, now - fee.last_accrual);
+    fee.last_accrual = now;
+    storage::set_fee(env, &fee);
+    if minted == 0 {
+        return 0;
+    }
+
+    let platform = storage::platform_fee(env);
+    let platform_shares = platform.as_ref().map_or(0, |cut| {
+        minted
+            .checked_mul(i128::from(cut.share_bps))
+            .map_or(0, |product| product / BPS)
+    });
+    let recipient = storage::fee_recipient(env);
+    let manager_shares = minted - platform_shares;
+    if manager_shares > 0 {
+        mint(env, &recipient, manager_shares);
+    }
+    let platform_recipient = platform.map(|cut| cut.recipient);
+    if let Some(to) = &platform_recipient {
+        if platform_shares > 0 {
+            mint(env, to, platform_shares);
+        }
+    }
+    events::FeeAccrued {
+        recipient,
+        shares: manager_shares,
+        platform_recipient,
+        platform_shares,
+    }
+    .publish(env);
+    minted
+}
+
+fn require_empty(env: &Env) {
+    if storage::supply(env) != 0 {
+        panic_with_error!(env, FundError::FundNotEmpty);
+    }
+}
+
+fn mandate(env: &Env) -> Mandate {
+    storage::mandate(env).unwrap_or(Mandate::Locked)
+}
+
+fn nav_address(env: &Env) -> Option<Address> {
+    storage::nav(env).or_else(|| network::DEFAULT_NAV.map(|id| Address::from_str(env, id)))
+}
+
+fn oracle_price(env: &Env, oracle: &NavClient, token: &Address) -> i128 {
+    let price = oracle.price(token).price;
+    if price <= 0 {
+        panic_with_error!(env, FundError::BadPrice);
+    }
+    price
+}
+
+fn usd_value(env: &Env, amount: i128, price: i128, round_up: bool) -> i128 {
+    mul_div(env, amount, price, SHARE_SCALE, round_up)
+}
+
+/// What the fund's holdings are worth at oracle prices, in USD with the
+/// oracle's 8 decimals. Legs the fund holds none of need no price.
+fn fund_value(env: &Env, oracle: &NavClient) -> i128 {
+    let mut total: i128 = 0;
+    for component in storage::components(env).iter() {
+        let amount = available(env, &component.token);
+        if amount > 0 {
+            let price = oracle_price(env, oracle, &component.token);
+            total = total
+                .checked_add(usd_value(env, amount, price, false))
+                .unwrap_or_else(|| panic_with_error!(env, FundError::Overflow));
+        }
+    }
+    total
+}
+
+/// The checks every manager trade shares: a managed mandate, two distinct
+/// components, enough of the sold one, the cooldown, and an oracle.
+fn begin_trade(env: &Env, sell: &Address, sold: i128, buy: &Address) -> NavClient<'static> {
+    if mandate(env) != Mandate::Managed {
+        panic_with_error!(env, FundError::MandateLocked);
+    }
+    require_positive(env, sold);
+    if sell == buy {
+        panic_with_error!(env, FundError::SameComponent);
+    }
+    let components = storage::components(env);
+    for token in [sell, buy] {
+        if !components.iter().any(|c| &c.token == token) {
+            panic_with_error!(env, FundError::UnknownComponent);
+        }
+    }
+    if sold > available(env, sell) {
+        panic_with_error!(env, FundError::InsufficientBalance);
+    }
+    if let Some(last) = storage::last_rebalance(env) {
+        if env.ledger().timestamp() < last.saturating_add(MIN_REBALANCE_INTERVAL_SECONDS) {
+            panic_with_error!(env, FundError::RebalanceCooldown);
+        }
+    }
+    let nav = nav_address(env).unwrap_or_else(|| panic_with_error!(env, FundError::NoOracle));
+    NavClient::new(env, &nav)
+}
+
+fn live_losses(env: &Env) -> (Vec<Loss>, i128) {
+    let now = env.ledger().timestamp();
+    let mut live = Vec::new(env);
+    let mut used = 0;
+    for loss in storage::losses(env).iter() {
+        if loss.at.saturating_add(LOSS_WINDOW_SECONDS) > now {
+            used += loss.ppb;
+            live.push_back(loss);
+        }
+    }
+    (live, used)
+}
+
+/// Charges what a trade gave up against oracle prices to the rolling loss
+/// budget, refusing the trade if the window's total would pass
+/// `MAX_WINDOW_LOSS_BPS` of fund value, and starts the cooldown.
+fn settle_trade(env: &Env, fund_value: i128, value_out: i128, value_in: i128) {
+    let (mut live, used) = live_losses(env);
+    let lost = value_out - value_in;
+    if lost > 0 {
+        let ppb = if fund_value > 0 {
+            mul_div(env, lost, PPB, fund_value, true)
+        } else {
+            PPB
+        };
+        if used + ppb > MAX_WINDOW_LOSS_BPS * (PPB / BPS) || live.len() >= MAX_WINDOW_LOSSES {
+            panic_with_error!(env, FundError::LossBudgetExceeded);
+        }
+        live.push_back(Loss {
+            at: env.ledger().timestamp(),
+            ppb,
+        });
+    }
+    storage::set_losses(env, &live);
+    storage::set_last_rebalance(env, env.ledger().timestamp());
+}
+
 #[contractimpl]
 impl Fund {
     pub fn __constructor(
@@ -287,11 +493,13 @@ impl Fund {
         storage::bump_instance(&env);
         require_positive(&env, shares);
         require_can_hold(&env, &to);
-        if storage::supply(&env) == 0 {
+        accrue_fee(&env);
+        let supply = storage::supply(&env);
+        if supply == 0 {
             credit_leftovers_to_manager(&env);
         }
 
-        let amounts = issue_amounts(&env, shares);
+        let amounts = issue_amounts(&env, shares, supply);
         if amounts.iter().all(|amount| amount == 0) {
             panic_with_error!(&env, FundError::NothingToDeposit);
         }
@@ -333,7 +541,8 @@ impl Fund {
             }
         }
 
-        let amounts = redeem_amounts(&env, shares);
+        accrue_fee(&env);
+        let amounts = redeem_amounts(&env, shares, storage::supply(&env));
         burn_shares(&env, &from, shares);
 
         let fund = env.current_contract_address();
@@ -391,14 +600,17 @@ impl Fund {
         amount
     }
 
+    /// Quotes include the management fee that would accrue first.
     pub fn quote_issue(env: Env, shares: i128) -> Vec<i128> {
         require_positive(&env, shares);
-        issue_amounts(&env, shares)
+        let supply = storage::supply(&env) + pending_fee_shares(&env);
+        issue_amounts(&env, shares, supply)
     }
 
     pub fn quote_redeem(env: Env, shares: i128) -> Vec<i128> {
         require_positive(&env, shares);
-        redeem_amounts(&env, shares)
+        let supply = storage::supply(&env) + pending_fee_shares(&env);
+        redeem_amounts(&env, shares, supply)
     }
 
     pub fn components(env: Env) -> Vec<Component> {
@@ -495,50 +707,35 @@ impl Fund {
         events::NavSet { nav }.publish(&env);
     }
 
+    /// The oracle bounding rebalances: the one the platform admin set, else
+    /// the network default compiled into this build, else none.
     pub fn nav(env: Env) -> Option<Address> {
-        storage::nav(&env)
+        nav_address(&env)
     }
 
     /// The manager swaps `sold` of one component for `bought` of another:
     /// the fund pays out `sell` and takes in `buy` in the same transaction.
-    /// Shares re-weight through the balances, and the trade must be worth at
-    /// least 99% of what leaves the fund at oracle prices, so a manager or
-    /// agent can't drain value through a bad fill. Where the manager sources
-    /// the bought asset (SDEX, Soroswap, an RFQ desk) is up to them.
+    /// Shares re-weight through the balances. Each trade must be worth at
+    /// least 99% of what leaves the fund at oracle prices, everything given
+    /// up within a rolling day must stay under 2% of fund value, and trades
+    /// are at least a minute apart, so a manager or agent can't drain value
+    /// through bad fills, one at a time or in a burst. Only `Managed` funds
+    /// rebalance. Where the manager sources the bought asset (SDEX, Soroswap,
+    /// an RFQ desk) is up to them.
     pub fn rebalance(env: Env, sell: Address, sold: i128, buy: Address, bought: i128) {
         let manager = storage::manager(&env);
         manager.require_auth();
         storage::bump_instance(&env);
-        require_positive(&env, sold);
         require_positive(&env, bought);
-        if sell == buy {
-            panic_with_error!(&env, FundError::SameComponent);
-        }
-        let components = storage::components(&env);
-        for token in [&sell, &buy] {
-            if !components.iter().any(|c| &c.token == token) {
-                panic_with_error!(&env, FundError::UnknownComponent);
-            }
-        }
-        if sold > available(&env, &sell) {
-            panic_with_error!(&env, FundError::InsufficientBalance);
-        }
+        let oracle = begin_trade(&env, &sell, sold, &buy);
 
-        let nav =
-            storage::nav(&env).unwrap_or_else(|| panic_with_error!(&env, FundError::NoOracle));
-        let oracle = NavClient::new(&env, &nav);
-        let value_out = mul_div(&env, sold, oracle.price(&sell).price, SHARE_SCALE, true);
-        let value_in = mul_div(&env, bought, oracle.price(&buy).price, SHARE_SCALE, false);
-        let floor = mul_div(
-            &env,
-            value_out,
-            10_000 - MAX_REBALANCE_LOSS_BPS,
-            10_000,
-            true,
-        );
+        let value_out = usd_value(&env, sold, oracle_price(&env, &oracle, &sell), true);
+        let value_in = usd_value(&env, bought, oracle_price(&env, &oracle, &buy), false);
+        let floor = mul_div(&env, value_out, BPS - MAX_REBALANCE_LOSS_BPS, BPS, true);
         if value_in < floor {
             panic_with_error!(&env, FundError::PriceTooLow);
         }
+        settle_trade(&env, fund_value(&env, &oracle), value_out, value_in);
 
         let fund = env.current_contract_address();
         TokenClient::new(&env, &buy).transfer(&manager, &fund, &bought);
@@ -551,6 +748,171 @@ impl Fund {
             bought,
         }
         .publish(&env);
+    }
+
+    /// What rebalances have given up against oracle prices inside the
+    /// current window, in parts per billion of fund value (1 bps = 100_000).
+    pub fn window_loss_ppb(env: Env) -> i128 {
+        live_losses(&env).1
+    }
+
+    pub fn last_rebalance(env: Env) -> Option<u64> {
+        storage::last_rebalance(&env)
+    }
+
+    pub fn mandate(env: Env) -> Mandate {
+        mandate(&env)
+    }
+
+    /// Commits the fund to `Locked` or `Managed`. Allowed once, before the
+    /// first share exists, so holders always know which one they bought.
+    /// A fund that never chooses is `Locked`.
+    pub fn set_mandate(env: Env, mandate: Mandate) {
+        storage::manager(&env).require_auth();
+        storage::bump_instance(&env);
+        if storage::mandate(&env).is_some() {
+            panic_with_error!(&env, FundError::MandateFixed);
+        }
+        require_empty(&env);
+        storage::set_mandate(&env, mandate);
+        events::MandateSet { mandate }.publish(&env);
+    }
+
+    /// Adds a shelf asset to a `Managed` fund. It starts at zero units and
+    /// gains weight only through rebalances. A permissioned asset needs the
+    /// fund's investor allowlist on, as at creation.
+    pub fn add_component(env: Env, token: Address) {
+        storage::manager(&env).require_auth();
+        storage::bump_instance(&env);
+        if mandate(&env) != Mandate::Managed {
+            panic_with_error!(&env, FundError::MandateLocked);
+        }
+        let mut components = storage::components(&env);
+        if components.len() >= MAX_COMPONENTS {
+            panic_with_error!(&env, FundError::TooManyComponents);
+        }
+        if components.iter().any(|c| c.token == token) {
+            panic_with_error!(&env, FundError::DuplicateComponent);
+        }
+        match PlatformClient::new(&env, &storage::platform(&env)).shelf_status(&token) {
+            ShelfStatus::Unlisted => panic_with_error!(&env, FundError::NotOnShelf),
+            ShelfStatus::Permissioned if storage::compliance(&env) != Compliance::Allowlist => {
+                panic_with_error!(&env, FundError::PermissionedComponent)
+            }
+            _ => {}
+        }
+        components.push_back(Component {
+            token: token.clone(),
+            initial_units: 0,
+        });
+        storage::set_components(&env, &components);
+        events::ComponentAdded { token }.publish(&env);
+    }
+
+    /// Sets the annual management fee, once, before the first share exists.
+    /// Zero is a valid, permanent choice. The fee streams from this moment.
+    pub fn init_fee(env: Env, rate_bps: u32) {
+        storage::manager(&env).require_auth();
+        storage::bump_instance(&env);
+        if storage::fee(&env).is_some() {
+            panic_with_error!(&env, FundError::FeeAlreadySet);
+        }
+        if rate_bps > MAX_FEE_BPS {
+            panic_with_error!(&env, FundError::FeeTooHigh);
+        }
+        require_empty(&env);
+        storage::set_fee(
+            &env,
+            &FeeState {
+                rate_bps,
+                last_accrual: env.ledger().timestamp(),
+            },
+        );
+        events::FeeInitialized { rate_bps }.publish(&env);
+    }
+
+    /// Mints the management fee accrued since the last call. Anyone may call
+    /// it; `issue` and `redeem` call it first. Returns the shares minted.
+    pub fn accrue_fee(env: Env) -> i128 {
+        storage::bump_instance(&env);
+        accrue_fee(&env)
+    }
+
+    /// Fee shares that `accrue_fee` would mint now.
+    pub fn pending_fee(env: Env) -> i128 {
+        pending_fee_shares(&env)
+    }
+
+    pub fn fee(env: Env) -> Option<FeeState> {
+        storage::fee(&env)
+    }
+
+    /// Where the manager's part of the fee is minted; the manager by default.
+    pub fn fee_recipient(env: Env) -> Address {
+        storage::fee_recipient(&env)
+    }
+
+    pub fn set_fee_recipient(env: Env, recipient: Address) {
+        storage::manager(&env).require_auth();
+        storage::bump_instance(&env);
+        require_can_hold(&env, &recipient);
+        accrue_fee(&env);
+        storage::set_fee_recipient(&env, &recipient);
+        events::FeeRecipientSet { recipient }.publish(&env);
+    }
+
+    pub fn platform_fee(env: Env) -> Option<PlatformFee> {
+        storage::platform_fee(&env)
+    }
+
+    /// The platform's cut of this fund's management fee, set by the platform
+    /// admin and capped at half. It splits the fee; it never raises it.
+    pub fn set_platform_fee(env: Env, share_bps: u32, recipient: Address) {
+        PlatformClient::new(&env, &storage::platform(&env))
+            .admin()
+            .require_auth();
+        storage::bump_instance(&env);
+        if share_bps > MAX_PLATFORM_SHARE_BPS {
+            panic_with_error!(&env, FundError::ShareTooHigh);
+        }
+        accrue_fee(&env);
+        storage::set_platform_fee(
+            &env,
+            &PlatformFee {
+                share_bps,
+                recipient: recipient.clone(),
+            },
+        );
+        events::PlatformFeeSet {
+            recipient,
+            share_bps,
+        }
+        .publish(&env);
+    }
+
+    /// Manager-written descriptive fields (`description`, `strategy`,
+    /// `website`, ...). An empty value removes the key.
+    pub fn set_metadata(env: Env, key: Symbol, value: String) {
+        storage::manager(&env).require_auth();
+        storage::bump_instance(&env);
+        if value.len() > MAX_METADATA_BYTES {
+            panic_with_error!(&env, FundError::MetadataTooLarge);
+        }
+        let mut map = storage::metadata(&env);
+        if value.is_empty() {
+            map.remove(key.clone());
+        } else {
+            map.set(key.clone(), value.clone());
+            if map.len() > MAX_METADATA_ENTRIES {
+                panic_with_error!(&env, FundError::MetadataTooLarge);
+            }
+        }
+        storage::set_metadata(&env, &map);
+        events::MetadataSet { key, value }.publish(&env);
+    }
+
+    pub fn metadata(env: Env) -> Map<Symbol, String> {
+        storage::metadata(&env)
     }
 
     pub fn set_manager(env: Env, new_manager: Address) {
