@@ -5,10 +5,16 @@ import { ArrowLeft } from "../components/icons";
 import { InvestPanel } from "../components/InvestPanel";
 import { ManagePanel } from "../components/ManagePanel";
 import { RedeemPanel } from "../components/RedeemPanel";
+import { ActivityFeed } from "../components/ActivityFeed";
+import { Breakdown } from "../components/Breakdown";
+import { changeTone, formatPct, NavChart } from "../components/NavChart";
+import { TrustPanel } from "../components/TrustPanel";
 import { CopyId, Figure, Usd } from "../components/ui";
 import { deployments, expert } from "../lib/config";
 import { formatAmount, formatUsd, unitsToNumber } from "../lib/format";
 import { fundValueUsd } from "../lib/fund-math";
+import { loadHistories, type AssetHistory } from "../lib/history";
+import { changeOver } from "../lib/series";
 import { explain, findFund, isMainnet, loadPosition, type Fund } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
@@ -19,9 +25,30 @@ const COLUMNS = {
   market: "md:grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr]",
 };
 
+type Section = "holdings" | "activity" | "trust";
+
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: "holdings", label: "Holdings" },
+  { id: "activity", label: "Activity" },
+  { id: "trust", label: "Trust" },
+];
+
+function DayChange({ history }: { history: AssetHistory | undefined }) {
+  if (!history) return <Figure value={undefined} width="4ch" />;
+  if (history.source === "quote") return <span className="text-muted-foreground">0.00%</span>;
+  const change = changeOver(history.points, 86_400);
+  if (change === null) return <span className="text-muted-foreground" title="No price history for the last 24 hours">n/a</span>;
+  return (
+    <span className={changeTone(change)} title={history.source === "reflector" ? "Reflector oracle" : "Stellar DEX trades"}>
+      {formatPct(change)}
+    </span>
+  );
+}
+
 function Composition({ fund }: { fund: Fund }) {
   const columns = fund.hasOracle ? COLUMNS.oracle : COLUMNS.market;
   const { value: shareValue } = headlineValue(fund);
+  const day = useAsync(() => loadHistories(fund.components, "1D"), fund.id);
   return (
     <div className="panel overflow-hidden rounded-2xl">
       <div className={`hidden gap-4 border-b px-5 py-3 text-[0.8125rem] text-muted-foreground md:grid ${columns}`}>
@@ -30,7 +57,7 @@ function Composition({ fund }: { fund: Fund }) {
         <span className="text-right">Fund holds</span>
         {fund.hasOracle && <span className="text-right">Oracle (USD)</span>}
         <span className="text-right">{fund.hasOracle ? "Market (USDC)" : "Price (USDC)"}</span>
-        <span className="text-right">Value per share</span>
+        <span className="text-right">Value per share, 24h</span>
       </div>
       <ul className="divide-y">
         {fund.components.map((leg, i) => {
@@ -71,7 +98,17 @@ function Composition({ fund }: { fund: Fund }) {
                 />
               )}
               <Cell label={fund.hasOracle ? "Market" : "Price"} value={<Usd value={leg.priceUsdc} />} />
-              <Cell label="Value per share" value={<Usd value={legValue} />} />
+              <Cell
+                label="Value per share, 24h"
+                value={
+                  <>
+                    <Usd value={legValue} />
+                    <span className="block text-[0.8125rem]">
+                      <DayChange history={day.error != null ? { points: [], source: "none" } : day.data?.get(leg.token)} />
+                    </span>
+                  </>
+                }
+              />
             </li>
           );
         })}
@@ -121,6 +158,7 @@ export function FundPage() {
     version,
   );
   const [tab, setTab] = useState<"invest" | "redeem" | "manage">("invest");
+  const [section, setSection] = useState<Section>("holdings");
   const isManager = Boolean(f && address && f.manager === address);
   const tabs = isManager ? (["invest", "redeem", "manage"] as const) : (["invest", "redeem"] as const);
   const refresh = () => setVersion((v) => v + 1);
@@ -140,7 +178,7 @@ export function FundPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:py-14">
-      <Link to="/#funds" className="inline-flex items-center gap-1.5 text-label text-muted-foreground hover:text-foreground">
+      <Link to="/funds" className="inline-flex items-center gap-1.5 text-label text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-4" />
         All funds
       </Link>
@@ -206,6 +244,9 @@ export function FundPage() {
                     : "An asset has no price on the testnet market right now, so we don't show a total."}
                 </p>
               )}
+              <div className="mt-6 border-t pt-5">
+                {f ? <NavChart fund={f} /> : <div className="skeleton h-52 w-full" />}
+              </div>
               {f && (
                 <div className="mt-6 border-t pt-5">
                   <p className="text-filing text-muted-foreground">Holds</p>
@@ -226,16 +267,49 @@ export function FundPage() {
           {f && f.awaitingIssuer.length > 0 && <AwaitingIssuer fund={f} />}
 
           <section>
-            <p className="text-filing text-muted-foreground">Composition</p>
-            <h2 className="mt-1 font-display text-[1.375rem] font-semibold">What one share holds</h2>
-            <p className="mt-1 max-w-[42rem] text-muted-foreground">
-              Amounts come from the fund's own balances divided by shares issued, so a clawback or a donation shows up here
-              immediately.{" "}
-              {f?.hasOracle
-                ? "Oracle prices come from RedStone and Reflector through Alloy's read-only NAV contract; the market column is what one unit sells for in USDC on the Stellar DEX right now, kept as a cross-check."
-                : "Prices are what one unit sells for in USDC on the Stellar DEX right now."}
-            </p>
-            <div className="mt-5">{f ? <Composition fund={f} /> : <div className="skeleton h-64 w-full rounded-2xl" />}</div>
+            <div className="flex gap-1 border-b" role="tablist" aria-label="Fund details">
+              {SECTIONS.map((s) => (
+                <button
+                  key={s.id}
+                  role="tab"
+                  type="button"
+                  aria-selected={section === s.id}
+                  onClick={() => setSection(s.id)}
+                  className={`-mb-px border-b-2 px-3 py-2.5 text-label ${section === s.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {section === "holdings" && (
+              <div className="mt-6">
+                <h2 className="font-display text-[1.375rem] font-semibold">What one share holds</h2>
+                <p className="mt-1 max-w-[42rem] text-muted-foreground">
+                  Amounts come from the fund's own balances divided by shares issued, so a clawback or a donation shows up here
+                  immediately.{" "}
+                  {f?.hasOracle
+                    ? "Oracle prices come from RedStone and Reflector through Alloy's read-only NAV contract; the market column is what one unit sells for in USDC on the Stellar DEX right now, kept as a cross-check."
+                    : "Prices are what one unit sells for in USDC on the Stellar DEX right now."}
+                </p>
+                <div className="mt-5 space-y-5">
+                  {f ? (
+                    <>
+                      <Composition fund={f} />
+                      <Breakdown fund={f} />
+                    </>
+                  ) : (
+                    <div className="skeleton h-64 w-full rounded-2xl" />
+                  )}
+                </div>
+              </div>
+            )}
+            {section === "activity" && (
+              <div className="mt-6">{f ? <ActivityFeed fund={f} /> : <div className="skeleton h-64 w-full rounded-2xl" />}</div>
+            )}
+            {section === "trust" && (
+              <div className="mt-6">{f ? <TrustPanel fund={f} /> : <div className="skeleton h-64 w-full rounded-2xl" />}</div>
+            )}
           </section>
         </div>
 

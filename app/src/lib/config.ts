@@ -93,6 +93,24 @@ export const links = {
   deck: env.VITE_DECK_URL || null,
 };
 
+/**
+ * Fund code hashes matched to the SEP-55 attested GitHub release that first
+ * published them; a fund running any other code shows as unmatched.
+ */
+const FUND_RELEASES: Readonly<Record<string, string>> = {
+  "32677e1a2abdbfb57c0f2da513aeed864aa081d604b192cde062f859ff4c446d": "v0.1.0",
+  e783b595d4a15c50da44d3a701d2806b64987e01dd1cc041a1c04266efbcd422: "v0.3.0",
+};
+
+export function fundRelease(wasmHash: string | null): { tag: string; url: string } | null {
+  const tag = wasmHash ? FUND_RELEASES[wasmHash] : undefined;
+  return tag ? { tag, url: `${links.repo}/releases/tag/${tag}` } : null;
+}
+
+/** Reflector's mainnet oracle for Stellar assets, quoted in USDC. Its price history lives about a day. */
+export const REFLECTOR_ORACLE: string | null =
+  network === "mainnet" ? "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M" : null;
+
 export const oracles = {
   redstone: { label: "RedStone", url: "https://redstone.finance" },
   reflector: { label: "Reflector", url: "https://reflector.network" },
