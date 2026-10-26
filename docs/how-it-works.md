@@ -42,6 +42,11 @@ rounds what you receive down.
 | Fee shares never land outside the allowlist | A recipient that can't hold shares has them held by the fund in escrow until `claim_fee` | `fee_for_a_recipient_off_the_allowlist_waits_in_escrow` |
 | A manager cannot bleed value through many small bad fills | Oracle losses across rebalances are capped at 2% of fund value per rolling 24 hours, one minute apart | `losses_inside_a_day_are_capped_at_two_percent_of_fund_value` |
 
+The property test drives random funds through random sequences of issues
+and partial redeems and compares every step against a fixed-unit basket
+model: same prices up to rounding dust, same solvency, full emptying at the
+end. Breaking the contract's rounding makes it fail.
+
 ## Setup, then open
 
 A new fund is closed: `issue` fails with `IssuanceClosed` until the
@@ -113,11 +118,6 @@ none of are not priced, so a newly added, still-empty asset needs no feed.
 The oracle is whatever the platform admin set with `set_nav`. A build
 with the `mainnet` cargo feature falls back to the mainnet NAV contract
 when none is set; default and `testnet` builds have no fallback.
-
-The property test drives random funds through random sequences of issues
-and partial redeems and compares every step against a fixed-unit basket
-model: same prices up to rounding dust, same solvency, full emptying at the
-end. Breaking the contract's rounding makes it fail.
 
 ## Issuer rails
 

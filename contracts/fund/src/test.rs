@@ -588,6 +588,8 @@ fn rebalance_needs_an_admin_set_oracle_and_known_components() {
     let investor = funded_investor(&s, 100 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    // A mainnet build falls back to the compiled NAV contract instead.
+    #[cfg(not(feature = "mainnet"))]
     assert_eq!(
         s.fund.try_rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE),
         Err(Ok(FundError::NoOracle.into()))
