@@ -229,6 +229,89 @@ Most tokenized-asset liquidity on Stellar is on the built-in order book
 path payments in one classic transaction (direct or via Circle USDC only),
 then calls `issue` in a second. Two signatures, one flow.
 
+## USDC in, USDC out
+
+`contracts/zap` turns a basket fund into a one-transaction USDC product
+where Soroswap has the liquidity. It is a separate contract, stateless and
+permissionless; the fund knows nothing about it. Its constructor takes
+the Soroswap router and the USDC contract, and nothing else is stored.
+
+- `issue_with_usdc(investor, fund, shares, max_usdc, paths)` takes
+  `max_usdc` from the investor, reads `quote_issue(shares)` and
+  `components()`, keeps the USDC leg as is and buys every other leg
+  exact-out (`swap_tokens_for_exact_tokens`) for exactly the quoted
+  amount. It then calls `issue(investor = zap, to = investor, shares)`:
+  the zap deposits the basket, the shares are minted straight to the
+  investor, and unspent USDC goes back to them. Returns the USDC spent.
+- `redeem_to_usdc(owner, fund, shares, min_usdc, paths)` calls
+  `redeem(from = owner, to = zap, shares, [])`, sells every non-USDC leg
+  exact-in (`swap_exact_tokens_for_tokens`) and pays the owner all of the
+  USDC, or reverts with `SlippageExceeded` under `min_usdc`. A leg too
+  small to swap to one stroop of USDC is sent to the owner as is.
+- `paths` holds one Soroswap route per non-USDC component, in
+  `components()` order: from USDC to the leg when issuing, from the leg to
+  USDC when redeeming, at most two hops between (`MAX_PATH = 4`). A wrong
+  end or length is `InvalidPath`; too few or too many routes is
+  `MissingPath`.
+- Errors: `InvalidPath` (1), `SlippageExceeded` (2), `InvalidAmount` (3),
+  `MissingPath` (4), `Overflow` (5). Events: `zap_issue` and `zap_redeem`,
+  topics the investor (or owner) and the fund, data the shares and the
+  USDC spent (or paid).
+
+Rounding follows the fund. `quote_issue` rounds every leg up and `issue`
+pulls exactly that, so the zap buys exactly the quoted amounts; each
+exact-out swap costs what `router_get_amounts_in` says, rounded up by the
+pool. The quote includes any management fee that `issue` accrues first,
+so quote and pull agree within the transaction. `issue_with_usdc` fails
+with `SlippageExceeded` before a swap that would take it past `max_usdc`.
+
+Authorization stays narrow. The investor (or owner) is the only signer:
+their auth covers the zap call and, under it, the one USDC transfer into
+the zap (or the one `redeem` of their shares). Every other token movement
+is the zap's own, authorized with `authorize_as_current_contract` one
+exact `transfer` at a time: each swap input to the route's first pair
+(named by `router_pair_for`) and each leg the fund pulls in `issue`. The
+fund's `issue` requires the zap's auth as `investor`, which the zap gives
+by being the direct caller. Swaps are measured by balance change, not the
+router's report; a route that delivers less than asked fails, and any
+surplus goes to the investor. Each call ends with the zap holding what it
+held before.
+
+What a fund needs for the zap:
+
+- Issuance open (`open_for_issue`); otherwise `issue` fails with
+  `IssuanceClosed`.
+- An `Allowlist` fund checks only `to`, the investor, in `issue`, and
+  nobody in `redeem`. The investor must be on the allowlist; the zap does
+  not need to be.
+- A permissioned leg (`AUTH_REQUIRED`, as BENJI) refuses the zap until its
+  issuer calls `set_authorized(zap, true)`, because the zap holds the leg
+  for the length of the transaction. No permissioned shelf asset has a
+  Soroswap pool today, so in practice the zap serves open funds.
+- A Soroswap route for every non-USDC leg. Today that is XLM and USTRY
+  (see the liquidity table above), so funds of USDC, USTRY and XLM, such
+  as aLQD, are zappable; funds holding USDY, CETES or BENJI are not.
+
+`redeem_to_usdc` cannot skip legs; if an issuer has frozen a leg, redeem
+in kind with `redeem` and its `skip` list instead. The zap does not check
+`platform.is_fund`: it trusts whatever fund the investor names, so
+clients should check that first. Each zap call costs one swap per leg plus
+the fund call; aLQD's three legs ran at about 13.5M instructions for issue
+and 10.8M for redeem in the fork test, well inside a transaction's 100M.
+
+`contracts/zap/src/test_mainnet.rs` runs both calls against a snapshot of
+live mainnet state (the fund, the router and its pools), with only the
+investor's signature:
+
+```
+stellar contract build --package alloy-fund
+node scripts/zap-snapshot.mjs zap-mainnet.json        # aLQD by default
+ALLOY_ZAP_SNAPSHOT=zap-mainnet.json cargo test -p alloy-zap -- --ignored --nocapture
+```
+
+On 2026-10-26 (ledger 65150995) 0.1 aLQD cost 0.1060975 USDC and redeemed
+for 0.1057514 USDC: about 0.33% round trip in pool fees and price impact.
+
 ## Pricing
 
 Funds never need a price: issue and redeem move assets in proportion to

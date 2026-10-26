@@ -6,7 +6,8 @@
 # deploys use these binaries, never a local build. The fund is built twice:
 # alloy-fund_v<version>.wasm with no network defaults, and
 # alloy-fund-mainnet_v<version>.wasm with the mainnet NAV and Soroswap router
-# compiled in (cargo feature `mainnet`).
+# compiled in (cargo feature `mainnet`). The zap takes its router and USDC
+# addresses at deploy, so it has one build.
 name: Build and Release
 on:
   push:
@@ -29,6 +30,7 @@ jobs:
           - { package: alloy-platform, asset: alloy-platform, features: "" }
           - { package: alloy-nav, asset: alloy-nav, features: "" }
           - { package: alloy-timelock, asset: alloy-timelock, features: "" }
+          - { package: alloy-zap, asset: alloy-zap, features: "" }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
