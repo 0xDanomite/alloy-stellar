@@ -68,6 +68,12 @@ Copy `.env.example` to `.env` before running scripts or the app.
   ```
   gh attestation verify alloy-fund_v0.1.0.wasm -R 0xDanomite/alloy-stellar
   ```
+- **Two fund builds per release.** From v0.4.0 each release carries
+  `alloy-fund_v<version>.wasm` (no network defaults) and
+  `alloy-fund-mainnet_v<version>.wasm` (built with `--features mainnet`:
+  the mainnet NAV and Soroswap router compiled in as defaults). Upload the
+  `-mainnet` asset as the mainnet fund wasm so new funds need no
+  `set_nav`/`set_router` calls; both are attested.
 - **Inclusion fee 1000.** Mainnet's Soroban inclusion fee runs above the
   CLI's 100-stroop default; under it, transactions wait out their timeout.
   `scripts/lib.sh` sets `STELLAR_INCLUSION_FEE=1000` on mainnet. Pass
