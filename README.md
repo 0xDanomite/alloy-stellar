@@ -153,7 +153,7 @@ app: SDEX path payments buy the basket -> fund.issue; fund.redeem pays it back
 
 All on Stellar Mainnet:
 
-| Component | Stellar Expert |
+| Component | Mainnet Contract on Explorer |
 | --- | --- |
 | Platform | [CDV2FJ4J…6KDM](https://stellar.expert/explorer/public/contract/CDV2FJ4J2IIFSUREC5VAHINVCSVZGOMIMXJHA32XD7H2CMY6DNXD6KDM) |
 | NAV | [CBO42GCY…ZVIC](https://stellar.expert/explorer/public/contract/CBO42GCYFZPOM4ITSCKF7DXI7MBL5PMHRL4DBBEZ35HZLOWT76GLZVIC) |
@@ -229,6 +229,15 @@ The switch in the header moves between mainnet and testnet.
      shares work as collateral across Stellar DeFi.
   6. Issuer authorizations, starting with BENJI.
   7. Private, ZK-verified investor allowlists.
+
+## Our Team
+
+**Two founders who have built together for almost ten years, and in web3 for four.**
+
+- **Dan**, co-founder: builds Alloy's contracts, app and infrastructure.
+- **Vik**, co-founder: leads Alloy's product, partners and fund managers.
+
+Together we shipped Alloy on Robinhood Chain and Polygon before bringing it to Stellar at HackMeridian.
 
 ## Run It
 
