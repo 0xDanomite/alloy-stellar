@@ -37,7 +37,7 @@ rounds what you receive down.
 | New money never covers an impaired asset | `issue` is refused while any asset holds less than it owes | `issue_is_blocked_while_a_leg_is_short_of_owed_claims` |
 | The fund is always solvent | Holdings cover every outstanding share at all times | `test_reference_model` (property test) |
 | The management fee never blocks a redemption | Accrual uses no external call and mints nothing on overflow | `fee_accrual_never_blocks_a_redemption` |
-| A locked fund's basket never changes | `Locked` is the default and can only be swapped for `Managed` before `open_for_issue` | `a_fund_is_locked_unless_its_manager_chose_managed_before_opening` |
+| A fund's mandate is honored | `Locked` (the default) refuses `add_component`; `Static` also refuses `rebalance` and `trade`; the mandate is fixed before `open_for_issue` | `each_mandate_allows_exactly_its_actions` |
 | Nobody can buy in ahead of the manager's setup | `issue` is refused until the manager calls `open_for_issue`; fee and mandate are only settable before it | `nobody_can_issue_before_the_manager_opens_the_fund` |
 | Fee shares never land outside the allowlist | A recipient that can't hold shares has them held by the fund in escrow until `claim_fee` | `fee_for_a_recipient_off_the_allowlist_waits_in_escrow` |
 | A manager cannot bleed value through many small bad fills | Oracle losses across rebalances are capped at 2% of fund value per rolling 24 hours, one minute apart | `losses_inside_a_day_are_capped_at_two_percent_of_fund_value` |
@@ -84,15 +84,17 @@ is the same either way.
 
 ## Mandate
 
-Every fund is `Locked` or `Managed`, chosen once by the manager before the
-fund opens for issue. A fund that never chooses is `Locked`, the safer
-reading for an investor: its components never change and it never
-rebalances, so a share always holds the same assets in the same
-proportions; only the fee, clawbacks and donations change the amounts. A `Managed` fund may
-rebalance and `add_component` any asset the platform shelf lists (a
-`Permissioned` one only with the investor allowlist on), up to 12
-components. An added asset starts at zero units and gains weight only
-through rebalances.
+Every fund is `Locked`, `Managed` or `Static`, chosen once by the manager
+before the fund opens for issue. A fund that never chooses is `Locked`: its
+set of assets never changes, so a share only ever holds the components it
+started with, but the manager may re-weight among them with `rebalance`
+and `trade`, within the oracle bounds below. A `Static` fund promises
+never to trade: `rebalance`, `trade` and `add_component` all fail with
+`MandateStatic`, and the basket changes only through the fee, clawbacks
+and donations. A `Managed` fund may also
+`add_component` any asset the platform shelf lists (a `Permissioned` one
+only with the investor allowlist on), up to 12 components. An added asset
+starts at zero units and gains weight only through rebalances and trades.
 
 ## Metadata
 
@@ -121,8 +123,8 @@ when none is set; default and `testnet` builds have no fallback.
 
 ## Trading through Soroswap
 
-`trade(sell, sold, buy, min_bought, path)` lets the manager of a `Managed`
-fund swap one component for another on
+`trade(sell, sold, buy, min_bought, path)` lets the manager of a `Locked` or
+`Managed` fund swap one component for another on
 [Soroswap](https://soroswap.finance) without the assets ever leaving the
 fund's custody: the fund itself calls the router's
 `swap_exact_tokens_for_tokens(sold, min_out, path, fund, now + 1)`.
@@ -193,6 +195,32 @@ this way). Alloy treats that as a first-class case:
   a single address today and moves to a timelock with `set_admin`.
 - Funds are stored one ledger entry each and listed with
   `funds(start, limit)`.
+
+## Timelock
+
+`contracts/timelock` is the admin the platform and NAV contracts are meant
+to answer to. It has fixed proposers and executors (one to ten each, set at
+construction) and a delay of at most 30 days.
+
+- A proposer calls `schedule(proposer, target, fn_name, args, salt)`. The
+  `scheduled` event carries the full call and the time it becomes ready.
+- After the delay an executor calls `execute` with the same call and salt.
+  The timelock makes the call itself, so a target that checks
+  `admin.require_auth()` sees its admin as the direct caller and needs no
+  signature. Each operation runs once; the record stays so it can't be
+  replayed.
+- A proposer can `cancel` a pending operation.
+- The delay changes only through a scheduled call to the timelock itself
+  (`target` = the timelock, `fn_name` = `set_delay`), so it waits out the
+  delay it replaces. A contract can't call itself on Stellar, so `execute`
+  handles that one call internally and refuses any other self-call.
+
+Handing over a contract uses its two-party `set_admin`: schedule
+`set_admin(timelock)` on the platform (or NAV), and when it executes, the
+current admin signs for that inner call while the timelock consents by
+being the caller. From then on every admin action, including fund-level
+ones gated on the platform admin (`set_nav`, `set_router`,
+`set_platform_fee`), goes through the delay.
 
 ## Buying the basket
 

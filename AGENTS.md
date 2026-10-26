@@ -21,6 +21,7 @@ read [SKILL.md](SKILL.md). For the design and its guarantees, read
 | --- | --- |
 | `contracts/fund` | Fund contract, one per fund: SEP-41 shares, `issue`, `redeem`, `withdraw_owed`, `rebalance`, `trade` (Soroswap), investor allowlist, streaming fee (`init_fee`, `accrue_fee`), mandate (`set_mandate`, `add_component`), `set_metadata` |
 | `contracts/platform` | Platform contract, one per venue: manager allowlist, asset shelf, `create_fund`, fund registry |
+| `contracts/timelock` | Timelock meant to be the platform and NAV admin: `schedule`, `execute` after a delay, `cancel`, fixed proposer and executor roles |
 | `contracts/nav` | Read-only NAV contract: per-asset RedStone and Reflector routes, staleness limits, fallback, divergence |
 | `app` | Vite + React app: fund pages, oracle NAV, buy the basket via SDEX path payments, deposit, redeem, create and manage funds |
 | `scripts/alloy.sh` | CLI, one command per journey step, testnet and mainnet |
@@ -67,6 +68,12 @@ Copy `.env.example` to `.env` before running scripts or the app.
   ```
   gh attestation verify alloy-fund_v0.1.0.wasm -R 0xDanomite/alloy-stellar
   ```
+- **Two fund builds per release.** From v0.4.0 each release carries
+  `alloy-fund_v<version>.wasm` (no network defaults) and
+  `alloy-fund-mainnet_v<version>.wasm` (built with `--features mainnet`:
+  the mainnet NAV and Soroswap router compiled in as defaults). Upload the
+  `-mainnet` asset as the mainnet fund wasm so new funds need no
+  `set_nav`/`set_router` calls; both are attested.
 - **Inclusion fee 1000.** Mainnet's Soroban inclusion fee runs above the
   CLI's 100-stroop default; under it, transactions wait out their timeout.
   `scripts/lib.sh` sets `STELLAR_INCLUSION_FEE=1000` on mainnet. Pass

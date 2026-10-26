@@ -3,7 +3,10 @@
 # build under 25.1. Every v* tag builds every contract from the tagged commit
 # with source_repo stamped into contractmeta, attests each wasm, attaches them
 # to one release, and registers the build with stellar.expert. Mainnet
-# deploys use these binaries, never a local build.
+# deploys use these binaries, never a local build. The fund is built twice:
+# alloy-fund_v<version>.wasm with no network defaults, and
+# alloy-fund-mainnet_v<version>.wasm with the mainnet NAV and Soroswap router
+# compiled in (cargo feature `mainnet`).
 name: Build and Release
 on:
   push:
@@ -20,7 +23,12 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        package: [alloy-fund, alloy-platform, alloy-nav]
+        include:
+          - { package: alloy-fund, asset: alloy-fund, features: "" }
+          - { package: alloy-fund, asset: alloy-fund-mainnet, features: mainnet }
+          - { package: alloy-platform, asset: alloy-platform, features: "" }
+          - { package: alloy-nav, asset: alloy-nav, features: "" }
+          - { package: alloy-timelock, asset: alloy-timelock, features: "" }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -33,10 +41,11 @@ jobs:
       - name: Build
         run: |
           stellar contract build --optimize --package "${{ matrix.package }}" \
+            ${{ matrix.features && format('--features {0}', matrix.features) || '' }} \
             --out-dir out --meta "source_repo=github:${{ github.repository }}"
           VERSION=$(cargo metadata --format-version 1 --no-deps \
             | jq -r '.packages[] | select(.name == "${{ matrix.package }}") | .version')
-          WASM="${{ matrix.package }}_v${VERSION}.wasm"
+          WASM="${{ matrix.asset }}_v${VERSION}.wasm"
           cp "out/$(echo '${{ matrix.package }}' | tr - _).wasm" "out/$WASM"
           echo "WASM=$WASM" >> "$GITHUB_ENV"
           echo "WASM_HASH=$(sha256sum "out/$WASM" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
