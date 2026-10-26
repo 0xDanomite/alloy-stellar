@@ -1,29 +1,56 @@
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { deployments, links, oracles } from "../lib/config";
 import { shortId } from "../lib/format";
-import { adminRoles } from "../lib/admin";
+import { accountRole, adminRoles, type AccountRole } from "../lib/admin";
 import { portfolio } from "../lib/portfolio";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
 import { Bell } from "./icons";
 import { AlloyMark, Button, ThemeToggle } from "./ui";
 
-function WalletButton() {
+const ROLE_DOT: Record<AccountRole, string> = { Admin: "bg-gold", Manager: "bg-primary", Investor: "bg-muted-foreground" };
+
+const ROLE_TITLE: Record<AccountRole, string> = {
+  Admin: "administers a platform, directly or through its timelock",
+  Manager: "is an approved manager or runs a fund",
+  Investor: "invests in funds",
+};
+
+/**
+ * The wallet button, with the connected wallet's seat beside it so a demo
+ * shows at a glance whose wallet is driving. Phones have no room for both,
+ * so there the button itself reads the seat and its title keeps the address.
+ */
+function WalletArea() {
   const { address, connecting, connect, disconnect } = useWallet();
-  if (address) {
+  const role = useAsync(() => accountRole(address ?? ""), deployments && address ? `role:${address}` : null);
+  if (!address) {
     return (
-      <Button variant="secondary" onClick={disconnect} title={`Connected as ${address}. Click to disconnect.`}>
-        <span className="size-2 rounded-full bg-success" aria-hidden />
-        <span className="num whitespace-nowrap sm:hidden">{shortId(address, 3, 3)}</span>
-        <span className="num hidden whitespace-nowrap sm:inline">{shortId(address)}</span>
+      <Button onClick={connect} busy={connecting}>
+        <span className="sm:hidden">Connect</span>
+        <span className="hidden sm:inline">Connect wallet</span>
       </Button>
     );
   }
+  const seat = role.data ?? null;
   return (
-    <Button onClick={connect} busy={connecting}>
-      <span className="sm:hidden">Connect</span>
-      <span className="hidden sm:inline">Connect wallet</span>
-    </Button>
+    <>
+      {seat && (
+        <span className="chip content-fade hidden px-2 py-1 text-[0.75rem] text-muted-foreground sm:inline-flex" title={`This wallet ${ROLE_TITLE[seat]}.`}>
+          <span className={`size-1.5 rounded-full ${ROLE_DOT[seat]}`} aria-hidden />
+          {seat}
+        </span>
+      )}
+      <Button
+        variant="secondary"
+        onClick={disconnect}
+        title={`Connected as ${address}${seat ? `, which ${ROLE_TITLE[seat]}` : ""}. Click to disconnect.`}
+      >
+        <span className="size-2 rounded-full bg-success" aria-hidden />
+        <span className={`whitespace-nowrap sm:hidden ${seat ? "content-fade" : "num"}`}>{seat ?? shortId(address, 3, 3)}</span>
+        <span className="num hidden whitespace-nowrap sm:inline">{shortId(address)}</span>
+      </Button>
+    </>
   );
 }
 
@@ -127,7 +154,7 @@ export function Layout() {
             <AdminLink placement="header" />
             <AttentionBell />
             <ThemeToggle />
-            <WalletButton />
+            <WalletArea />
           </nav>
         </div>
         {error && (
