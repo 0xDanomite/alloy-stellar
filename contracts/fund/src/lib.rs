@@ -426,12 +426,10 @@ fn fund_value(env: &Env, oracle: &NavClient) -> i128 {
     total
 }
 
-/// The checks every manager trade shares: a managed mandate, two distinct
-/// components, enough of the sold one, the cooldown, and an oracle.
+/// The checks every manager trade shares: two distinct components, enough
+/// of the sold one, the cooldown, and an oracle. Either mandate may trade
+/// among its existing components.
 fn begin_trade(env: &Env, sell: &Address, sold: i128, buy: &Address) -> NavClient<'static> {
-    if mandate(env) != Mandate::Managed {
-        panic_with_error!(env, FundError::MandateLocked);
-    }
     require_positive(env, sold);
     if sell == buy {
         panic_with_error!(env, FundError::SameComponent);
@@ -783,9 +781,9 @@ impl Fund {
     /// least 99% of what leaves the fund at oracle prices, everything given
     /// up within a rolling day must stay under 2% of fund value, and trades
     /// are at least a minute apart, so a manager or agent can't drain value
-    /// through bad fills, one at a time or in a burst. Only `Managed` funds
-    /// rebalance. Where the manager sources the bought asset (SDEX, Soroswap,
-    /// an RFQ desk) is up to them.
+    /// through bad fills, one at a time or in a burst. Both mandates
+    /// rebalance among existing components. Where the manager sources the
+    /// bought asset (SDEX, Soroswap, an RFQ desk) is up to them.
     pub fn rebalance(env: Env, sell: Address, sold: i128, buy: Address, bought: i128) {
         let manager = storage::manager(&env);
         manager.require_auth();

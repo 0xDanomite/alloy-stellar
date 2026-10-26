@@ -532,7 +532,7 @@ fn with_oracle<'a>(s: &'a Setup<'a>) -> MockNavClient<'a> {
 
 #[test]
 fn rebalance_reweights_every_share_within_the_oracle_bound() {
-    let s = managed(Compliance::Open);
+    let s = setup(Compliance::Open, [false; 3]);
     let investor = funded_investor(&s, 100 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     with_oracle(&s);
@@ -558,7 +558,7 @@ fn rebalance_reweights_every_share_within_the_oracle_bound() {
 
 #[test]
 fn rebalance_rejects_a_fill_worse_than_the_oracle_bound() {
-    let s = managed(Compliance::Open);
+    let s = setup(Compliance::Open, [false; 3]);
     let investor = funded_investor(&s, 100 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     let nav = with_oracle(&s);
@@ -584,7 +584,7 @@ fn rebalance_rejects_a_fill_worse_than_the_oracle_bound() {
 
 #[test]
 fn rebalance_needs_an_admin_set_oracle_and_known_components() {
-    let s = managed(Compliance::Open);
+    let s = setup(Compliance::Open, [false; 3]);
     let investor = funded_investor(&s, 100 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
@@ -732,17 +732,16 @@ fn fee_recipient_change_settles_the_old_recipient_first() {
 }
 
 #[test]
-fn a_fund_is_locked_unless_its_manager_chose_managed_before_opening() {
+fn a_locked_fund_rebalances_but_never_changes_its_components() {
     let s = setup(Compliance::Open, [false; 3]);
     assert_eq!(s.fund.mandate(), Mandate::Locked);
     let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     with_oracle(&s);
     let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
-    assert_eq!(
-        s.fund.try_rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE),
-        Err(Ok(FundError::MandateLocked.into()))
-    );
+    s.assets[1].admin.mint(&s.manager, &SHARE_SCALE);
+    s.fund.rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE);
+    assert_eq!(s.fund.holdings().get_unchecked(1), 210_000_000);
     let extra = create_asset(&s.env, false);
     assert_eq!(
         s.fund.try_add_component(&extra.token.address),
@@ -1184,7 +1183,7 @@ fn the_fund_authorizes_exactly_its_input_and_nothing_more() {
 }
 
 #[test]
-fn trade_checks_route_router_and_mandate() {
+fn trade_checks_route_and_router() {
     let s = trading_fund();
     let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
     #[cfg(not(any(feature = "mainnet", feature = "testnet")))]
@@ -1217,18 +1216,22 @@ fn trade_checks_route_router_and_mandate() {
         a.clone(),
     ];
     assert_eq!(s.fund.trade(b, &SHARE_SCALE, a, &0, &hop), SHARE_SCALE);
+}
 
-    let locked = setup(Compliance::Open, [false; 3]);
-    let (a, b) = (
-        &locked.assets[0].token.address,
-        &locked.assets[1].token.address,
-    );
+#[test]
+fn a_locked_fund_trades_among_its_components() {
+    let s = setup(Compliance::Open, [false; 3]);
+    assert_eq!(s.fund.mandate(), Mandate::Locked);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    with_router(&s, 10_000);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
     assert_eq!(
-        locked
-            .fund
-            .try_trade(b, &SHARE_SCALE, a, &0, &route(&locked, 1, 0)),
-        Err(Ok(FundError::MandateLocked.into()))
+        s.fund.trade(b, &SHARE_SCALE, a, &0, &route(&s, 1, 0)),
+        SHARE_SCALE
     );
+    assert_eq!(s.fund.holdings().get_unchecked(0), 110_000_000);
 }
 
 #[test]

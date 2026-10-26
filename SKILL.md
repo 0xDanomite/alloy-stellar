@@ -82,7 +82,7 @@ simulates and needs no fee.
 | `rebalance(sell, sold, buy, bought)` | manager | Swap one component for another inside the fund, bounded by oracle prices |
 | `set_nav(nav)` | platform admin | The oracle that bounds rebalances |
 | `open_for_issue()`, `is_open()` | manager, once | Ends setup; `issue` fails with `IssuanceClosed` before it |
-| `set_mandate(Locked \| Managed)`, `mandate()` | manager, once, before `open_for_issue` | `Locked` (the default) fixes the basket; `Managed` allows rebalances and `add_component` |
+| `set_mandate(Locked \| Managed)`, `mandate()` | manager, once, before `open_for_issue` | `Locked` (the default) freezes the set of components; `Managed` also allows `add_component`. Both can rebalance and trade |
 | `add_component(token)` | manager, `Managed` only | Adds a shelf asset at zero units; a permissioned one needs `Allowlist` |
 | `init_fee(rate_bps)` | manager, once, before `open_for_issue` | Annual management fee, at most 500 bps, streamed as newly minted shares |
 | `accrue_fee()` | anyone | Mints the fee accrued so far; `issue` and `redeem` call it first |
@@ -91,7 +91,7 @@ simulates and needs no fee.
 | `fee_escrow(recipient)`, `claim_fee(recipient)` | anyone | Fee shares held for a recipient that could not hold them when they accrued, and their release once it can |
 | `set_platform_fee(share_bps, recipient)` | platform admin | The platform's cut of the fee, at most 5000 bps of it; recipient must pass the allowlist |
 | `set_metadata(key, value)`, `metadata()` | manager / anyone | Up to 8 entries such as `description`, `strategy`, `website`, 512 bytes each; an empty value removes one |
-| `trade(sell, sold, buy, min_bought, path)` | manager, `Managed` only | Swap inside the fund through the Soroswap router; min out is the larger of `min_bought` and 99% at oracle prices; returns the amount bought |
+| `trade(sell, sold, buy, min_bought, path)` | manager | Swap inside the fund through the Soroswap router; min out is the larger of `min_bought` and 99% at oracle prices; returns the amount bought |
 | `set_router(router)`, `router()` | platform admin / anyone | The DEX router `trade` uses; `mainnet` builds default to Soroswap's |
 | `window_loss_ppb()`, `last_rebalance()` | anyone | Rebalance loss used in the rolling 24 hour window, and the last rebalance time |
 | SEP-41: `balance`, `transfer`, `transfer_from`, `approve`, `allowance`, `burn`, `burn_from`, `decimals`, `name`, `symbol` | | Standard token interface |
@@ -211,8 +211,7 @@ NAV oracle prices (`MAX_REBALANCE_LOSS_BPS = 100`), or it fails with
 v0.3.0; funds are not upgradeable, so it is on aREBAL and funds created
 after it.
 
-From fund code v0.4.0 (not yet released) a rebalance also needs a
-`Managed` mandate (else `MandateLocked`), comes at least 60 seconds after
+From fund code v0.4.0 (not yet released) a rebalance comes at least 60 seconds after
 the previous one (else `RebalanceCooldown`), and fails with
 `LossBudgetExceeded` once everything given up against the oracle inside a
 rolling 24 hours would pass 2% of fund value. A fund with no `set_nav`

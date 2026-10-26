@@ -37,7 +37,7 @@ rounds what you receive down.
 | New money never covers an impaired asset | `issue` is refused while any asset holds less than it owes | `issue_is_blocked_while_a_leg_is_short_of_owed_claims` |
 | The fund is always solvent | Holdings cover every outstanding share at all times | `test_reference_model` (property test) |
 | The management fee never blocks a redemption | Accrual uses no external call and mints nothing on overflow | `fee_accrual_never_blocks_a_redemption` |
-| A locked fund's basket never changes | `Locked` is the default and can only be swapped for `Managed` before `open_for_issue` | `a_fund_is_locked_unless_its_manager_chose_managed_before_opening` |
+| A locked fund's asset universe never changes | `Locked` is the default, refuses `add_component`, and can only be swapped for `Managed` before `open_for_issue` | `a_locked_fund_rebalances_but_never_changes_its_components` |
 | Nobody can buy in ahead of the manager's setup | `issue` is refused until the manager calls `open_for_issue`; fee and mandate are only settable before it | `nobody_can_issue_before_the_manager_opens_the_fund` |
 | Fee shares never land outside the allowlist | A recipient that can't hold shares has them held by the fund in escrow until `claim_fee` | `fee_for_a_recipient_off_the_allowlist_waits_in_escrow` |
 | A manager cannot bleed value through many small bad fills | Oracle losses across rebalances are capped at 2% of fund value per rolling 24 hours, one minute apart | `losses_inside_a_day_are_capped_at_two_percent_of_fund_value` |
@@ -86,13 +86,13 @@ is the same either way.
 
 Every fund is `Locked` or `Managed`, chosen once by the manager before the
 fund opens for issue. A fund that never chooses is `Locked`, the safer
-reading for an investor: its components never change and it never
-rebalances, so a share always holds the same assets in the same
-proportions; only the fee, clawbacks and donations change the amounts. A `Managed` fund may
-rebalance and `add_component` any asset the platform shelf lists (a
-`Permissioned` one only with the investor allowlist on), up to 12
-components. An added asset starts at zero units and gains weight only
-through rebalances.
+reading for an investor: its set of assets never changes, so a share only
+ever holds the components it started with. The manager of either kind of
+fund may re-weight among existing components with `rebalance` and
+`trade`, within the oracle bounds below. A `Managed` fund may also
+`add_component` any asset the platform shelf lists (a `Permissioned` one
+only with the investor allowlist on), up to 12 components. An added asset
+starts at zero units and gains weight only through rebalances and trades.
 
 ## Metadata
 
@@ -121,8 +121,8 @@ when none is set; default and `testnet` builds have no fallback.
 
 ## Trading through Soroswap
 
-`trade(sell, sold, buy, min_bought, path)` lets the manager of a `Managed`
-fund swap one component for another on
+`trade(sell, sold, buy, min_bought, path)` lets the manager of any fund
+swap one component for another on
 [Soroswap](https://soroswap.finance) without the assets ever leaving the
 fund's custody: the fund itself calls the router's
 `swap_exact_tokens_for_tokens(sold, min_out, path, fund, now + 1)`.
