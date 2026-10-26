@@ -85,6 +85,7 @@ fn creates_a_working_fund() {
     assert_eq!(s.platform.funds(&0, &50), vec![&s.env, id.clone()]);
 
     let fund = fund::Client::new(&s.env, &id);
+    fund.open_for_issue();
     assert_eq!(fund.name(), name);
     assert_eq!(fund.manager(), s.manager);
     assert_eq!(fund.platform(), s.platform.address);
@@ -152,6 +153,7 @@ fn permissioned_assets_force_an_allowlist() {
 
     // Until the issuer authorizes the fund contract, nobody can buy in.
     let fund = fund::Client::new(&s.env, &id);
+    fund.open_for_issue();
     let investor = Address::generate(&s.env);
     let benji = StellarAssetClient::new(&s.env, &s.benji_like);
     StellarAssetClient::new(&s.env, &s.usdc).mint(&investor, &(5 * SCALE));
@@ -282,6 +284,7 @@ fn real_platform_keeps_a_permissioned_fund_on_its_allowlist() {
         &salt(&s.env, 40),
     );
     let fund = fund::Client::new(&s.env, &id);
+    fund.open_for_issue();
     assert!(fund.try_set_compliance(&fund::Compliance::Open).is_err());
 
     let open_only = s.platform.create_fund(

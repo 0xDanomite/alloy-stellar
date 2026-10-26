@@ -2,16 +2,17 @@ extern crate std;
 
 use soroban_sdk::{
     contract, contractimpl,
-    testutils::{Address as _, IssuerFlags},
+    testutils::{Address as _, IssuerFlags, Ledger as _, MockAuth, MockAuthInvoke},
     token::{StellarAssetClient, TokenClient},
-    vec, Address, Env, String, Vec,
+    vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
 use crate::{
-    Compliance, Component, Fund, FundClient, FundError, PriceQuote, ShelfStatus, SHARE_SCALE,
+    Compliance, Component, Fund, FundClient, FundError, Mandate, PriceQuote, ShelfStatus,
+    SHARE_SCALE, YEAR_SECONDS,
 };
 
-/// Classes every token Open except the one stored under "perm".
+/// Classes every token Open except the ones stored under "perm" and "unl".
 #[contract]
 struct MockPlatform;
 
@@ -27,13 +28,20 @@ impl MockPlatform {
         env.current_contract_address()
     }
 
-    pub fn shelf_status(env: Env, token: Address) -> ShelfStatus {
-        let perm: Option<Address> = env
-            .storage()
+    pub fn set_unlisted(env: Env, token: Address) {
+        env.storage()
             .instance()
-            .get(&soroban_sdk::symbol_short!("perm"));
-        if perm == Some(token) {
+            .set(&soroban_sdk::symbol_short!("unl"), &token);
+    }
+
+    pub fn shelf_status(env: Env, token: Address) -> ShelfStatus {
+        let instance = env.storage().instance();
+        let perm: Option<Address> = instance.get(&soroban_sdk::symbol_short!("perm"));
+        let unlisted: Option<Address> = instance.get(&soroban_sdk::symbol_short!("unl"));
+        if perm == Some(token.clone()) {
             ShelfStatus::Permissioned
+        } else if unlisted == Some(token) {
+            ShelfStatus::Unlisted
         } else {
             ShelfStatus::Open
         }
@@ -70,7 +78,15 @@ struct Setup<'a> {
 /// starts at 1.0 of asset 0, 2.0 of asset 1, 0.5 of asset 2.
 const INITIAL_UNITS: [i128; 3] = [10_000_000, 20_000_000, 5_000_000];
 
+/// A fund open for issue, as most tests want it.
 fn setup<'a>(compliance: Compliance, permissioned: [bool; 3]) -> Setup<'a> {
+    let s = setup_closed(compliance, permissioned);
+    s.fund.open_for_issue();
+    s
+}
+
+/// A fund still in setup: fee and mandate settable, `issue` refused.
+fn setup_closed<'a>(compliance: Compliance, permissioned: [bool; 3]) -> Setup<'a> {
     let env = Env::default();
     env.mock_all_auths();
     let assets: std::vec::Vec<Asset> = permissioned
@@ -113,6 +129,21 @@ fn setup<'a>(compliance: Compliance, permissioned: [bool; 3]) -> Setup<'a> {
         manager,
         assets,
     }
+}
+
+fn managed<'a>(compliance: Compliance) -> Setup<'a> {
+    let s = setup_closed(compliance, [false; 3]);
+    s.fund.set_mandate(&Mandate::Managed);
+    s.fund.open_for_issue();
+    s
+}
+
+/// A closed fund with a fee set, then opened.
+fn with_fee<'a>(compliance: Compliance, rate_bps: u32) -> Setup<'a> {
+    let s = setup_closed(compliance, [false; 3]);
+    s.fund.init_fee(&rate_bps);
+    s.fund.open_for_issue();
+    s
 }
 
 fn funded_investor(s: &Setup, amount: i128) -> Address {
@@ -371,6 +402,7 @@ fn twelve_component_issue_and_redeem_fit_mainnet_limits() {
         ),
     );
     let fund = FundClient::new(&env, &id);
+    fund.open_for_issue();
     // Limits are disabled because the test harness records auth inside the
     // same budget; the asserts below hold the contract to a tenth of the
     // mainnet caps (100M instructions, 200 write entries) instead.
@@ -556,6 +588,8 @@ fn rebalance_needs_an_admin_set_oracle_and_known_components() {
     let investor = funded_investor(&s, 100 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    // A mainnet build falls back to the compiled NAV contract instead.
+    #[cfg(not(feature = "mainnet"))]
     assert_eq!(
         s.fund.try_rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE),
         Err(Ok(FundError::NoOracle.into()))
@@ -577,4 +611,743 @@ fn rebalance_needs_an_admin_set_oracle_and_known_components() {
             .try_rebalance(a, &(100 * SHARE_SCALE), b, &(100 * SHARE_SCALE)),
         Err(Ok(FundError::InsufficientBalance.into()))
     );
+}
+
+fn at(s: &Setup, timestamp: u64) {
+    s.env.ledger().set_timestamp(timestamp);
+}
+
+#[test]
+fn fee_streams_as_new_shares_split_with_the_platform() {
+    let s = with_fee(Compliance::Open, 200);
+    let platform_cut = Address::generate(&s.env);
+    s.fund.set_platform_fee(&2_000, &platform_cut);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(100 * SHARE_SCALE));
+
+    at(&s, YEAR_SECONDS);
+    assert_eq!(s.fund.pending_fee(), 20_408_163);
+    assert_eq!(s.fund.accrue_fee(), 20_408_163);
+    assert_eq!(s.fund.balance(&platform_cut), 4_081_632);
+    assert_eq!(s.fund.balance(&s.manager), 16_326_531);
+    assert_eq!(s.fund.accrue_fee(), 0);
+
+    // A year at 2% leaves the holder 98% of the basket.
+    let got = s.fund.redeem(
+        &investor,
+        &investor,
+        &(100 * SHARE_SCALE),
+        &Vec::new(&s.env),
+    );
+    assert_eq!(got.get_unchecked(0), 980_000_000);
+}
+
+#[test]
+fn quotes_include_the_fee_that_issue_and_redeem_accrue_first() {
+    let s = with_fee(Compliance::Open, 100);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(50 * SHARE_SCALE));
+
+    at(&s, YEAR_SECONDS / 2);
+    let quoted = s.fund.quote_redeem(&(10 * SHARE_SCALE));
+    let got = s
+        .fund
+        .redeem(&investor, &investor, &(10 * SHARE_SCALE), &Vec::new(&s.env));
+    assert_eq!(got, quoted);
+    assert!(s.fund.balance(&s.manager) > 0);
+
+    at(&s, YEAR_SECONDS);
+    let quoted = s.fund.quote_issue(&SHARE_SCALE);
+    assert_eq!(s.fund.issue(&investor, &investor, &SHARE_SCALE), quoted);
+}
+
+#[test]
+fn fee_accrual_never_blocks_a_redemption() {
+    let s = with_fee(Compliance::Allowlist, crate::MAX_FEE_BPS);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.set_investor(&investor, &true);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    s.fund.set_investor(&investor, &false);
+
+    at(&s, 100 * YEAR_SECONDS);
+    s.fund
+        .redeem(&investor, &investor, &(10 * SHARE_SCALE), &Vec::new(&s.env));
+    // Capped at one year per accrual: 5% / 95% of supply. The manager is
+    // not on the allowlist, so the fund holds the shares for it.
+    assert_eq!(s.fund.fee_escrow(&s.manager), 5_263_157);
+    assert_eq!(s.fund.balance(&s.manager), 0);
+}
+
+#[test]
+fn fee_is_set_once_before_issue_opens_and_capped() {
+    let s = setup_closed(Compliance::Open, [false; 3]);
+    assert_eq!(
+        s.fund.try_init_fee(&(crate::MAX_FEE_BPS + 1)),
+        Err(Ok(FundError::FeeTooHigh.into()))
+    );
+    s.fund.init_fee(&50);
+    assert_eq!(s.env.auths()[0].0, s.manager);
+    assert_eq!(
+        s.fund.try_init_fee(&50),
+        Err(Ok(FundError::FeeAlreadySet.into()))
+    );
+    assert_eq!(s.fund.fee().unwrap().rate_bps, 50);
+
+    let late = setup(Compliance::Open, [false; 3]);
+    assert_eq!(
+        late.fund.try_init_fee(&50),
+        Err(Ok(FundError::IssuanceOpen.into()))
+    );
+}
+
+#[test]
+fn platform_cut_is_admin_only_and_capped_at_half() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let to = Address::generate(&s.env);
+    assert_eq!(
+        s.fund
+            .try_set_platform_fee(&(crate::MAX_PLATFORM_SHARE_BPS + 1), &to),
+        Err(Ok(FundError::ShareTooHigh.into()))
+    );
+    s.fund.set_platform_fee(&crate::MAX_PLATFORM_SHARE_BPS, &to);
+    assert_eq!(s.env.auths()[0].0, s.fund.platform());
+    assert_eq!(s.fund.platform_fee().unwrap().recipient, to);
+}
+
+#[test]
+fn fee_recipient_change_settles_the_old_recipient_first() {
+    let s = with_fee(Compliance::Open, 100);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    at(&s, YEAR_SECONDS);
+    let treasury = Address::generate(&s.env);
+    s.fund.set_fee_recipient(&treasury);
+    assert!(s.fund.balance(&s.manager) > 0);
+    assert_eq!(s.fund.balance(&treasury), 0);
+    assert_eq!(s.fund.fee_recipient(), treasury);
+
+    at(&s, 2 * YEAR_SECONDS);
+    s.fund.accrue_fee();
+    assert!(s.fund.balance(&treasury) > 0);
+}
+
+#[test]
+fn a_locked_fund_rebalances_but_never_changes_its_components() {
+    let s = setup(Compliance::Open, [false; 3]);
+    assert_eq!(s.fund.mandate(), Mandate::Locked);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    s.assets[1].admin.mint(&s.manager, &SHARE_SCALE);
+    s.fund.rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE);
+    assert_eq!(s.fund.holdings().get_unchecked(1), 210_000_000);
+    let extra = create_asset(&s.env, false);
+    assert_eq!(
+        s.fund.try_add_component(&extra.token.address),
+        Err(Ok(FundError::MandateLocked.into()))
+    );
+    assert_eq!(
+        s.fund.try_set_mandate(&Mandate::Managed),
+        Err(Ok(FundError::IssuanceOpen.into()))
+    );
+
+    let fresh = setup_closed(Compliance::Open, [false; 3]);
+    fresh.fund.set_mandate(&Mandate::Managed);
+    assert_eq!(
+        fresh.fund.try_set_mandate(&Mandate::Locked),
+        Err(Ok(FundError::MandateFixed.into()))
+    );
+}
+
+#[test]
+fn managed_fund_adds_shelf_assets_and_rebalances_into_them() {
+    let s = managed(Compliance::Open);
+    let platform = MockPlatformClient::new(&s.env, &s.fund.platform());
+
+    let unlisted = create_asset(&s.env, false);
+    platform.set_unlisted(&unlisted.token.address);
+    assert_eq!(
+        s.fund.try_add_component(&unlisted.token.address),
+        Err(Ok(FundError::NotOnShelf.into()))
+    );
+    let gated = create_asset(&s.env, true);
+    platform.set_permissioned(&gated.token.address);
+    assert_eq!(
+        s.fund.try_add_component(&gated.token.address),
+        Err(Ok(FundError::PermissionedComponent.into()))
+    );
+    assert_eq!(
+        s.fund.try_add_component(&s.assets[0].token.address),
+        Err(Ok(FundError::DuplicateComponent.into()))
+    );
+
+    let extra = create_asset(&s.env, false);
+    s.fund.add_component(&extra.token.address);
+    assert_eq!(s.fund.components().len(), 4);
+
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    let paid = s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    assert_eq!(paid.get_unchecked(3), 0);
+
+    with_oracle(&s);
+    extra.admin.mint(&s.manager, &(5 * SHARE_SCALE));
+    s.fund.rebalance(
+        &s.assets[0].token.address,
+        &(5 * SHARE_SCALE),
+        &extra.token.address,
+        &(5 * SHARE_SCALE),
+    );
+    assert_eq!(s.fund.units_per_share().get_unchecked(3), 5_000_000);
+    let got = s
+        .fund
+        .redeem(&investor, &investor, &(10 * SHARE_SCALE), &Vec::new(&s.env));
+    assert_eq!(got.get_unchecked(3), 5 * SHARE_SCALE);
+
+    for _ in 4..crate::MAX_COMPONENTS {
+        s.fund
+            .add_component(&create_asset(&s.env, false).token.address);
+    }
+    assert_eq!(
+        s.fund
+            .try_add_component(&create_asset(&s.env, false).token.address),
+        Err(Ok(FundError::TooManyComponents.into()))
+    );
+}
+
+#[test]
+fn rebalances_are_a_minute_apart() {
+    let s = managed(Compliance::Open);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    s.assets[0].admin.mint(&s.manager, &(10 * SHARE_SCALE));
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+
+    at(&s, 1_000);
+    s.fund.rebalance(sell, &SHARE_SCALE, buy, &SHARE_SCALE);
+    assert_eq!(s.fund.last_rebalance(), Some(1_000));
+    at(&s, 1_059);
+    assert_eq!(
+        s.fund.try_rebalance(sell, &SHARE_SCALE, buy, &SHARE_SCALE),
+        Err(Ok(FundError::RebalanceCooldown.into()))
+    );
+    at(&s, 1_060);
+    s.fund.rebalance(sell, &SHARE_SCALE, buy, &SHARE_SCALE);
+}
+
+#[test]
+fn losses_inside_a_day_are_capped_at_two_percent_of_fund_value() {
+    let s = managed(Compliance::Open);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    for asset in &s.assets[..2] {
+        asset.admin.mint(&s.manager, &(100 * SHARE_SCALE));
+    }
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+
+    // Each trade gives up $0.04 of a ~$35 fund, about 11.4 bps.
+    let mut now = 0;
+    let mut accepted = 0;
+    let refused = loop {
+        now += 60;
+        at(&s, now);
+        let (sell, buy) = if accepted % 2 == 0 { (b, a) } else { (a, b) };
+        match s.fund.try_rebalance(sell, &50_000_000, buy, &49_600_000) {
+            Ok(_) => accepted += 1,
+            Err(error) => break error,
+        }
+        assert!(accepted < 32);
+    };
+    assert_eq!(refused, Ok(FundError::LossBudgetExceeded.into()));
+    assert_eq!(accepted, 17);
+    let used = s.fund.window_loss_ppb();
+    assert!(used <= crate::MAX_WINDOW_LOSS_BPS * 100_000);
+    assert!(used > 19_000_000);
+
+    // Gains are free, and the oldest losses age out of the window.
+    s.fund.rebalance(b, &50_000_000, a, &50_000_000);
+    at(&s, 60 + crate::LOSS_WINDOW_SECONDS);
+    assert!(s.fund.window_loss_ppb() < used);
+    s.fund.rebalance(b, &50_000_000, a, &49_600_000);
+}
+
+#[test]
+fn rebalance_refuses_a_non_positive_oracle_price() {
+    let s = managed(Compliance::Open);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    let nav = with_oracle(&s);
+    nav.set(&s.assets[1].token.address, &0);
+    s.assets[1].admin.mint(&s.manager, &(10 * SHARE_SCALE));
+    assert_eq!(
+        s.fund.try_rebalance(
+            &s.assets[0].token.address,
+            &SHARE_SCALE,
+            &s.assets[1].token.address,
+            &(10 * SHARE_SCALE),
+        ),
+        Err(Ok(FundError::BadPrice.into()))
+    );
+}
+
+#[test]
+fn metadata_is_manager_written_and_bounded() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let description = Symbol::new(&s.env, "description");
+    let website = Symbol::new(&s.env, "website");
+    s.fund.set_metadata(
+        &description,
+        &String::from_str(&s.env, "Short-dated treasuries, rebalanced monthly"),
+    );
+    assert_eq!(s.env.auths()[0].0, s.manager);
+    s.fund
+        .set_metadata(&website, &String::from_str(&s.env, "https://example.com"));
+    assert_eq!(s.fund.metadata().len(), 2);
+    s.fund.set_metadata(&website, &String::from_str(&s.env, ""));
+    assert_eq!(s.fund.metadata().keys(), vec![&s.env, description]);
+
+    let long = String::from_str(&s.env, &"x".repeat(crate::MAX_METADATA_BYTES as usize + 1));
+    assert_eq!(
+        s.fund
+            .try_set_metadata(&Symbol::new(&s.env, "strategy"), &long),
+        Err(Ok(FundError::MetadataTooLarge.into()))
+    );
+    for i in 1..crate::MAX_METADATA_ENTRIES {
+        let key = Symbol::new(&s.env, &std::format!("k{i}"));
+        s.fund.set_metadata(&key, &String::from_str(&s.env, "v"));
+    }
+    assert_eq!(
+        s.fund.try_set_metadata(
+            &Symbol::new(&s.env, "one_more"),
+            &String::from_str(&s.env, "v")
+        ),
+        Err(Ok(FundError::MetadataTooLarge.into()))
+    );
+}
+
+#[test]
+fn nav_falls_back_to_the_compiled_network_default() {
+    let s = setup(Compliance::Open, [false; 3]);
+    #[cfg(not(feature = "mainnet"))]
+    assert_eq!(s.fund.nav(), None);
+    #[cfg(feature = "mainnet")]
+    assert_eq!(
+        s.fund.nav(),
+        Some(Address::from_str(
+            &s.env,
+            "CBO42GCYFZPOM4ITSCKF7DXI7MBL5PMHRL4DBBEZ35HZLOWT76GLZVIC"
+        ))
+    );
+    let nav = with_oracle(&s);
+    assert_eq!(s.fund.nav(), Some(nav.address));
+}
+
+#[test]
+fn nobody_can_issue_before_the_manager_opens_the_fund() {
+    let s = setup_closed(Compliance::Open, [false; 3]);
+    let early = funded_investor(&s, 1_000 * SHARE_SCALE);
+    assert!(!s.fund.is_open());
+    assert_eq!(
+        s.fund.try_issue(&early, &early, &SHARE_SCALE),
+        Err(Ok(FundError::IssuanceClosed.into()))
+    );
+    // The manager can still configure, then opens.
+    s.fund.init_fee(&100);
+    s.fund.set_mandate(&Mandate::Managed);
+    s.fund.open_for_issue();
+    assert_eq!(s.env.auths()[0].0, s.manager);
+    assert_eq!(
+        s.fund.try_open_for_issue(),
+        Err(Ok(FundError::IssuanceOpen.into()))
+    );
+    s.fund.issue(&early, &early, &SHARE_SCALE);
+    assert_eq!(s.fund.balance(&early), SHARE_SCALE);
+}
+
+#[test]
+fn fee_recipients_must_pass_the_allowlist() {
+    let s = with_fee(Compliance::Allowlist, 100);
+    let outsider = Address::generate(&s.env);
+    assert_eq!(
+        s.fund.try_set_fee_recipient(&outsider),
+        Err(Ok(FundError::NotAllowlisted.into()))
+    );
+    assert_eq!(
+        s.fund.try_set_platform_fee(&1_000, &outsider),
+        Err(Ok(FundError::NotAllowlisted.into()))
+    );
+}
+
+#[test]
+fn fee_for_a_recipient_off_the_allowlist_waits_in_escrow() {
+    let s = with_fee(Compliance::Allowlist, 100);
+    let platform_cut = Address::generate(&s.env);
+    s.fund.set_investor(&platform_cut, &true);
+    s.fund.set_platform_fee(&5_000, &platform_cut);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.set_investor(&investor, &true);
+    s.fund.issue(&investor, &investor, &(99 * SHARE_SCALE));
+
+    // The manager, the default recipient, was never allowlisted, and the
+    // platform recipient is removed before the fee accrues.
+    s.fund.set_investor(&platform_cut, &false);
+    at(&s, YEAR_SECONDS);
+    let minted = s.fund.accrue_fee();
+    assert_eq!(minted, 10_000_000);
+    assert_eq!(s.fund.balance(&s.manager), 0);
+    assert_eq!(s.fund.balance(&platform_cut), 0);
+    assert_eq!(s.fund.fee_escrow(&s.manager), 5_000_000);
+    assert_eq!(s.fund.fee_escrow(&platform_cut), 5_000_000);
+    assert_eq!(s.fund.balance(&s.fund.address), minted);
+    assert_eq!(s.fund.total_supply(), 100 * SHARE_SCALE);
+
+    assert_eq!(
+        s.fund.try_claim_fee(&s.manager),
+        Err(Ok(FundError::NotAllowlisted.into()))
+    );
+    s.fund.set_investor(&s.manager, &true);
+    assert_eq!(s.fund.claim_fee(&s.manager), 5_000_000);
+    assert_eq!(s.fund.balance(&s.manager), 5_000_000);
+    assert_eq!(s.fund.fee_escrow(&s.manager), 0);
+    assert_eq!(s.fund.balance(&s.fund.address), 5_000_000);
+}
+
+/// A one-pool stand-in for the Soroswap router with the same call shape:
+/// it requires `to`'s auth, pulls `amount_in` of `path[0]` from `to` into
+/// the pool (itself), and pays `amount_in * rate / 10_000` of the last token.
+/// `skim` pays half and ignores the minimum; `greedy` pulls one unit extra.
+#[contract]
+struct MockRouter;
+
+#[contractimpl]
+impl MockRouter {
+    pub fn configure(env: Env, rate_bps: i128, skim: bool, greedy: bool) {
+        let instance = env.storage().instance();
+        instance.set(&soroban_sdk::symbol_short!("rate"), &rate_bps);
+        instance.set(&soroban_sdk::symbol_short!("skim"), &skim);
+        instance.set(&soroban_sdk::symbol_short!("greedy"), &greedy);
+    }
+
+    pub fn router_pair_for(env: Env, _token_a: Address, _token_b: Address) -> Address {
+        env.current_contract_address()
+    }
+
+    pub fn swap_exact_tokens_for_tokens(
+        env: Env,
+        amount_in: i128,
+        amount_out_min: i128,
+        path: Vec<Address>,
+        to: Address,
+        deadline: u64,
+    ) -> Vec<i128> {
+        to.require_auth();
+        assert!(env.ledger().timestamp() < deadline, "deadline expired");
+        let instance = env.storage().instance();
+        let rate: i128 = instance
+            .get(&soroban_sdk::symbol_short!("rate"))
+            .unwrap_or(10_000);
+        let skim: bool = instance
+            .get(&soroban_sdk::symbol_short!("skim"))
+            .unwrap_or(false);
+        let greedy: bool = instance
+            .get(&soroban_sdk::symbol_short!("greedy"))
+            .unwrap_or(false);
+        let out = amount_in * rate / 10_000;
+        assert!(skim || out >= amount_out_min, "insufficient output amount");
+        let pool = env.current_contract_address();
+        let pulled = if greedy { amount_in + 1 } else { amount_in };
+        TokenClient::new(&env, &path.first_unchecked()).transfer(&to, &pool, &pulled);
+        let paid = if skim { out / 2 } else { out };
+        TokenClient::new(&env, &path.last_unchecked()).transfer(&pool, &to, &paid);
+        vec![&env, amount_in, paid]
+    }
+}
+
+fn with_router<'a>(s: &'a Setup<'a>, rate_bps: i128) -> MockRouterClient<'a> {
+    let id = s.env.register(MockRouter, ());
+    let router = MockRouterClient::new(&s.env, &id);
+    router.configure(&rate_bps, &false, &false);
+    for asset in &s.assets {
+        asset.admin.mint(&id, &(1_000 * SHARE_SCALE));
+    }
+    s.fund.set_router(&id);
+    router
+}
+
+/// A managed fund holding 10 shares (10, 20 and 5 of the three assets at
+/// $1 each) with an oracle set.
+fn trading_fund<'a>() -> Setup<'a> {
+    let s = managed(Compliance::Open);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    s
+}
+
+fn route(s: &Setup, from: usize, to: usize) -> Vec<Address> {
+    vec![
+        &s.env,
+        s.assets[from].token.address.clone(),
+        s.assets[to].token.address.clone(),
+    ]
+}
+
+#[test]
+fn trade_swaps_through_the_router_with_the_fund_as_trader() {
+    let s = trading_fund();
+    with_router(&s, 9_950);
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+
+    // Only the manager signs; the fund authorizes its own input transfer.
+    let path = route(&s, 1, 0);
+    s.env.mock_auths(&[MockAuth {
+        address: &s.manager,
+        invoke: &MockAuthInvoke {
+            contract: &s.fund.address,
+            fn_name: "trade",
+            args: (sell, 5 * SHARE_SCALE, buy, 0i128, path.clone()).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    let bought = s.fund.trade(sell, &(5 * SHARE_SCALE), buy, &0, &path);
+
+    assert_eq!(bought, 49_750_000);
+    assert_eq!(s.fund.holdings().get_unchecked(0), 149_750_000);
+    assert_eq!(s.fund.holdings().get_unchecked(1), 150_000_000);
+    assert_eq!(s.assets[0].token.balance(&s.manager), 0);
+    assert_eq!(s.assets[1].token.balance(&s.manager), 0);
+    assert!(s.fund.window_loss_ppb() > 0);
+}
+
+#[test]
+fn trade_demands_the_larger_of_the_callers_minimum_and_the_oracle_floor() {
+    let s = trading_fund();
+    let router = with_router(&s, 9_850);
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+    let path = route(&s, 1, 0);
+
+    // 1.5% worse than the oracle: the router is asked for at least 99%.
+    assert!(s
+        .fund
+        .try_trade(sell, &(5 * SHARE_SCALE), buy, &0, &path)
+        .is_err());
+
+    router.configure(&9_950, &false, &false);
+    assert!(s
+        .fund
+        .try_trade(sell, &(5 * SHARE_SCALE), buy, &49_800_000, &path)
+        .is_err());
+    assert_eq!(
+        s.fund
+            .trade(sell, &(5 * SHARE_SCALE), buy, &49_700_000, &path),
+        49_750_000
+    );
+}
+
+#[test]
+fn trade_trusts_balances_not_the_router() {
+    let s = trading_fund();
+    let router = with_router(&s, 10_000);
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+    let path = route(&s, 1, 0);
+
+    router.configure(&10_000, &true, &false);
+    assert_eq!(
+        s.fund.try_trade(sell, &(5 * SHARE_SCALE), buy, &0, &path),
+        Err(Ok(FundError::SwapShortfall.into()))
+    );
+}
+
+#[test]
+fn the_fund_authorizes_exactly_its_input_and_nothing_more() {
+    let s = trading_fund();
+    let router = with_router(&s, 10_000);
+    router.configure(&10_000, &false, &true);
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+    let path = route(&s, 1, 0);
+    s.env.mock_auths(&[MockAuth {
+        address: &s.manager,
+        invoke: &MockAuthInvoke {
+            contract: &s.fund.address,
+            fn_name: "trade",
+            args: (sell, 5 * SHARE_SCALE, buy, 0i128, path.clone()).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    let result = s.fund.try_trade(sell, &(5 * SHARE_SCALE), buy, &0, &path);
+    assert!(result.is_err());
+    assert_ne!(result, Err(Ok(FundError::SwapShortfall.into())));
+    assert_eq!(s.fund.holdings().get_unchecked(1), 200_000_000);
+}
+
+#[test]
+fn trade_checks_route_and_router() {
+    let s = trading_fund();
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    #[cfg(not(any(feature = "mainnet", feature = "testnet")))]
+    assert_eq!(
+        s.fund.try_trade(b, &SHARE_SCALE, a, &0, &route(&s, 1, 0)),
+        Err(Ok(FundError::NoRouter.into()))
+    );
+    with_router(&s, 10_000);
+    for path in [
+        route(&s, 0, 1),
+        vec![&s.env, b.clone()],
+        vec![
+            &s.env,
+            b.clone(),
+            b.clone(),
+            a.clone(),
+            b.clone(),
+            a.clone(),
+        ],
+    ] {
+        assert_eq!(
+            s.fund.try_trade(b, &SHARE_SCALE, a, &0, &path),
+            Err(Ok(FundError::InvalidPath.into()))
+        );
+    }
+    let hop = vec![
+        &s.env,
+        b.clone(),
+        s.assets[2].token.address.clone(),
+        a.clone(),
+    ];
+    assert_eq!(s.fund.trade(b, &SHARE_SCALE, a, &0, &hop), SHARE_SCALE);
+}
+
+#[test]
+fn a_locked_fund_trades_among_its_components() {
+    let s = setup(Compliance::Open, [false; 3]);
+    assert_eq!(s.fund.mandate(), Mandate::Locked);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    with_router(&s, 10_000);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    assert_eq!(
+        s.fund.trade(b, &SHARE_SCALE, a, &0, &route(&s, 1, 0)),
+        SHARE_SCALE
+    );
+    assert_eq!(s.fund.holdings().get_unchecked(0), 110_000_000);
+}
+
+#[test]
+fn trades_share_the_rebalance_cooldown_and_loss_budget() {
+    let s = trading_fund();
+    with_router(&s, 9_920);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    s.assets[0].admin.mint(&s.manager, &(10 * SHARE_SCALE));
+
+    at(&s, 1_000);
+    s.fund.trade(b, &(5 * SHARE_SCALE), a, &0, &route(&s, 1, 0));
+    assert_eq!(
+        s.fund.try_rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE),
+        Err(Ok(FundError::RebalanceCooldown.into()))
+    );
+
+    // Each trade gives up 0.8% of $5 out of a ~$35 fund, about 11.4 bps.
+    let mut now = 1_000;
+    let mut accepted = 1;
+    let refused = loop {
+        now += 60;
+        at(&s, now);
+        let (sell, path) = if accepted % 2 == 0 {
+            (b, route(&s, 1, 0))
+        } else {
+            (a, route(&s, 0, 1))
+        };
+        let buy = &path.last_unchecked();
+        match s.fund.try_trade(sell, &(5 * SHARE_SCALE), buy, &0, &path) {
+            Ok(_) => accepted += 1,
+            Err(error) => break error,
+        }
+        assert!(accepted < 32);
+    };
+    assert_eq!(refused, Ok(FundError::LossBudgetExceeded.into()));
+    assert!(s.fund.window_loss_ppb() <= crate::MAX_WINDOW_LOSS_BPS * 100_000);
+}
+
+#[test]
+fn router_is_set_by_the_platform_admin() {
+    let s = setup(Compliance::Open, [false; 3]);
+    #[cfg(not(any(feature = "mainnet", feature = "testnet")))]
+    assert_eq!(s.fund.router(), None);
+    #[cfg(feature = "mainnet")]
+    assert_eq!(
+        s.fund.router(),
+        Some(Address::from_str(
+            &s.env,
+            "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH"
+        ))
+    );
+    let router = Address::generate(&s.env);
+    s.fund.set_router(&router);
+    assert_eq!(s.env.auths()[0].0, s.fund.platform());
+    assert_eq!(s.fund.router(), Some(router));
+}
+
+/// An open fund holding 10 shares under `mandate`, with an oracle, a
+/// one-to-one router and a manager able to fund a rebalance.
+fn fund_with_mandate<'a>(mandate: Mandate) -> Setup<'a> {
+    let s = setup_closed(Compliance::Open, [false; 3]);
+    if mandate != Mandate::Locked {
+        s.fund.set_mandate(&mandate);
+    }
+    s.fund.open_for_issue();
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    s.assets[1].admin.mint(&s.manager, &(10 * SHARE_SCALE));
+    s
+}
+
+/// The contract error a call failed with, or `None` if it succeeded.
+fn refusal<T, C, E>(
+    result: Result<Result<T, C>, Result<soroban_sdk::Error, E>>,
+) -> Option<FundError> {
+    match result {
+        Ok(_) => None,
+        Err(Ok(error)) => Some(FundError::try_from(error).unwrap()),
+        Err(Err(_)) => panic!("call failed outside the contract"),
+    }
+}
+
+#[test]
+fn each_mandate_allows_exactly_its_actions() {
+    use FundError::{MandateLocked, MandateStatic};
+    for (mandate, trading, adding) in [
+        (Mandate::Locked, None, Some(MandateLocked)),
+        (Mandate::Managed, None, None),
+        (Mandate::Static, Some(MandateStatic), Some(MandateStatic)),
+    ] {
+        let s = fund_with_mandate(mandate);
+        assert_eq!(s.fund.mandate(), mandate);
+        with_router(&s, 10_000);
+        let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+
+        let rebalanced = refusal(s.fund.try_rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE));
+        assert_eq!(rebalanced, trading, "rebalance under {mandate:?}");
+        at(&s, 60);
+        let traded = refusal(s.fund.try_trade(b, &SHARE_SCALE, a, &0, &route(&s, 1, 0)));
+        assert_eq!(traded, trading, "trade under {mandate:?}");
+
+        let extra = create_asset(&s.env, false);
+        let added = refusal(s.fund.try_add_component(&extra.token.address));
+        assert_eq!(added, adding, "add_component under {mandate:?}");
+    }
+}
+
+#[test]
+fn static_is_chosen_once_before_opening() {
+    let s = setup_closed(Compliance::Open, [false; 3]);
+    s.fund.set_mandate(&Mandate::Static);
+    assert_eq!(
+        s.fund.try_set_mandate(&Mandate::Managed),
+        Err(Ok(FundError::MandateFixed.into()))
+    );
+    s.fund.open_for_issue();
+    assert_eq!(s.fund.mandate(), Mandate::Static);
 }

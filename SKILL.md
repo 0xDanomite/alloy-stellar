@@ -81,6 +81,19 @@ simulates and needs no fee.
 | `set_compliance(Open \| Allowlist)` | manager | `Open` only if every component is `Open` on the shelf |
 | `rebalance(sell, sold, buy, bought)` | manager | Swap one component for another inside the fund, bounded by oracle prices |
 | `set_nav(nav)` | platform admin | The oracle that bounds rebalances |
+| `open_for_issue()`, `is_open()` | manager, once | Ends setup; `issue` fails with `IssuanceClosed` before it |
+| `set_mandate(Locked \| Managed \| Static)`, `mandate()` | manager, once, before `open_for_issue` | `Locked` (the default) freezes the set of components but can rebalance and trade; `Managed` also allows `add_component`; `Static` never rebalances, trades or adds (`MandateStatic`) |
+| `add_component(token)` | manager, `Managed` only | Adds a shelf asset at zero units; a permissioned one needs `Allowlist` |
+| `init_fee(rate_bps)` | manager, once, before `open_for_issue` | Annual management fee, at most 500 bps, streamed as newly minted shares |
+| `accrue_fee()` | anyone | Mints the fee accrued so far; `issue` and `redeem` call it first |
+| `pending_fee()`, `fee()`, `fee_recipient()`, `platform_fee()` | anyone | Fee views |
+| `set_fee_recipient(recipient)` | manager | Where the manager's part of the fee is minted (default: the manager); must pass the allowlist |
+| `fee_escrow(recipient)`, `claim_fee(recipient)` | anyone | Fee shares held for a recipient that could not hold them when they accrued, and their release once it can |
+| `set_platform_fee(share_bps, recipient)` | platform admin | The platform's cut of the fee, at most 5000 bps of it; recipient must pass the allowlist |
+| `set_metadata(key, value)`, `metadata()` | manager / anyone | Up to 8 entries such as `description`, `strategy`, `website`, 512 bytes each; an empty value removes one |
+| `trade(sell, sold, buy, min_bought, path)` | manager, not `Static` | Swap inside the fund through the Soroswap router; min out is the larger of `min_bought` and 99% at oracle prices; returns the amount bought |
+| `set_router(router)`, `router()` | platform admin / anyone | The DEX router `trade` uses; `mainnet` builds default to Soroswap's |
+| `window_loss_ppb()`, `last_rebalance()` | anyone | Rebalance loss used in the rolling 24 hour window, and the last rebalance time |
 | SEP-41: `balance`, `transfer`, `transfer_from`, `approve`, `allowance`, `burn`, `burn_from`, `decimals`, `name`, `symbol` | | Standard token interface |
 
 **Platform**
@@ -91,6 +104,16 @@ simulates and needs no fee.
 | `set_manager(manager, allowed)` | admin | Manager allowlist |
 | `set_shelf_asset(token, Unlisted \| Open \| Permissioned)` | admin | Asset shelf |
 | `shelf()`, `shelf_status(token)`, `is_manager(manager)`, `is_fund(fund)`, `fund_count()`, `funds(start, limit)` | anyone | Views; `funds` pages at most 50 |
+
+**Timelock** (not yet deployed; meant to become the platform and NAV admin)
+
+| Function | Who | What |
+| --- | --- | --- |
+| `schedule(proposer, target, fn_name, args, salt)` | proposer | Queues `target.fn_name(args)`; returns the operation id |
+| `execute(executor, target, fn_name, args, salt)` | executor | Runs it once the delay has passed, with the timelock as caller |
+| `cancel(proposer, id)` | proposer | Drops a pending operation |
+| `hash_operation(target, fn_name, args, salt)`, `operation(id)`, `delay()`, `proposers()`, `executors()` | anyone | Views |
+| `set_delay(delay)` | the timelock itself, through `schedule` and `execute` | Changes the delay, at most 30 days |
 
 **NAV** (read-only, holds nothing)
 
@@ -161,7 +184,9 @@ and execution through an issuer clawback or freeze.
 
 The manager address must be allowlisted on the platform (`is_manager`),
 and every component must be on the shelf (`shelf`, `shelf_status`).
-`initial_units` price only the first share.
+`initial_units` price only the first share. Funds created from fund code
+v0.4.0 (not yet released) start closed: set the fee and mandate if
+wanted, then call `open_for_issue` before anyone can invest.
 
 ```
 stellar contract invoke --id CDV2FJ4J2IIFSUREC5VAHINVCSVZGOMIMXJHA32XD7H2CMY6DNXD6KDM \
@@ -186,6 +211,12 @@ NAV oracle prices (`MAX_REBALANCE_LOSS_BPS = 100`), or it fails with
 v0.3.0; funds are not upgradeable, so it is on aREBAL and funds created
 after it.
 
+From fund code v0.4.0 (not yet released) a rebalance fails in a `Static` fund (`MandateStatic`), comes at least 60 seconds after
+the previous one (else `RebalanceCooldown`), and fails with
+`LossBudgetExceeded` once everything given up against the oracle inside a
+rolling 24 hours would pass 2% of fund value. A fund with no `set_nav`
+falls back to the NAV contract compiled into a `mainnet` build.
+
 ```
 stellar contract invoke --id CAZ7FRP7M5RMLGGOPQZNZMIEN7ACNLVBG7AOVEBGBCBYH6JVUCLTDCTD \
   --source-account manager --inclusion-fee 1000 -- \
@@ -197,9 +228,12 @@ Before signing, check `price` for both tokens and confirm
 `bought * price(buy) >= 0.99 * sold * price(sell)`. Where the manager
 sources the bought asset (SDEX, an RFQ desk) is up to them.
 
-Agent-run rebalancing through Soroswap's aggregator, under a manager policy
-(target weights, drift bands, spend limits), is on the roadmap. It is not
-shipped.
+Fund code v0.4.0 (not yet released) adds `trade`, which swaps inside the
+fund through the Soroswap router instead of through the manager's
+wallet. Soroswap has usable pools only for XLM/USDC and USDC/USTRY today;
+see docs/how-it-works.md for the measured reserves. Agent-run rebalancing
+under a manager policy (target weights, drift bands, spend limits) is on
+the roadmap. It is not shipped.
 
 ## CLI
 

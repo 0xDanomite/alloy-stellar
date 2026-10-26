@@ -1,7 +1,11 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
-import { links, oracles } from "../lib/config";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { deployments, links, oracles } from "../lib/config";
 import { shortId } from "../lib/format";
+import { adminRoles } from "../lib/admin";
+import { portfolio } from "../lib/portfolio";
+import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
+import { Bell } from "./icons";
 import { AlloyMark, Button, ThemeToggle } from "./ui";
 
 function WalletButton() {
@@ -10,7 +14,8 @@ function WalletButton() {
     return (
       <Button variant="secondary" onClick={disconnect} title={`Connected as ${address}. Click to disconnect.`}>
         <span className="size-2 rounded-full bg-success" aria-hidden />
-        <span className="num">{shortId(address)}</span>
+        <span className="num whitespace-nowrap sm:hidden">{shortId(address, 3, 3)}</span>
+        <span className="num hidden whitespace-nowrap sm:inline">{shortId(address)}</span>
       </Button>
     );
   }
@@ -19,6 +24,58 @@ function WalletButton() {
       <span className="sm:hidden">Connect</span>
       <span className="hidden sm:inline">Connect wallet</span>
     </Button>
+  );
+}
+
+/**
+ * Shown only to the platform admin and timelock proposers or executors: in
+ * the header from tablet width up, and in the footer on phones, where the
+ * header has no room left.
+ */
+function AdminLink({ placement }: { placement: "header" | "footer" }) {
+  const { address } = useWallet();
+  const roles = useAsync(() => adminRoles(address ?? ""), deployments && address ? `admin:${address}` : null);
+  if (!roles.data?.length) return null;
+  if (placement === "footer") {
+    return (
+      <Link to="/admin" className="hover:text-foreground sm:hidden">
+        Platform admin
+      </Link>
+    );
+  }
+  return (
+    <NavLink
+      to="/admin"
+      className={({ isActive }) =>
+        `hidden rounded-md px-3 py-2 text-label hover:bg-secondary sm:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
+      }
+    >
+      Admin
+    </NavLink>
+  );
+}
+
+function AttentionBell() {
+  const { address } = useWallet();
+  const { pathname } = useLocation();
+  const state = useAsync(() => portfolio(address ?? ""), deployments && address ? `${address}:${pathname}` : null);
+  if (!address) return null;
+  const count = state.data?.attention.length ?? 0;
+  const label = count ? `${count} ${count === 1 ? "item needs" : "items need"} attention` : "Nothing needs attention";
+  return (
+    <Link
+      to="/portfolio"
+      className="relative grid size-10 place-items-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"
+      aria-label={`Portfolio: ${label}`}
+      title={label}
+    >
+      <Bell />
+      {count > 0 && (
+        <span className="num absolute top-1 right-1 grid min-w-4 place-items-center rounded-full bg-warning px-1 text-[0.625rem] leading-4 font-semibold text-gold-foreground">
+          {count}
+        </span>
+      )}
+    </Link>
   );
 }
 
@@ -35,21 +92,40 @@ export function Layout() {
           </Link>
           <nav className="ml-auto flex items-center gap-0.5 sm:gap-1">
             <NavLink
-              to="/create"
+              to="/funds"
               className={({ isActive }) =>
-                `rounded-md px-3 py-2 text-label hover:bg-secondary ${isActive ? "text-foreground" : "text-muted-foreground"}`
+                `rounded-md px-2.5 py-2 text-label hover:bg-secondary sm:px-3 ${isActive ? "text-foreground" : "text-muted-foreground"}`
               }
             >
-              Create fund
+              Funds
             </NavLink>
             <NavLink
-              to="/built"
+              to="/create"
+              className={({ isActive }) =>
+                `rounded-md px-2.5 py-2 text-label hover:bg-secondary sm:px-3 ${isActive ? "text-foreground" : "text-muted-foreground"}`
+              }
+            >
+              <span className="sm:hidden">Create</span>
+              <span className="hidden sm:inline">Create fund</span>
+            </NavLink>
+            <NavLink
+              to="/portfolio"
               className={({ isActive }) =>
                 `hidden rounded-md px-3 py-2 text-label hover:bg-secondary sm:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
               }
             >
+              Portfolio
+            </NavLink>
+            <NavLink
+              to="/built"
+              className={({ isActive }) =>
+                `hidden rounded-md px-3 py-2 text-label hover:bg-secondary lg:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
+              }
+            >
               What we built
             </NavLink>
+            <AdminLink placement="header" />
+            <AttentionBell />
             <ThemeToggle />
             <WalletButton />
           </nav>
@@ -72,6 +148,7 @@ export function Layout() {
             Alloy on Stellar, built at HackMeridian 2026
           </span>
           <Link to="/built" className="hover:text-foreground">What we built</Link>
+          <AdminLink placement="footer" />
           <a href={links.repo} target="_blank" rel="noreferrer" className="hover:text-foreground">Source on GitHub</a>
           {links.deck && (
             <a href={links.deck} target="_blank" rel="noreferrer" className="hover:text-foreground">Deck</a>

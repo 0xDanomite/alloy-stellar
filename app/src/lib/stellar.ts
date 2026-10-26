@@ -6,6 +6,7 @@ import {
   TransactionBuilder,
   contract,
   rpc,
+  type xdr,
 } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
 import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
@@ -13,7 +14,11 @@ import { Networks as KitNetworks } from "@creit.tech/stellar-wallets-kit/types";
 import { FreighterModule } from "@creit.tech/stellar-wallets-kit/modules/freighter";
 import { xBullModule } from "@creit.tech/stellar-wallets-kit/modules/xbull";
 import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
-import { deployments, endpoints, expert, network } from "./config";
+import {
+  WalletConnectModule,
+  WalletConnectTargetChain,
+} from "@creit.tech/stellar-wallets-kit/modules/wallet-connect";
+import { creationPlatform, deployments, endpoints, expert, isLegacyFundCode, network, platforms, platformSlot } from "./config";
 import { addressVal, dataKey, instanceKey, instanceStorage, keyId, native, readEntries, variantKey } from "./ledger";
 import { SPECS } from "./specs";
 import { ONE, toDecimalString, unitsToNumber } from "./format";
@@ -22,21 +27,22 @@ import { CIRCLE_USDC_ISSUER, DEMO_ISSUER_LABEL, PINNED_MAINNET_ISSUERS, UNVERIFI
 const CIRCLE_USDC = new Asset("USDC", CIRCLE_USDC_ISSUER);
 
 /** The USD quote asset: Circle USDC on mainnet, the tUSDC stand-in on testnet. */
-const QUOTE_USDC: Asset | null = (() => {
+export const QUOTE_USDC: Asset | null = (() => {
   if (network === "mainnet") return CIRCLE_USDC;
   const stand = deployments?.assets.tUSDC?.asset;
   if (!stand) return null;
   const [code, issuer] = stand.split(":");
   return code && issuer ? new Asset(code, issuer) : null;
 })();
-const SLIPPAGE_BPS = 200n;
-const TX_TIMEOUT_SECONDS = 180;
+export const SLIPPAGE_BPS = 200n;
+export const TX_TIMEOUT_SECONDS = 180;
 
 type AT<T> = Promise<contract.AssembledTransaction<T>>;
 type Tagged<T extends string> = { tag: T };
 
 export type ShelfStatus = "Unlisted" | "Open" | "Permissioned";
 export type Compliance = "Open" | "Allowlist";
+export type Mandate = "Locked" | "Managed" | "Static";
 
 interface PlatformMethods {
   fund_count(): AT<number>;
@@ -44,6 +50,7 @@ interface PlatformMethods {
   shelf_status(args: { token: string }): AT<Tagged<ShelfStatus>>;
   shelf(): AT<string[]>;
   is_manager(args: { manager: string }): AT<boolean>;
+  admin(): AT<string>;
   create_fund(args: {
     manager: string;
     name: string;
@@ -74,6 +81,20 @@ interface FundMethods {
   set_investor(args: { investor: string; allowed: boolean }): AT<null>;
   nav(): AT<string | undefined>;
   rebalance(args: { sell: string; sold: bigint; buy: string; bought: bigint }): AT<null>;
+  set_manager(args: { new_manager: string }): AT<null>;
+  // v0.4 and later
+  is_open(): AT<boolean>;
+  open_for_issue(): AT<null>;
+  init_fee(args: { rate_bps: number }): AT<null>;
+  accrue_fee(): AT<bigint>;
+  pending_fee(): AT<bigint>;
+  fee_escrow(args: { recipient: string }): AT<bigint>;
+  claim_fee(args: { recipient: string }): AT<bigint>;
+  set_mandate(args: { mandate: Tagged<Mandate> }): AT<null>;
+  set_metadata(args: { key: string; value: string }): AT<null>;
+  window_loss_ppb(): AT<bigint>;
+  router(): AT<string | undefined>;
+  trade(args: { sell: string; sold: bigint; buy: string; min_bought: bigint; path: string[] }): AT<bigint>;
 }
 
 interface NavQuoteRaw {
@@ -92,6 +113,22 @@ interface NavLegRaw extends NavQuoteRaw {
 interface NavMethods {
   nav(args: { fund: string }): AT<contract.Result<{ per_share_usd: bigint; legs: NavLegRaw[]; total_usd: bigint }>>;
   price(args: { token: string }): AT<contract.Result<NavQuoteRaw>>;
+  primary(args: { token: string }): AT<NavRouteRaw | undefined>;
+  secondary(args: { token: string }): AT<NavRouteRaw | undefined>;
+}
+
+export interface NavRouteRaw {
+  oracle: string;
+  feed: { tag: "Sep40" | "RedStoneFeed"; values?: unknown[] };
+  quote: Tagged<"Usd" | "Usdc">;
+  max_age_secs: bigint;
+  source: string;
+}
+
+interface TimelockMethods {
+  schedule(args: { proposer: string; target: string; fn_name: string; args: xdr.ScVal[]; salt: Buffer }): AT<Buffer>;
+  execute(args: { executor: string; target: string; fn_name: string; args: xdr.ScVal[]; salt: Buffer }): AT<unknown>;
+  cancel(args: { proposer: string; id: Buffer }): AT<null>;
 }
 
 interface SacMethods {
@@ -103,7 +140,7 @@ export const horizon = new Horizon.Server(endpoints.horizonUrl);
 export const isMainnet = network === "mainnet";
 
 
-function clientOptions(contractId: string, publicKey?: string): contract.ClientOptions {
+export function clientOptions(contractId: string, publicKey?: string): contract.ClientOptions {
   return {
     contractId,
     rpcUrl: endpoints.rpcUrl,
@@ -146,7 +183,7 @@ async function withRetry<T>(attempt: () => Promise<T>, tries = 4): Promise<T> {
   }
 }
 
-async function read<T>(tx: AT<T>): Promise<T> {
+export async function read<T>(tx: AT<T>): Promise<T> {
   const assembled = await tx;
   const simulation = assembled.simulation;
   if (simulation && rpc.Api.isSimulationError(simulation)) {
@@ -155,15 +192,20 @@ async function read<T>(tx: AT<T>): Promise<T> {
   return assembled.result;
 }
 
-const platformClients = bundledClient<PlatformMethods>(SPECS.platform);
-const fundClient = bundledClient<FundMethods>(SPECS.fund);
+export const platformClients = bundledClient<PlatformMethods>(SPECS.platform);
+export const fundClient = bundledClient<FundMethods>(SPECS.fund);
 const sacClient = fetchedClient<SacMethods>();
-const navClient = bundledClient<NavMethods>(SPECS.nav);
-const platformClient = () => platformClients(requireDeployments().contracts.platform);
+export const navClient = bundledClient<NavMethods>(SPECS.nav);
+export const timelockClient = bundledClient<TimelockMethods>(SPECS.timelock);
 
 function requireDeployments() {
   if (!deployments) throw new Error(`deployments/${network}.json is missing from this build.`);
   return deployments;
+}
+
+function requireCreationPlatform(): string {
+  if (!creationPlatform) throw new Error(`deployments/${network}.json is missing from this build.`);
+  return creationPlatform.id;
 }
 
 
@@ -186,6 +228,22 @@ const FUND_ERRORS: Record<number, string> = {
   15: "This fund has no oracle set for rebalancing yet.",
   16: "That trade gives up more than 1% of value at oracle prices. Ask for more of the asset you're buying.",
   17: "Pick two different assets.",
+  18: "This fund's mandate is locked: its assets can't change.",
+  19: "The mandate is already set, and it can only be set once.",
+  20: "The fund is already open for investment, so its fee and mandate are final.",
+  21: "The fee is already set, and it can only be set once.",
+  22: "The annual fee can be at most 5%.",
+  23: "The platform's share can be at most half the fee.",
+  24: "That asset isn't on the platform's shelf.",
+  25: "That profile text is too long: 512 bytes and 8 fields at most.",
+  26: "That trade would take today's rebalancing losses past 2% of fund value. Try a smaller trade or wait.",
+  27: "Trades are at least a minute apart. Try again shortly.",
+  28: "The oracle returned an unusable price for one of the assets.",
+  29: "The manager hasn't opened this fund for investment yet.",
+  30: "No DEX router is set for this fund.",
+  31: "That swap route isn't valid for these two assets.",
+  32: "The swap returned less than the minimum. Prices moved; quote again.",
+  33: "This fund's mandate is static: it never trades.",
 };
 
 function explainRaw(raw: string): string {
@@ -271,7 +329,7 @@ function parseAsset(name: string): Asset {
 
 const assetCache = new Map<string, Promise<AssetInfo>>();
 
-function assetInfo(token: string): Promise<AssetInfo> {
+export function assetInfo(token: string): Promise<AssetInfo> {
   let pending = assetCache.get(token);
   if (!pending) {
     pending = loadAssetInfo(token);
@@ -304,7 +362,7 @@ async function loadAssetInfo(token: string): Promise<AssetInfo> {
   };
 }
 
-function pathIsAllowed(path: { asset_type: string; asset_code?: string; asset_issuer?: string }[]): boolean {
+export function pathIsAllowed(path: { asset_type: string; asset_code?: string; asset_issuer?: string }[]): boolean {
   return path.every(
     (hop) =>
       hop.asset_type === "native" ||
@@ -316,7 +374,7 @@ const priceCache = new Map<string, { at: number; price: Promise<number | null> }
 const PRICE_TTL_MS = 30_000;
 
 /** One market quote per asset per 30 s, shared across every fund that holds it. */
-function priceInUsdc(asset: Asset): Promise<number | null> {
+export function priceInUsdc(asset: Asset): Promise<number | null> {
   const key = asset.isNative() ? "native" : `${asset.getCode()}:${asset.getIssuer()}`;
   const cached = priceCache.get(key);
   if (cached && Date.now() - cached.at < PRICE_TTL_MS) return cached.price;
@@ -372,8 +430,7 @@ function toQuote(raw: NavQuoteRaw): OracleQuote {
  * The nav contract's view of a fund. A full NAV needs every leg fresh; when
  * one is not, each leg is priced on its own so the rest still show.
  */
-async function loadOracleNav(fundId: string, tokens: string[]): Promise<OracleNav | null> {
-  const navId = deployments?.contracts.nav;
+async function loadOracleNav(navId: string | null, fundId: string, tokens: string[]): Promise<OracleNav | null> {
   if (!navId) return null;
   const nav = await navClient(navId);
   try {
@@ -425,62 +482,118 @@ export interface Fund {
   hasOracle: boolean;
   awaitingIssuer: FundComponent[];
   manager: string;
+  /** Hex hash of the code this fund runs, from its contract instance. */
+  wasmHash: string | null;
+  /** The platform that registered this fund. */
+  platform: string;
+  /** The NAV contract pricing this fund for display. */
+  navContract: string | null;
+  /** Fee, mandate and issuance state; null for funds on code from before v0.4. */
+  setup: FundSetup | null;
+  /** Manager-written profile fields (description, strategy, website); empty when none. */
+  metadata: FundMetadata;
+}
+
+export interface FundMetadata {
+  description?: string;
+  strategy?: string;
+  website?: string;
+}
+
+export interface FundSetup {
+  open: boolean;
+  /** Null until chosen; the contract treats an unchosen mandate as Locked. */
+  mandate: Mandate | null;
+  fee: { rateBps: number; lastAccrual: number } | null;
+  platformFee: { shareBps: number; recipient: string } | null;
+  feeRecipient: string;
+  lastRebalance: number | null;
 }
 
 interface FundState {
   id: string;
+  wasmHash: string | null;
+  platform: string;
   name: string;
   symbol: string;
   compliance: Compliance;
   manager: string;
   totalSupply: bigint;
+  storage: Map<string, unknown>;
+  metadata: FundMetadata;
   components: { token: string; initialUnits: bigint; held: bigint; reserved: bigint; shelf: ShelfStatus; fundAuthorized: boolean }[];
+}
+
+function wasmHashOf(instance: xdr.ScVal | undefined): string | null {
+  if (instance?.type !== "scvContractInstance") return null;
+  const executable = instance.instance.executable;
+  return executable.type === "contractExecutableWasm" ? Buffer.from(executable.wasmHash.toXDR()).toString("hex") : null;
 }
 
 const SHARE_SCALE = 10_000_000n;
 const unitTag = (value: unknown): string => (Array.isArray(value) ? String(value[0]) : String(value));
 const asBigInt = (value: unknown): bigint => (typeof value === "bigint" ? value : 0n);
 
+const isFundKey = (platform: string, id: string) => dataKey(platform, variantKey("IsFund", addressVal(id)));
+const metadataKey = (fund: string) => dataKey(fund, variantKey("Metadata"));
+
+function toMetadata(value: unknown): FundMetadata {
+  if (typeof value !== "object" || value === null) return {};
+  const out: FundMetadata = {};
+  for (const key of ["description", "strategy", "website"] as const) {
+    const field = Reflect.get(value, key);
+    if (typeof field === "string" && field.trim()) out[key] = field;
+  }
+  return out;
+}
+
 /**
  * Reads every fund's state in two batched ledger requests: first each fund's
- * config and platform registration, then every asset balance, owed reserve,
- * shelf status and issuer authorization those configs point at. Funds the
- * platform has not registered are dropped.
+ * config and its registration on each known platform, then every asset
+ * balance, owed reserve, shelf status, issuer authorization and profile
+ * those configs point at. Funds no known platform registered are dropped.
  */
 async function readFundStates(ids: string[]): Promise<FundState[]> {
-  const platform = requireDeployments().contracts.platform;
-  const isFundKey = (id: string) => dataKey(platform, variantKey("IsFund", addressVal(id)));
-  const first = await readEntries(ids.flatMap((id) => [instanceKey(id), isFundKey(id)]));
+  const platformIds = platforms.map((p) => p.id);
+  const first = await readEntries(ids.flatMap((id) => [instanceKey(id), ...platformIds.map((p) => isFundKey(p, id))]));
 
   const configs = ids
-    .filter((id) => native(first.get(keyId(isFundKey(id)))) === true)
-    .map((id) => ({ id, storage: instanceStorage(first.get(keyId(instanceKey(id)))) }))
-    .filter(({ storage }) => storage.size > 0);
+    .map((id) => {
+      const instance = first.get(keyId(instanceKey(id)));
+      const platform = platformIds.find((p) => native(first.get(keyId(isFundKey(p, id)))) === true);
+      return { id, platform, storage: instanceStorage(instance), wasmHash: wasmHashOf(instance) };
+    })
+    .filter((c): c is typeof c & { platform: string } => c.platform !== undefined && c.storage.size > 0);
 
   const balanceKey = (token: string, holder: string) => dataKey(token, variantKey("Balance", addressVal(holder)));
   const reservedKey = (fund: string, token: string) => dataKey(fund, variantKey("Reserved", addressVal(token)));
-  const shelfKey = (token: string) => dataKey(platform, variantKey("ShelfStatus", addressVal(token)));
+  const shelfKey = (platform: string, token: string) => dataKey(platform, variantKey("ShelfStatus", addressVal(token)));
   const componentsOf = (storage: Map<string, unknown>) =>
     (storage.get("Components") as { token: string; initial_units: bigint }[] | undefined) ?? [];
 
   const second = await readEntries(
-    configs.flatMap(({ id, storage }) =>
-      componentsOf(storage).flatMap((c) => [balanceKey(c.token, id), reservedKey(id, c.token), shelfKey(c.token)]),
-    ),
+    configs.flatMap(({ id, platform, storage }) => [
+      metadataKey(id),
+      ...componentsOf(storage).flatMap((c) => [balanceKey(c.token, id), reservedKey(id, c.token), shelfKey(platform, c.token)]),
+    ]),
   );
 
-  return configs.map(({ id, storage }) => ({
+  return configs.map(({ id, platform, storage, wasmHash }) => ({
     id,
+    wasmHash,
+    platform,
+    storage,
     name: String(storage.get("Name") ?? ""),
     symbol: String(storage.get("Symbol") ?? ""),
     compliance: unitTag(storage.get("Compliance")) as Compliance,
     manager: String(storage.get("Manager") ?? ""),
     totalSupply: asBigInt(storage.get("Supply")),
+    metadata: toMetadata(native(second.get(keyId(metadataKey(id))))),
     components: componentsOf(storage).map((c) => {
       const balance = native(second.get(keyId(balanceKey(c.token, id)))) as
         | { amount: bigint; authorized: boolean }
         | undefined;
-      const shelf = native(second.get(keyId(shelfKey(c.token))));
+      const shelf = native(second.get(keyId(shelfKey(platform, c.token))));
       return {
         token: c.token,
         initialUnits: c.initial_units,
@@ -493,12 +606,63 @@ async function readFundStates(ids: string[]): Promise<FundState[]> {
   }));
 }
 
+/** Instance keys only v0.4 fund code writes. */
+const V4_KEYS = ["Opened", "Mandate", "Fee", "FeeRecipient", "PlatformFee", "Losses", "LastRebalance", "Router"];
+
+const probeCache = new Map<string, Promise<boolean>>();
+
+/**
+ * Whether a fund runs v0.4 code. Released hashes answer directly; a fund on
+ * unlisted code that has written a v0.4 key is v0.4; anything else is probed
+ * once with an `is_open` simulation, which older code doesn't have.
+ */
+function runsV4(state: FundState): Promise<boolean> {
+  if (isLegacyFundCode(state.wasmHash)) return Promise.resolve(false);
+  if (V4_KEYS.some((key) => state.storage.has(key))) return Promise.resolve(true);
+  const key = state.wasmHash ?? state.id;
+  let probe = probeCache.get(key);
+  if (!probe) {
+    probe = fundClient(state.id)
+      .then((c) => read(c.is_open()))
+      .then(
+        () => true,
+        (err: unknown) => {
+          if (err instanceof ChainError) return false;
+          probeCache.delete(key);
+          throw err;
+        },
+      );
+    probeCache.set(key, probe);
+  }
+  return probe;
+}
+
+function toSetup(state: FundState): FundSetup {
+  const s = state.storage;
+  const fee = s.get("Fee") as { rate_bps: number; last_accrual: bigint } | undefined;
+  const platformFee = s.get("PlatformFee") as { share_bps: number; recipient: string } | undefined;
+  const mandate = s.get("Mandate");
+  const last = s.get("LastRebalance");
+  return {
+    open: s.has("Opened"),
+    mandate: mandate === undefined ? null : (unitTag(mandate) as Mandate),
+    fee: fee ? { rateBps: Number(fee.rate_bps), lastAccrual: Number(fee.last_accrual) } : null,
+    platformFee: platformFee ? { shareBps: Number(platformFee.share_bps), recipient: String(platformFee.recipient) } : null,
+    feeRecipient: String(s.get("FeeRecipient") ?? state.manager),
+    lastRebalance: typeof last === "bigint" ? Number(last) : null,
+  };
+}
+
 /** Mirrors the fund contract: holdings net of owed claims, units from holdings over supply. */
 async function toFund(state: FundState): Promise<Fund> {
+  const slot = platformSlot(state.platform);
+  const navContract = slot?.nav ?? null;
   const oracleNav = loadOracleNav(
+    navContract,
     state.id,
     state.components.map((c) => c.token),
   ).catch(() => null);
+  const v4 = runsV4(state).catch(() => false);
   const legs = await Promise.all(
     state.components.map(async (c): Promise<FundComponent> => {
       const info = await assetInfo(c.token);
@@ -521,7 +685,7 @@ async function toFund(state: FundState): Promise<Fund> {
   return {
     id: state.id,
     name: state.name,
-    symbol: Object.entries(deployments?.contracts.funds ?? {}).find(([, cid]) => cid === state.id)?.[0] ?? state.symbol,
+    symbol: Object.entries(slot?.launched ?? {}).find(([, cid]) => cid === state.id)?.[0] ?? state.symbol,
     compliance: state.compliance,
     totalSupply: state.totalSupply,
     components: legs,
@@ -533,6 +697,11 @@ async function toFund(state: FundState): Promise<Fund> {
     hasOracle: oracle !== null,
     awaitingIssuer: legs.filter((leg) => leg.fundAuthorized === false),
     manager: state.manager,
+    wasmHash: state.wasmHash,
+    platform: state.platform,
+    navContract,
+    setup: (await v4) ? toSetup(state) : null,
+    metadata: state.metadata,
   };
 }
 
@@ -543,7 +712,8 @@ async function loadFunds(ids: string[]): Promise<Fund[]> {
 
 const FUNDS_PAGE = 50;
 
-async function registeredFundIds(platform: Awaited<ReturnType<typeof platformClient>>): Promise<string[]> {
+async function registeredFundIds(platformId: string, launched: string[]): Promise<string[]> {
+  const platform = await platformClients(platformId);
   const count = await read(platform.fund_count());
   const pages = [];
   for (let start = 0; start < count; start += FUNDS_PAGE) {
@@ -552,18 +722,27 @@ async function registeredFundIds(platform: Awaited<ReturnType<typeof platformCli
   const registered = new Set((await Promise.all(pages)).flat());
   // Launch funds first, in launch order, then every fund managers created
   // since; only ids the platform itself registered.
-  const launched = Object.values(requireDeployments().contracts.funds).filter((id) => registered.has(id));
-  return [...launched, ...[...registered].filter((id) => !launched.includes(id))];
+  const first = launched.filter((id) => registered.has(id));
+  return [...first, ...[...registered].filter((id) => !first.includes(id))];
 }
 
 let fundsCache: Promise<Fund[]> | null = null;
 
-/** Every fund the platform recognizes. The platform's registry is the authority, never fund self-reports. */
+export function invalidateFunds() {
+  fundsCache = null;
+}
+
+/** Every fund the known platforms recognize. A platform's registry is the authority, never fund self-reports. */
 export function listFunds(fresh = false): Promise<Fund[]> {
   if (!fundsCache || fresh) {
-    const launched = Object.values(requireDeployments().contracts.funds);
-    fundsCache = withRetry(() => platformClient().then(registeredFundIds))
-      .catch(() => launched)
+    requireDeployments();
+    fundsCache = Promise.all(
+      platforms.map((slot) => {
+        const launched = Object.values(slot.launched);
+        return withRetry(() => registeredFundIds(slot.id, launched)).catch(() => launched);
+      }),
+    )
+      .then((lists) => [...new Set(lists.flat())])
       .then(loadFunds);
     fundsCache.catch(() => {
       fundsCache = null;
@@ -572,7 +751,7 @@ export function listFunds(fresh = false): Promise<Fund[]> {
   return fundsCache;
 }
 
-/** Resolves a route by contract ID, and only among funds the platform registered. */
+/** Resolves a route by contract ID, and only among funds a known platform registered. */
 export async function findFund(contractId: string, fresh = false): Promise<Fund | null> {
   const funds = await listFunds(fresh);
   return funds.find((f) => f.id === contractId) ?? null;
@@ -595,7 +774,7 @@ export interface Position {
   owed: { component: FundComponent; amount: bigint }[];
 }
 
-async function accountBalances(address: string) {
+export async function accountBalances(address: string) {
   try {
     const account = await horizon.accounts().accountId(address).call();
     return account.balances;
@@ -604,7 +783,7 @@ async function accountBalances(address: string) {
   }
 }
 
-function holdingFor(balances: Horizon.HorizonApi.BalanceLine[] | null, leg: AssetInfo): Holding {
+export function holdingFor(balances: Horizon.HorizonApi.BalanceLine[] | null, leg: AssetInfo): Holding {
   const base = { code: leg.code, token: leg.token };
   if (!balances) return { ...base, balance: 0n, hasTrustline: false, authorized: false };
   for (const line of balances) {
@@ -622,7 +801,7 @@ function holdingFor(balances: Horizon.HorizonApi.BalanceLine[] | null, leg: Asse
   return { ...base, balance: 0n, hasTrustline: false, authorized: false };
 }
 
-function toBaseUnits(amount: string): bigint {
+export function toBaseUnits(amount: string): bigint {
   const [whole = "0", frac = ""] = amount.split(".");
   return BigInt(whole) * ONE + BigInt(frac.padEnd(7, "0").slice(0, 7));
 }
@@ -763,7 +942,7 @@ export interface TxResult {
   url: string;
 }
 
-async function send<T>(tx: AT<T>): Promise<TxResult> {
+export async function send<T>(tx: AT<T>): Promise<TxResult> {
   const assembled = await tx;
   const simulation = assembled.simulation;
   if (simulation && rpc.Api.isSimulationError(simulation)) throw new ChainError(simulation.error);
@@ -817,22 +996,57 @@ export interface ShelfAsset extends AssetInfo {
   priceUsdc: number | null;
 }
 
-/** Every asset the platform admin has approved for funds, with its market price. */
-export async function loadShelf(): Promise<ShelfAsset[]> {
-  const platform = await platformClient();
+/**
+ * Every asset a platform's admin has listed, with its market price. Delisted
+ * tokens stay out unless `withUnlisted`, which the admin console uses.
+ */
+export async function loadShelf(platformId = requireCreationPlatform(), withUnlisted = false): Promise<ShelfAsset[]> {
+  const platform = await platformClients(platformId);
   const tokens = await withRetry(() => read(platform.shelf()));
+  const shelfKey = (token: string) => dataKey(platformId, variantKey("ShelfStatus", addressVal(token)));
+  const statuses = await withRetry(() => readEntries(tokens.map(shelfKey)));
   const assets = await Promise.all(
     tokens.map(async (token) => {
-      const [info, status] = await Promise.all([assetInfo(token), withRetry(() => read(platform.shelf_status({ token })))]);
-      return { ...info, status: status.tag, priceUsdc: await priceInUsdc(info.asset) };
+      const info = await assetInfo(token);
+      const status = native(statuses.get(keyId(shelfKey(token))));
+      return {
+        ...info,
+        status: (status === undefined ? "Unlisted" : unitTag(status)) as ShelfStatus,
+        priceUsdc: await priceInUsdc(info.asset),
+      };
     }),
   );
-  return assets.filter((a) => a.status !== "Unlisted");
+  return withUnlisted ? assets : assets.filter((a) => a.status !== "Unlisted");
 }
 
-export async function isManager(address: string): Promise<boolean> {
-  const platform = await platformClient();
+export async function isManager(address: string, platformId = requireCreationPlatform()): Promise<boolean> {
+  const platform = await platformClients(platformId);
   return withRetry(() => read(platform.is_manager({ manager: address })));
+}
+
+/**
+ * Whether a platform deploys v0.4 fund code, from the hash it stores. A hash
+ * outside the released list is taken as current code.
+ */
+export async function platformDeploysV4(platformId = requireCreationPlatform()): Promise<boolean> {
+  const entries = await withRetry(() => readEntries([instanceKey(platformId)]));
+  const wasm = instanceStorage(entries.get(keyId(instanceKey(platformId)))).get("FundWasm");
+  const hash = wasm instanceof Uint8Array ? Buffer.from(wasm).toString("hex") : null;
+  return hash !== null && !isLegacyFundCode(hash);
+}
+
+/** USD prices from the NAV contract for the tokens an oracle has a fresh price for. */
+export async function oraclePrices(tokens: string[], navId = creationPlatform?.nav ?? null): Promise<Map<string, number>> {
+  if (!navId) return new Map();
+  const nav = await navClient(navId);
+  const quotes = await Promise.all(
+    tokens.map((token) =>
+      read(nav.price({ token }))
+        .then((r) => [token, toQuote(r.unwrap()).priceUsd] as const)
+        .catch(() => null),
+    ),
+  );
+  return new Map(quotes.filter((q) => q !== null));
 }
 
 export interface NewFund {
@@ -844,7 +1058,7 @@ export interface NewFund {
 
 /** Deploys a fund through the platform; the connected wallet signs as its manager. */
 export async function createFund(address: string, spec: NewFund): Promise<TxResult & { fundId: string }> {
-  const platform = await platformClients(requireDeployments().contracts.platform, address);
+  const platform = await platformClients(requireCreationPlatform(), address);
   const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
   const tx = platform.create_fund({
     manager: address,
@@ -893,10 +1107,31 @@ export async function withdrawOwed(fund: Fund, address: string, token: string) {
 
 let kitReady = false;
 
+function walletConnectModule(): WalletConnectModule | null {
+  const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
+  if (!projectId) return null;
+  return new WalletConnectModule({
+    projectId,
+    metadata: {
+      name: "Alloy on Stellar",
+      description: "Onchain funds on Stellar",
+      url: "https://alloy-stellar.vercel.app",
+      icons: ["https://alloy-stellar.vercel.app/mark.svg"],
+    },
+    allowedChains: [isMainnet ? WalletConnectTargetChain.PUBLIC : WalletConnectTargetChain.TESTNET],
+  });
+}
+
 function initKit() {
   if (kitReady) return;
+  const walletConnect = walletConnectModule();
   StellarWalletsKit.init({
-    modules: [new FreighterModule(), new xBullModule(), new LobstrModule()],
+    modules: [
+      new FreighterModule(),
+      new xBullModule(),
+      new LobstrModule(),
+      ...(walletConnect ? [walletConnect] : []),
+    ],
     network: isMainnet ? KitNetworks.PUBLIC : KitNetworks.TESTNET,
     theme: {
       background: "var(--background)",
@@ -942,9 +1177,18 @@ export async function disconnectWallet(): Promise<void> {
   await StellarWalletsKit.disconnect();
 }
 
-async function signWithWallet(xdr: string, opts?: { networkPassphrase?: string; address?: string }) {
+export async function signWithWallet(xdr: string, opts?: { networkPassphrase?: string; address?: string }) {
   initKit();
   return StellarWalletsKit.signTransaction(xdr, {
+    networkPassphrase: opts?.networkPassphrase ?? endpoints.passphrase,
+    address: opts?.address,
+  });
+}
+
+/** Signs one Soroban authorization entry, for calls another account submits. */
+export async function signAuthEntryWithWallet(entry: string, opts?: { networkPassphrase?: string; address?: string }) {
+  initKit();
+  return StellarWalletsKit.signAuthEntry(entry, {
     networkPassphrase: opts?.networkPassphrase ?? endpoints.passphrase,
     address: opts?.address,
   });

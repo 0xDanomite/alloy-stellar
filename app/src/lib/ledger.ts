@@ -23,12 +23,21 @@ export function variantKey(name: string, ...fields: xdr.ScVal[]): xdr.ScVal {
 
 export const addressVal = (address: string) => new Address(address).toScVal();
 
-export function dataKey(contract: string, key: xdr.ScVal): xdr.LedgerKey {
+/** A `#[contracttype]` struct value: a map keyed by field name, fields in sorted order. */
+export function structVal(fields: Record<string, xdr.ScVal>): xdr.ScVal {
+  return xdr.ScVal.scvMap(
+    Object.keys(fields)
+      .sort()
+      .map((name) => new xdr.ScMapEntry({ key: symbol(name), val: fields[name] as xdr.ScVal })),
+  );
+}
+
+export function dataKey(contract: string, key: xdr.ScVal, temporary = false): xdr.LedgerKey {
   return xdr.LedgerKey.contractData(
     new xdr.LedgerKeyContractData({
       contract: new Address(contract).toScAddress(),
       key,
-      durability: xdr.ContractDataDurability.persistent,
+      durability: temporary ? xdr.ContractDataDurability.temporary : xdr.ContractDataDurability.persistent,
     }),
   );
 }
@@ -40,16 +49,23 @@ interface RawEntry {
   xdr: string;
 }
 
-async function getLedgerEntries(keys: string[]): Promise<RawEntry[]> {
+/** One JSON-RPC call to the network's Stellar RPC. */
+export async function rpcCall<T>(method: string, params?: unknown): Promise<T> {
   const response = await fetch(endpoints.rpcUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLedgerEntries", params: { keys } }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
-  if (!response.ok) throw new Error(`RPC getLedgerEntries failed with HTTP ${response.status}`);
-  const body: { result?: { entries?: RawEntry[] | null }; error?: { message: string } } = await response.json();
+  if (!response.ok) throw new Error(`RPC ${method} failed with HTTP ${response.status}`);
+  const body: { result?: T; error?: { message: string } } = await response.json();
   if (body.error) throw new Error(body.error.message);
-  return body.result?.entries ?? [];
+  if (body.result === undefined) throw new Error(`RPC ${method} returned no result`);
+  return body.result;
+}
+
+async function getLedgerEntries(keys: string[]): Promise<RawEntry[]> {
+  const result = await rpcCall<{ entries?: RawEntry[] | null }>("getLedgerEntries", { keys });
+  return result.entries ?? [];
 }
 
 /**
