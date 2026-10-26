@@ -122,6 +122,19 @@ simulates and needs no fee.
 | `price(token)` | USD price, timestamp, source, and divergence in bps when both oracles are fresh |
 | `nav(fund)` | Per-share value, each leg's units, price, value, source and age, and the fund total. Errors if any leg is unpriced |
 
+**Zap** (stateless, holds nothing; not yet deployed)
+
+| Function | Who | What |
+| --- | --- | --- |
+| `issue_with_usdc(investor, fund, shares, max_usdc, paths)` | investor | Takes up to `max_usdc`, buys each leg exact-out on Soroswap, issues `shares` to the investor, refunds the rest; returns USDC spent |
+| `redeem_to_usdc(owner, fund, shares, min_usdc, paths)` | owner | Redeems `shares` to the zap, sells each leg for USDC, pays the owner at least `min_usdc`; returns USDC paid |
+| `router()`, `usdc()` | anyone | The Soroswap router and USDC contract set at deploy |
+
+`paths` is one Soroswap route per non-USDC component, in `components()`
+order: USDC to the leg for issue, the leg to USDC for redeem, 2 to 4
+addresses. Errors: `InvalidPath` (1), `SlippageExceeded` (2),
+`InvalidAmount` (3), `MissingPath` (4), `Overflow` (5).
+
 ## Read NAV
 
 ```
@@ -179,6 +192,44 @@ stellar contract invoke --id CCBONNERPF2UQGMRTOJELOSA574VDY6XFRNKLLVBZNLLEULZ65U
 
 `redeem` takes no minimum-out. Per-share value can only fall between quote
 and execution through an issuer clawback or freeze.
+
+## Invest or cash out with USDC
+
+The zap does the swaps and the issue (or the redeem and the swaps) in one
+transaction, with one signature. It works for funds whose every non-USDC
+leg has a Soroswap pool: today XLM and USTRY, so aLQD (USDC, USTRY, XLM)
+but not funds holding USDY, CETES or BENJI. The investor must pass the
+fund's allowlist, if it has one; the zap does not need to.
+
+1. Read the components and the cost, and build one path per non-USDC leg in
+   `components()` order. For aLQD that is USTRY then XLM:
+   ```
+   stellar contract invoke --id CC5QR5OOQMCPVSL3SJMH7QESCFINWUMX3427CT4NIDBS3FRVDHAM4NAJ \
+     --source-account me --send=no -- quote_issue --shares 1000000
+   ```
+2. Simulate, check the USDC spent, then send the same call without
+   `--send=no` and with `--inclusion-fee 1000`. Set `max_usdc` a little
+   above the simulated spend; the rest is refunded.
+   ```
+   stellar contract invoke --id <ZAP> --source-account me --send=no -- \
+     issue_with_usdc --investor <YOUR_G_ADDRESS> \
+     --fund CC5QR5OOQMCPVSL3SJMH7QESCFINWUMX3427CT4NIDBS3FRVDHAM4NAJ \
+     --shares 1000000 --max_usdc 1100000 \
+     --paths '[["CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75","CBLV4ATSIWU67CFSQU2NVRKINQIKUZ2ODSZBUJTJ43VJVRSBTZYOPNUR"],["CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75","CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"]]'
+   ```
+3. Cash out the same way, with the paths reversed and `min_usdc` a little
+   under the simulated payout:
+   ```
+   stellar contract invoke --id <ZAP> --source-account me --send=no -- \
+     redeem_to_usdc --owner <YOUR_G_ADDRESS> \
+     --fund CC5QR5OOQMCPVSL3SJMH7QESCFINWUMX3427CT4NIDBS3FRVDHAM4NAJ \
+     --shares 1000000 --min_usdc 1000000 \
+     --paths '[["CBLV4ATSIWU67CFSQU2NVRKINQIKUZ2ODSZBUJTJ43VJVRSBTZYOPNUR","CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"],["CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA","CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"]]'
+   ```
+
+`SlippageExceeded` means the basket cost more than `max_usdc` or paid less
+than `min_usdc`. The zap cannot skip a frozen leg; use `redeem` with
+`--skip` for that.
 
 ## Create a fund
 
