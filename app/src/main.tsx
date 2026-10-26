@@ -7,6 +7,7 @@ import { WalletProvider } from "./lib/wallet";
 import { Landing } from "./pages/Landing";
 import { FundPage } from "./pages/FundPage";
 import { Built } from "./pages/Built";
+import { CreatePage } from "./pages/CreatePage";
 import { NotFound } from "./pages/NotFound";
 
 const router = createBrowserRouter([
@@ -15,6 +16,7 @@ const router = createBrowserRouter([
     children: [
       { path: "/", element: <Landing /> },
       { path: "/fund/:id", element: <FundPage /> },
+      { path: "/create", element: <CreatePage /> },
       { path: "/built", element: <Built /> },
       { path: "*", element: <NotFound /> },
     ],

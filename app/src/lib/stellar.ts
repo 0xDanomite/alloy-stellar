@@ -7,6 +7,7 @@ import {
   contract,
   rpc,
 } from "@stellar/stellar-sdk";
+import { Buffer } from "buffer";
 import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
 import { Networks as KitNetworks } from "@creit.tech/stellar-wallets-kit/types";
 import { FreighterModule } from "@creit.tech/stellar-wallets-kit/modules/freighter";
@@ -41,6 +42,16 @@ interface PlatformMethods {
   fund_count(): AT<number>;
   funds(args: { start: number; limit: number }): AT<string[]>;
   shelf_status(args: { token: string }): AT<Tagged<ShelfStatus>>;
+  shelf(): AT<string[]>;
+  is_manager(args: { manager: string }): AT<boolean>;
+  create_fund(args: {
+    manager: string;
+    name: string;
+    symbol: string;
+    components: { token: string; initial_units: bigint }[];
+    compliance: Tagged<Compliance>;
+    salt: Buffer;
+  }): AT<string>;
 }
 
 interface FundMethods {
@@ -59,6 +70,8 @@ interface FundMethods {
   issue(args: { investor: string; to: string; shares: bigint }): AT<bigint[]>;
   redeem(args: { from: string; to: string; shares: bigint; skip: string[] }): AT<bigint[]>;
   withdraw_owed(args: { owner: string; to: string; token: string }): AT<bigint>;
+  set_compliance(args: { compliance: Tagged<Compliance> }): AT<null>;
+  set_investor(args: { investor: string; allowed: boolean }): AT<null>;
 }
 
 interface NavQuoteRaw {
@@ -406,6 +419,7 @@ export interface Fund {
   navTotal: number | null;
   hasOracle: boolean;
   awaitingIssuer: FundComponent[];
+  manager: string;
 }
 
 interface FundState {
@@ -413,6 +427,7 @@ interface FundState {
   name: string;
   symbol: string;
   compliance: Compliance;
+  manager: string;
   totalSupply: bigint;
   components: { token: string; initialUnits: bigint; held: bigint; reserved: bigint; shelf: ShelfStatus; fundAuthorized: boolean }[];
 }
@@ -454,6 +469,7 @@ async function readFundStates(ids: string[]): Promise<FundState[]> {
     name: String(storage.get("Name") ?? ""),
     symbol: String(storage.get("Symbol") ?? ""),
     compliance: unitTag(storage.get("Compliance")) as Compliance,
+    manager: String(storage.get("Manager") ?? ""),
     totalSupply: asBigInt(storage.get("Supply")),
     components: componentsOf(storage).map((c) => {
       const balance = native(second.get(keyId(balanceKey(c.token, id)))) as
@@ -511,6 +527,7 @@ async function toFund(state: FundState): Promise<Fund> {
     navTotal: oracle?.total ?? null,
     hasOracle: oracle !== null,
     awaitingIssuer: legs.filter((leg) => leg.fundAuthorized === false),
+    manager: state.manager,
   };
 }
 
@@ -540,9 +557,9 @@ let fundsCache: Promise<Fund[]> | null = null;
 export function listFunds(fresh = false): Promise<Fund[]> {
   if (!fundsCache || fresh) {
     const launched = Object.values(requireDeployments().contracts.funds);
-    fundsCache = (launched.length ? Promise.resolve(launched) : withRetry(() => platformClient().then(registeredFundIds))).then(
-      loadFunds,
-    );
+    fundsCache = withRetry(() => platformClient().then(registeredFundIds))
+      .catch(() => launched)
+      .then(loadFunds);
     fundsCache.catch(() => {
       fundsCache = null;
     });
@@ -788,6 +805,65 @@ export async function unreceivableLegs(fund: Fund, address: string, failure?: Ch
   });
   if (blocked.length || !failure) return blocked;
   return fund.components.filter((leg) => failure.raw.includes(leg.token));
+}
+
+export interface ShelfAsset extends AssetInfo {
+  status: ShelfStatus;
+  priceUsdc: number | null;
+}
+
+/** Every asset the platform admin has approved for funds, with its market price. */
+export async function loadShelf(): Promise<ShelfAsset[]> {
+  const platform = await platformClient();
+  const tokens = await withRetry(() => read(platform.shelf()));
+  const assets = await Promise.all(
+    tokens.map(async (token) => {
+      const [info, status] = await Promise.all([assetInfo(token), withRetry(() => read(platform.shelf_status({ token })))]);
+      return { ...info, status: status.tag, priceUsdc: await priceInUsdc(info.asset) };
+    }),
+  );
+  return assets.filter((a) => a.status !== "Unlisted");
+}
+
+export async function isManager(address: string): Promise<boolean> {
+  const platform = await platformClient();
+  return withRetry(() => read(platform.is_manager({ manager: address })));
+}
+
+export interface NewFund {
+  name: string;
+  symbol: string;
+  compliance: Compliance;
+  components: { token: string; initialUnits: bigint }[];
+}
+
+/** Deploys a fund through the platform; the connected wallet signs as its manager. */
+export async function createFund(address: string, spec: NewFund): Promise<TxResult & { fundId: string }> {
+  const platform = await platformClients(requireDeployments().contracts.platform, address);
+  const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
+  const tx = platform.create_fund({
+    manager: address,
+    name: spec.name,
+    symbol: spec.symbol,
+    components: spec.components.map((c) => ({ token: c.token, initial_units: c.initialUnits })),
+    compliance: { tag: spec.compliance },
+    salt,
+  });
+  const assembled = await tx;
+  const fundId = assembled.result;
+  const sent = await send(Promise.resolve(assembled));
+  fundsCache = null;
+  return { ...sent, fundId };
+}
+
+export async function setCompliance(fund: Fund, address: string, compliance: Compliance) {
+  const result = await send((await fundClient(fund.id, address)).set_compliance({ compliance: { tag: compliance } }));
+  fundsCache = null;
+  return result;
+}
+
+export async function setInvestor(fund: Fund, address: string, investor: string, allowed: boolean) {
+  return send((await fundClient(fund.id, address)).set_investor({ investor, allowed }));
 }
 
 export async function withdrawOwed(fund: Fund, address: string, token: string) {

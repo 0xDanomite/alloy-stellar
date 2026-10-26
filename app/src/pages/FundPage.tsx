@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { AssetDot, complianceLabel, FundAvatar, headlineValue, HoldsChips, IssuerFlags, IssuerName, OracleNote } from "../components/fund-bits";
 import { ArrowLeft } from "../components/icons";
 import { InvestPanel } from "../components/InvestPanel";
+import { ManagePanel } from "../components/ManagePanel";
 import { RedeemPanel } from "../components/RedeemPanel";
 import { CopyId, Figure, Usd } from "../components/ui";
 import { deployments, expert } from "../lib/config";
@@ -119,7 +120,9 @@ export function FundPage() {
     f && address ? `${f.id}:${address}` : null,
     version,
   );
-  const [tab, setTab] = useState<"invest" | "redeem">("invest");
+  const [tab, setTab] = useState<"invest" | "redeem" | "manage">("invest");
+  const isManager = Boolean(f && address && f.manager === address);
+  const tabs = isManager ? (["invest", "redeem", "manage"] as const) : (["invest", "redeem"] as const);
   const refresh = () => setVersion((v) => v + 1);
 
   if (fund.data === null) return <NotFound message="The Alloy platform has no fund at this address." />;
@@ -238,8 +241,8 @@ export function FundPage() {
 
         <aside className="lg:sticky lg:top-24 lg:self-start">
           <div className="panel rounded-2xl shadow-overlay">
-            <div className="grid grid-cols-2 border-b p-1.5" role="tablist">
-              {(["invest", "redeem"] as const).map((t) => (
+            <div className={`grid border-b p-1.5 ${isManager ? "grid-cols-3" : "grid-cols-2"}`} role="tablist">
+              {tabs.map((t) => (
                 <button
                   key={t}
                   role="tab"
@@ -248,13 +251,15 @@ export function FundPage() {
                   onClick={() => setTab(t)}
                   className={`rounded-full py-2 text-label ${tab === t ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                 >
-                  {t === "invest" ? "Invest" : "Redeem"}
+                  {t === "invest" ? "Invest" : t === "redeem" ? "Redeem" : "Manage"}
                 </button>
               ))}
             </div>
             <div className="p-5">
               {!f ? (
                 <div className="skeleton h-40 w-full" />
+              ) : tab === "manage" ? (
+                <ManagePanel fund={f} onChanged={refresh} />
               ) : tab === "invest" ? (
                 <InvestPanel fund={f} position={position.data ?? null} onChanged={refresh} />
               ) : (

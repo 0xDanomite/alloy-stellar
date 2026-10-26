@@ -7,19 +7,21 @@ Stellar's tokenized treasuries, stablecoins and money-market funds,
 priced on chain by RedStone and Reflector, and redeemable for the assets
 underneath at any time.
 
-**Live app:** _deploying_ · **Pitch deck:** _coming_ · **New code since arrival:** [arrival...v0.2.0](https://github.com/0xDanomite/alloy-stellar/compare/arrival...v0.2.0)
+**Live app:** [alloy-stellar.vercel.app](https://alloy-stellar.vercel.app) · **Create a fund:** [/create](https://alloy-stellar.vercel.app/create) · **Pitch deck:** [deck](https://claude.ai/artifact/D2Epdk9Z7XFDSz6Qg8Y7iG) · **New code since arrival:** [arrival...submission](https://github.com/0xDanomite/alloy-stellar/compare/arrival...submission)
+
+**Tracks:** Scale, Stellar Composed (Soroban contracts + SDEX path payments + RedStone and Reflector oracles + Stellar Wallets Kit)
 
 ## At a glance
 
 | | In one line | Proof |
 | --- | --- | --- |
 | What we started with | Alloy live in production on Robinhood Chain and Polygon; nothing on Stellar | [alloy.neevstack.com](https://alloy.neevstack.com), [`arrival` tag](https://github.com/0xDanomite/alloy-stellar/tree/arrival) |
-| What we built at HackMeridian | Fund, platform and oracle NAV contracts, a CLI, an app, and a mainnet launch | [arrival...v0.2.0](https://github.com/0xDanomite/alloy-stellar/compare/arrival...v0.2.0) |
+| What we built at HackMeridian | Fund, platform and oracle NAV contracts, a CLI, an app where managers create and run funds from their wallet, and a mainnet launch | [arrival...submission](https://github.com/0xDanomite/alloy-stellar/compare/arrival...submission) |
 | The problem we solve | Tokenized assets on Stellar come one per wrapper; managers can't hand a client one share of a portfolio | [How it works](docs/how-it-works.md) |
 | What we bring to Stellar | A multi-asset fund layer built for permissioned assets, ported from our EVM product | [Platform contract](https://stellar.expert/explorer/public/contract/CDV2FJ4J2IIFSUREC5VAHINVCSVZGOMIMXJHA32XD7H2CMY6DNXD6KDM) |
 | What makes it different | Issuer rails: funds that hold assets like BENJI, survive clawbacks, and never lock redemption | [Clawback drill on mainnet](https://stellar.expert/explorer/public/tx/f692a96a8aa7e1ec742ecb4fe1efbaef54e2c81bb5150d39e428e5949f893fa0) |
 | How it works | Soroban contracts hold the basket; NAV from RedStone and Reflector; SDEX path payments buy it | [aTRSY issue](https://stellar.expert/explorer/public/tx/94489b5be5bdba25d51a29212a2d96075f74de2eb2ad46be468767ad50eb7c66) |
-| Using the product | Pick a fund, buy the basket, deposit, hold one token, redeem any time | App (testnet and mainnet in one switch) |
+| Using the product | Managers create a fund from the shelf; investors buy the basket, deposit, hold one token, redeem any time | [alloy-stellar.vercel.app](https://alloy-stellar.vercel.app) |
 | Business model & traction | Platform for managers and issuers; live EVM venues today | [alloy.neevstack.com](https://alloy.neevstack.com) |
 
 ## What We Started With
@@ -52,6 +54,7 @@ redeem on Stellar mainnet.
 | Verifiable builds: CI builds tagged releases from source and attests them (SEP-0055); deploys use only those binaries | [release workflow](.github/workflows/release.yml), [v0.2.0](https://github.com/0xDanomite/alloy-stellar/releases/tag/v0.2.0) |
 | CLI for the whole journey, mainnet and testnet | [scripts/alloy.sh](scripts/alloy.sh), [scripts/mainnet-launch.sh](scripts/mainnet-launch.sh) |
 | App: funds, oracle NAV, buy-the-basket, redeem, testnet/mainnet switch | [app](app) |
+| Create and manage funds from the wallet: approved managers pick shelf assets and units per share, preview launch NAV, deploy with one signature, then switch access and approve investors | [create page](app/src/pages/CreatePage.tsx), [commit](https://github.com/0xDanomite/alloy-stellar/commit/65a3815) |
 
 What we learned about Stellar:
 
@@ -180,6 +183,13 @@ Details: [docs/how-it-works.md](docs/how-it-works.md).
 **Pick a fund, buy the basket, deposit, and hold one token you can redeem
 any time.**
 
+**Managers:** open [Create fund](https://alloy-stellar.vercel.app/create),
+connect an approved manager wallet, tick assets from the shelf, set what one
+share holds, and sign. The fund deploys as its own contract and appears in
+the app. Its Manage tab switches who may invest and approves investors.
+
+**Investors:**
+
 1. Open the app and pick a fund. Each asset in it shows its oracle price,
    that price's source and age, and the live market price as a
    cross-check.
@@ -205,10 +215,15 @@ The switch in the header moves between mainnet and testnet.
 - **Next steps:**
   1. An independent audit.
   2. Streaming fees and a timelocked admin.
-  3. Manager rebalancing through Soroswap, with minimums checked against
-     the oracles.
-  4. Issuer authorizations, starting with BENJI.
-  5. Private, ZK-verified investor allowlists.
+  3. Agent-run funds: a manager agent with a policy (target weights, drift
+     bands, oracle-checked minimums, spend limits) rebalances through
+     Soroswap's aggregator, which can now execute swaps on an agent's behalf.
+     The manager sets the rules; the agent runs them; investors can still
+     always redeem.
+  4. Fund-share NAV as a SEP-40 price feed, and an aTRSY/USDC pool, so fund
+     shares work as collateral across Stellar DeFi.
+  5. Issuer authorizations, starting with BENJI.
+  6. Private, ZK-verified investor allowlists.
 
 ## Run It
 

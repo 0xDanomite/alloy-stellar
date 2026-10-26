@@ -36,6 +36,14 @@ export function Layout() {
           <NetworkSwitch />
           <nav className="ml-auto flex items-center gap-0.5 sm:gap-1">
             <NavLink
+              to="/create"
+              className={({ isActive }) =>
+                `rounded-md px-3 py-2 text-label hover:bg-secondary ${isActive ? "text-foreground" : "text-muted-foreground"}`
+              }
+            >
+              Create fund
+            </NavLink>
+            <NavLink
               to="/built"
               className={({ isActive }) =>
                 `hidden rounded-md px-3 py-2 text-label hover:bg-secondary sm:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
