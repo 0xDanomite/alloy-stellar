@@ -90,3 +90,56 @@ export const Bell = (p: { className?: string }) => (
     <path d="M10 20.5a2 2 0 0 0 4 0" />
   </Icon>
 );
+
+export const Percent = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M19 5 5 19" />
+    <circle cx="7" cy="7" r="2.5" />
+    <circle cx="17" cy="17" r="2.5" />
+  </Icon>
+);
+
+export const Eye = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Icon>
+);
+
+export const Wallet = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3" />
+    <rect x="4" y="8" width="16" height="11" rx="2.5" />
+    <path d="M16 13.5h1.5" />
+  </Icon>
+);
+
+export const Coins = (p: { className?: string }) => (
+  <Icon {...p}>
+    <ellipse cx="9" cy="7" rx="5.5" ry="2.5" />
+    <path d="M3.5 7v4c0 1.4 2.5 2.5 5.5 2.5M3.5 11v4c0 1.4 2.5 2.5 5.5 2.5" />
+    <ellipse cx="15" cy="13" rx="5.5" ry="2.5" />
+    <path d="M9.5 13v4c0 1.4 2.5 2.5 5.5 2.5s5.5-1.1 5.5-2.5v-4" />
+  </Icon>
+);
+
+export const Clock = (p: { className?: string }) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" />
+  </Icon>
+);
+
+export const Exit = (p: { className?: string }) => (
+  <Icon {...p}>
+    <path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14" />
+    <path d="M10 8l-4 4 4 4M6 12h10" />
+  </Icon>
+);
+
+export const Key = (p: { className?: string }) => (
+  <Icon {...p}>
+    <circle cx="8" cy="15" r="4" />
+    <path d="m11 12 8.5-8.5M16 7l2.5 2.5M14 9l2 2" />
+  </Icon>
+);

@@ -315,6 +315,12 @@ export function Landing() {
             ]}
           />
         </div>
+        <div className="mt-6 text-center">
+          <Link to="/how" className="inline-flex min-h-10 items-center gap-2 rounded-full border px-4 text-label hover:bg-secondary">
+            See the whole system
+            <ArrowRight className="size-4" />
+          </Link>
+        </div>
       </section>
 
       <section className="mx-auto max-w-6xl px-4 pt-24 sm:px-6">
