@@ -2,7 +2,7 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 import { links, oracles } from "../lib/config";
 import { shortId } from "../lib/format";
 import { useWallet } from "../lib/wallet";
-import { AlloyMark, Button, NetworkSwitch, ThemeToggle } from "./ui";
+import { AlloyMark, Button, ThemeToggle } from "./ui";
 
 function WalletButton() {
   const { address, connecting, connect, disconnect } = useWallet();
@@ -33,7 +33,6 @@ export function Layout() {
             <AlloyMark className="h-[18px] w-auto" />
             <span className="hidden text-[0.9375rem] font-semibold tracking-[0.18em] min-[420px]:inline">ALLOY</span>
           </Link>
-          <NetworkSwitch />
           <nav className="ml-auto flex items-center gap-0.5 sm:gap-1">
             <NavLink
               to="/create"

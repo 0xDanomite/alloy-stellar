@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { availableNetworks, expert, network, switchNetwork, type Network } from "../lib/config";
+import { expert } from "../lib/config";
 import { shortId } from "../lib/format";
 
 const MARK_PATH =
@@ -18,51 +18,6 @@ export function AlloyMark({ className }: { className?: string }) {
       </defs>
       <path d={MARK_PATH} fill={`url(#${id})`} />
     </svg>
-  );
-}
-
-const NETWORK_LABEL: Record<Network, { short: string; long: string }> = {
-  mainnet: { short: "Mainnet", long: "Live on Stellar Mainnet" },
-  testnet: { short: "Testnet", long: "Testnet" },
-};
-
-/** The header's network control: a two-way switch when both deployments exist. */
-export function NetworkSwitch() {
-  const dot = (n: Network) => (n === "mainnet" ? "bg-gold" : "bg-primary");
-  if (availableNetworks.length < 2) {
-    return (
-      <span className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-label whitespace-nowrap">
-        <span className={`size-2 rounded-full ${dot(network)}`} aria-hidden />
-        <span className="sm:hidden">{NETWORK_LABEL[network].short}</span>
-        <span className="hidden sm:inline">{NETWORK_LABEL[network].long}</span>
-      </span>
-    );
-  }
-  return (
-    <div role="radiogroup" aria-label="Network" className="inline-flex rounded-full border bg-card p-0.5 text-label">
-      {availableNetworks.map((n) => {
-        const active = n === network;
-        return (
-          <button
-            key={n}
-            role="radio"
-            aria-checked={active}
-            onClick={() => !active && switchNetwork(n)}
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 whitespace-nowrap transition-colors sm:gap-2 sm:px-3 ${
-              active
-                ? n === "mainnet"
-                  ? "bg-gold text-gold-foreground"
-                  : "bg-secondary text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <span className={`size-2 rounded-full ${active && n === "mainnet" ? "bg-gold-foreground" : dot(n)}`} aria-hidden />
-            <span className="sm:hidden">{NETWORK_LABEL[n].short}</span>
-            <span className="hidden sm:inline">{active ? NETWORK_LABEL[n].long : NETWORK_LABEL[n].short}</span>
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
