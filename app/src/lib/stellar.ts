@@ -550,10 +550,10 @@ async function registeredFundIds(platform: Awaited<ReturnType<typeof platformCli
     pages.push(read(platform.funds({ start, limit: FUNDS_PAGE })));
   }
   const registered = new Set((await Promise.all(pages)).flat());
-  // Show the funds this deployment launched, in launch order, and only those
-  // the platform itself registered.
-  const launched = Object.values(requireDeployments().contracts.funds);
-  return launched.length ? launched.filter((id) => registered.has(id)) : [...registered];
+  // Launch funds first, in launch order, then every fund managers created
+  // since; only ids the platform itself registered.
+  const launched = Object.values(requireDeployments().contracts.funds).filter((id) => registered.has(id));
+  return [...launched, ...[...registered].filter((id) => !launched.includes(id))];
 }
 
 let fundsCache: Promise<Fund[]> | null = null;
