@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { complianceLabel, FundAvatar, headlineValue, HoldsChips } from "../components/fund-bits";
+import { complianceLabel, FundAvatar, FundBlurb, headlineValue, HoldsChips } from "../components/fund-bits";
 import { changeTone, formatPct } from "../components/NavChart";
 import { Usd } from "../components/ui";
 import { deployments, network } from "../lib/config";
@@ -23,6 +23,7 @@ function matches(fund: Fund, query: string): boolean {
   return (
     fund.name.toLowerCase().includes(q) ||
     fund.symbol.toLowerCase().includes(q) ||
+    (fund.metadata.description ?? "").toLowerCase().includes(q) ||
     fund.components.some((leg) => leg.code.toLowerCase() === q)
   );
 }
@@ -51,7 +52,9 @@ function FundRow({ fund, histories }: { fund: Fund; histories: Map<string, Asset
           <div className="mt-0.5 flex flex-wrap items-center gap-2">
             <span className="text-filing text-muted-foreground">{fund.symbol}</span>
             <span className="text-[0.75rem] text-muted-foreground">{complianceLabel(fund)}</span>
+            {fund.setup && !fund.setup.open && <span className="text-[0.75rem] text-warning">not open yet</span>}
           </div>
+          <FundBlurb fund={fund} className="mt-1 line-clamp-2 text-[0.8125rem] leading-snug" />
         </div>
       </div>
 

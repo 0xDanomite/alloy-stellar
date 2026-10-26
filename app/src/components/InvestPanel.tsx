@@ -77,6 +77,10 @@ export function InvestPanel({ fund, position, onChanged }: { fund: Fund; positio
         <p className="rounded-md bg-warning-surface px-3 py-2.5 text-[0.875rem]">
           Waiting on issuer authorization: issuing opens when the issuer authorizes this fund's address.
         </p>
+      ) : fund.setup && !fund.setup.open ? (
+        <p className="rounded-md bg-secondary px-3 py-2.5 text-[0.875rem]">
+          The manager is still setting this fund up. Investing opens once they've fixed its fee and mandate, which can't change after.
+        </p>
       ) : !address ? (
         <Button className="w-full" onClick={connect} busy={connecting}>
           Connect wallet to invest

@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
-import { deployments, expert, fundRelease, links } from "../lib/config";
+import { expert, fundRelease, links } from "../lib/config";
+import { formatBps } from "../lib/fee-math";
+import { MANDATES, mandateOf } from "./fund-bits";
 import { shortId } from "../lib/format";
 import type { Fund } from "../lib/stellar";
 import { Lock, Shield } from "./icons";
@@ -19,8 +21,9 @@ function Fact({ term, children, note }: { term: string; children: ReactNode; not
 
 export function TrustPanel({ fund }: { fund: Fund }) {
   const release = fundRelease(fund.wasmHash);
-  const platform = deployments?.contracts.platform;
-  const nav = deployments?.contracts.nav;
+  const platform = fund.platform;
+  const nav = fund.navContract;
+  const mandate = mandateOf(fund);
   return (
     <div className="panel overflow-hidden rounded-2xl">
       <div className="flex items-start gap-3 border-b bg-surface-sunken/60 px-5 py-4">
@@ -59,6 +62,25 @@ export function TrustPanel({ fund }: { fund: Fund }) {
         <Fact term="Fund contract">
           <CopyId id={fund.id} />
         </Fact>
+        {mandate && fund.setup && (
+          <Fact term="Mandate" note={`${MANDATES[mandate].detail} ${fund.setup.open ? "Fixed for good." : "Fixed once the fund opens."}`}>
+            {MANDATES[mandate].label}
+          </Fact>
+        )}
+        {fund.setup && (
+          <Fact
+            term="Management fee"
+            note={
+              fund.setup.fee && fund.setup.fee.rateBps > 0
+                ? `Paid by minting new shares, so it dilutes holders and never moves an asset out of the fund.${fund.setup.platformFee ? ` The platform takes ${formatBps(fund.setup.platformFee.shareBps)} of it.` : ""} It can never change.`
+                : fund.setup.open
+                  ? "The fund opened without a fee, and one can never be added."
+                  : "The manager sets it, if at all, before the fund opens."
+            }
+          >
+            <span className="num">{fund.setup.fee && fund.setup.fee.rateBps > 0 ? `${formatBps(fund.setup.fee.rateBps)} a year` : "None"}</span>
+          </Fact>
+        )}
         <Fact term="Manager" note="Can rebalance the basket within a 1% oracle bound and manage the allowlist. Cannot pause redemption or change the code.">
           <CopyId id={fund.manager} kind="account" />
         </Fact>

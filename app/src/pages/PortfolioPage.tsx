@@ -70,7 +70,7 @@ function AttentionList({ items }: { items: Attention[] }) {
               to={`/fund/${item.fund.id}${item.tab ? `?tab=${item.tab}` : ""}`}
               className="shrink-0 rounded-full border bg-card px-3 py-1.5 text-label hover:bg-secondary"
             >
-              {item.kind === "owed" ? "Withdraw" : "Open fund"}
+              {item.kind === "owed" ? "Withdraw" : item.kind === "setup" ? "Finish setup" : "Open fund"}
             </Link>
           </li>
         ))}
