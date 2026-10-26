@@ -169,6 +169,12 @@ cmd_create_fund() {
 
 fund_id() { get ".contracts.funds[\"$1\"]"; }
 
+# set-nav FUND_CONTRACT : the platform admin points a fund's rebalance bound at the NAV oracle
+cmd_set_nav() {
+  invoke "set nav $1" "$1" "$ADMIN_IDENTITY" set_nav --nav "$(get .contracts.nav)" >/dev/null
+  echo "nav set on $EXPERT/contract/$1"
+}
+
 # authorize-fund SYMBOL CODE : the issuer lets the fund contract hold its asset
 cmd_authorize_fund() {
   local fund asset_contract issuer_identity
@@ -337,6 +343,7 @@ case "$command" in
   redeem) cmd_redeem "$@" ;;
   clawback-drill) cmd_clawback_drill "$@" ;;
   status) cmd_status "$@" ;;
+  set-nav) cmd_set_nav "$@" ;;
   nav-deploy) cmd_nav_deploy ;;
   nav-route) cmd_nav_route "$@" ;;
   mainnet-nav-routes) cmd_mainnet_nav_routes ;;

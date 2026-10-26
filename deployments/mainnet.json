@@ -281,9 +281,19 @@
       "label": "nav route BENJI",
       "hash": "f160ce25662a71236984e20d3f7a3938131c44f6c944b68b2f9c65af53c64999",
       "url": "https://stellar.expert/explorer/public/tx/f160ce25662a71236984e20d3f7a3938131c44f6c944b68b2f9c65af53c64999"
+    },
+    {
+      "label": "upload fund wasm",
+      "hash": "85ef46e5ed027e655a3139bf8f8aa0e12c6bf72d1b12368a438d6e8d498340ff",
+      "url": "https://stellar.expert/explorer/public/tx/85ef46e5ed027e655a3139bf8f8aa0e12c6bf72d1b12368a438d6e8d498340ff"
+    },
+    {
+      "label": "set fund wasm",
+      "hash": "28f8cd13d8fddfabfe1cf37ec1bcb8057a311deb385715f96e3fcdd3747da468",
+      "url": "https://stellar.expert/explorer/public/tx/28f8cd13d8fddfabfe1cf37ec1bcb8057a311deb385715f96e3fcdd3747da468"
     }
   ],
-  "fund_wasm": "32677e1a2abdbfb57c0f2da513aeed864aa081d604b192cde062f859ff4c446d",
+  "fund_wasm": "e783b595d4a15c50da44d3a701d2806b64987e01dd1cc041a1c04266efbcd422",
   "admin": "GDZOF2M4U5UTJRU2SX2MWZMNXTCNGN4V5B7WLEQCZTS4NFO3SFV7XGQN",
   "release": "v0.2.0",
   "shelf_done": true,

@@ -72,6 +72,8 @@ interface FundMethods {
   withdraw_owed(args: { owner: string; to: string; token: string }): AT<bigint>;
   set_compliance(args: { compliance: Tagged<Compliance> }): AT<null>;
   set_investor(args: { investor: string; allowed: boolean }): AT<null>;
+  nav(): AT<string | undefined>;
+  rebalance(args: { sell: string; sold: bigint; buy: string; bought: bigint }): AT<null>;
 }
 
 interface NavQuoteRaw {
@@ -181,6 +183,9 @@ const FUND_ERRORS: Record<number, string> = {
   10: "One of the skipped assets isn't part of this fund.",
   11: "That amount is too large.",
   14: "The fund is holding that asset for earlier redemptions, so it can't be paid out right now.",
+  15: "This fund has no oracle set for rebalancing yet.",
+  16: "That trade gives up more than 1% of value at oracle prices. Ask for more of the asset you're buying.",
+  17: "Pick two different assets.",
 };
 
 function explainRaw(raw: string): string {
@@ -864,6 +869,21 @@ export async function setCompliance(fund: Fund, address: string, compliance: Com
 
 export async function setInvestor(fund: Fund, address: string, investor: string, allowed: boolean) {
   return send((await fundClient(fund.id, address)).set_investor({ investor, allowed }));
+}
+
+/** The oracle bounding this fund's rebalances, or null for funds deployed before rebalancing shipped. */
+export async function rebalanceOracle(fund: Fund): Promise<string | null> {
+  try {
+    return (await read((await fundClient(fund.id)).nav())) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function rebalance(fund: Fund, address: string, sell: string, sold: bigint, buy: string, bought: bigint) {
+  const result = await send((await fundClient(fund.id, address)).rebalance({ sell, sold, buy, bought }));
+  fundsCache = null;
+  return result;
 }
 
 export async function withdrawOwed(fund: Fund, address: string, token: string) {
