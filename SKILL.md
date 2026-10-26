@@ -81,13 +81,15 @@ simulates and needs no fee.
 | `set_compliance(Open \| Allowlist)` | manager | `Open` only if every component is `Open` on the shelf |
 | `rebalance(sell, sold, buy, bought)` | manager | Swap one component for another inside the fund, bounded by oracle prices |
 | `set_nav(nav)` | platform admin | The oracle that bounds rebalances |
-| `set_mandate(Locked \| Managed)`, `mandate()` | manager, once, before the first share | `Locked` (the default) fixes the basket; `Managed` allows rebalances and `add_component` |
+| `open_for_issue()`, `is_open()` | manager, once | Ends setup; `issue` fails with `IssuanceClosed` before it |
+| `set_mandate(Locked \| Managed)`, `mandate()` | manager, once, before `open_for_issue` | `Locked` (the default) fixes the basket; `Managed` allows rebalances and `add_component` |
 | `add_component(token)` | manager, `Managed` only | Adds a shelf asset at zero units; a permissioned one needs `Allowlist` |
-| `init_fee(rate_bps)` | manager, once, before the first share | Annual management fee, at most 500 bps, streamed as newly minted shares |
+| `init_fee(rate_bps)` | manager, once, before `open_for_issue` | Annual management fee, at most 500 bps, streamed as newly minted shares |
 | `accrue_fee()` | anyone | Mints the fee accrued so far; `issue` and `redeem` call it first |
 | `pending_fee()`, `fee()`, `fee_recipient()`, `platform_fee()` | anyone | Fee views |
-| `set_fee_recipient(recipient)` | manager | Where the manager's part of the fee is minted (default: the manager) |
-| `set_platform_fee(share_bps, recipient)` | platform admin | The platform's cut of the fee, at most 5000 bps of it |
+| `set_fee_recipient(recipient)` | manager | Where the manager's part of the fee is minted (default: the manager); must pass the allowlist |
+| `fee_escrow(recipient)`, `claim_fee(recipient)` | anyone | Fee shares held for a recipient that could not hold them when they accrued, and their release once it can |
+| `set_platform_fee(share_bps, recipient)` | platform admin | The platform's cut of the fee, at most 5000 bps of it; recipient must pass the allowlist |
 | `set_metadata(key, value)`, `metadata()` | manager / anyone | Up to 8 entries such as `description`, `strategy`, `website`, 512 bytes each; an empty value removes one |
 | `window_loss_ppb()`, `last_rebalance()` | anyone | Rebalance loss used in the rolling 24 hour window, and the last rebalance time |
 | SEP-41: `balance`, `transfer`, `transfer_from`, `approve`, `allowance`, `burn`, `burn_from`, `decimals`, `name`, `symbol` | | Standard token interface |
@@ -170,7 +172,9 @@ and execution through an issuer clawback or freeze.
 
 The manager address must be allowlisted on the platform (`is_manager`),
 and every component must be on the shelf (`shelf`, `shelf_status`).
-`initial_units` price only the first share.
+`initial_units` price only the first share. Funds created from fund code
+v0.4.0 (not yet released) start closed: set the fee and mandate if
+wanted, then call `open_for_issue` before anyone can invest.
 
 ```
 stellar contract invoke --id CDV2FJ4J2IIFSUREC5VAHINVCSVZGOMIMXJHA32XD7H2CMY6DNXD6KDM \

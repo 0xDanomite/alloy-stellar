@@ -37,13 +37,22 @@ rounds what you receive down.
 | New money never covers an impaired asset | `issue` is refused while any asset holds less than it owes | `issue_is_blocked_while_a_leg_is_short_of_owed_claims` |
 | The fund is always solvent | Holdings cover every outstanding share at all times | `test_reference_model` (property test) |
 | The management fee never blocks a redemption | Accrual uses no external call and mints nothing on overflow | `fee_accrual_never_blocks_a_redemption` |
-| A locked fund's basket never changes | `Locked` is the default and can only be swapped for `Managed` before the first share | `a_fund_is_locked_unless_its_manager_chose_managed_before_the_first_share` |
+| A locked fund's basket never changes | `Locked` is the default and can only be swapped for `Managed` before `open_for_issue` | `a_fund_is_locked_unless_its_manager_chose_managed_before_opening` |
+| Nobody can buy in ahead of the manager's setup | `issue` is refused until the manager calls `open_for_issue`; fee and mandate are only settable before it | `nobody_can_issue_before_the_manager_opens_the_fund` |
+| Fee shares never land outside the allowlist | A recipient that can't hold shares has them held by the fund in escrow until `claim_fee` | `fee_for_a_recipient_off_the_allowlist_waits_in_escrow` |
 | A manager cannot bleed value through many small bad fills | Oracle losses across rebalances are capped at 2% of fund value per rolling 24 hours, one minute apart | `losses_inside_a_day_are_capped_at_two_percent_of_fund_value` |
+
+## Setup, then open
+
+A new fund is closed: `issue` fails with `IssuanceClosed` until the
+manager calls `open_for_issue`. The fee and the mandate can only be set
+while the fund is closed, so the terms an investor buys into are final
+and nobody can issue first to lock the manager out of setting them.
 
 ## Management fee
 
 A manager may set one annual fee, at most 5% (`MAX_FEE_BPS = 500`), with
-`init_fee` before the first share exists. It can never be changed after.
+`init_fee` before `open_for_issue`. It can never be changed after.
 The fee is paid in new shares, never in assets: for `t` seconds at rate
 `r`, the fund mints
 
@@ -60,12 +69,18 @@ not charged.
 The platform admin may take a cut of each fund's fee, at most half
 (`MAX_PLATFORM_SHARE_BPS = 5000`), minted to a recipient it names. The cut
 splits the fee; it never raises it. The manager's part goes to the manager
-or to a recipient the manager sets (who must pass the fund's allowlist).
+or to a recipient the manager sets. Both recipients must pass the fund's
+allowlist when they are set. If a recipient can't hold shares when the fee
+accrues (the default recipient, the manager, was never allowlisted, or a
+recipient was removed), the fund mints its part to itself and holds it in
+escrow (`fee_escrow`); anyone can call `claim_fee(recipient)` once the
+recipient is allowed, and the shares go only to that recipient. Dilution
+is the same either way.
 
 ## Mandate
 
 Every fund is `Locked` or `Managed`, chosen once by the manager before the
-first share exists. A fund that never chooses is `Locked`, the safer
+fund opens for issue. A fund that never chooses is `Locked`, the safer
 reading for an investor: its components never change and it never
 rebalances, so a share always holds the same assets in the same
 proportions; only the fee, clawbacks and donations change the amounts. A `Managed` fund may

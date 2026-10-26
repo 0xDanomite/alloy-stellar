@@ -78,7 +78,15 @@ struct Setup<'a> {
 /// starts at 1.0 of asset 0, 2.0 of asset 1, 0.5 of asset 2.
 const INITIAL_UNITS: [i128; 3] = [10_000_000, 20_000_000, 5_000_000];
 
+/// A fund open for issue, as most tests want it.
 fn setup<'a>(compliance: Compliance, permissioned: [bool; 3]) -> Setup<'a> {
+    let s = setup_closed(compliance, permissioned);
+    s.fund.open_for_issue();
+    s
+}
+
+/// A fund still in setup: fee and mandate settable, `issue` refused.
+fn setup_closed<'a>(compliance: Compliance, permissioned: [bool; 3]) -> Setup<'a> {
     let env = Env::default();
     env.mock_all_auths();
     let assets: std::vec::Vec<Asset> = permissioned
@@ -124,8 +132,17 @@ fn setup<'a>(compliance: Compliance, permissioned: [bool; 3]) -> Setup<'a> {
 }
 
 fn managed<'a>(compliance: Compliance) -> Setup<'a> {
-    let s = setup(compliance, [false; 3]);
+    let s = setup_closed(compliance, [false; 3]);
     s.fund.set_mandate(&Mandate::Managed);
+    s.fund.open_for_issue();
+    s
+}
+
+/// A closed fund with a fee set, then opened.
+fn with_fee<'a>(compliance: Compliance, rate_bps: u32) -> Setup<'a> {
+    let s = setup_closed(compliance, [false; 3]);
+    s.fund.init_fee(&rate_bps);
+    s.fund.open_for_issue();
     s
 }
 
@@ -385,6 +402,7 @@ fn twelve_component_issue_and_redeem_fit_mainnet_limits() {
         ),
     );
     let fund = FundClient::new(&env, &id);
+    fund.open_for_issue();
     // Limits are disabled because the test harness records auth inside the
     // same budget; the asserts below hold the contract to a tenth of the
     // mainnet caps (100M instructions, 200 write entries) instead.
@@ -599,9 +617,8 @@ fn at(s: &Setup, timestamp: u64) {
 
 #[test]
 fn fee_streams_as_new_shares_split_with_the_platform() {
-    let s = setup(Compliance::Open, [false; 3]);
+    let s = with_fee(Compliance::Open, 200);
     let platform_cut = Address::generate(&s.env);
-    s.fund.init_fee(&200);
     s.fund.set_platform_fee(&2_000, &platform_cut);
     let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(100 * SHARE_SCALE));
@@ -625,8 +642,7 @@ fn fee_streams_as_new_shares_split_with_the_platform() {
 
 #[test]
 fn quotes_include_the_fee_that_issue_and_redeem_accrue_first() {
-    let s = setup(Compliance::Open, [false; 3]);
-    s.fund.init_fee(&100);
+    let s = with_fee(Compliance::Open, 100);
     let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(50 * SHARE_SCALE));
 
@@ -645,23 +661,24 @@ fn quotes_include_the_fee_that_issue_and_redeem_accrue_first() {
 
 #[test]
 fn fee_accrual_never_blocks_a_redemption() {
-    let s = setup(Compliance::Allowlist, [false; 3]);
+    let s = with_fee(Compliance::Allowlist, crate::MAX_FEE_BPS);
     let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
     s.fund.set_investor(&investor, &true);
-    s.fund.init_fee(&crate::MAX_FEE_BPS);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     s.fund.set_investor(&investor, &false);
 
     at(&s, 100 * YEAR_SECONDS);
     s.fund
         .redeem(&investor, &investor, &(10 * SHARE_SCALE), &Vec::new(&s.env));
-    // Capped at one year per accrual: 5% / 95% of supply.
-    assert_eq!(s.fund.balance(&s.manager), 5_263_157);
+    // Capped at one year per accrual: 5% / 95% of supply. The manager is
+    // not on the allowlist, so the fund holds the shares for it.
+    assert_eq!(s.fund.fee_escrow(&s.manager), 5_263_157);
+    assert_eq!(s.fund.balance(&s.manager), 0);
 }
 
 #[test]
-fn fee_is_set_once_before_the_first_share_and_capped() {
-    let s = setup(Compliance::Open, [false; 3]);
+fn fee_is_set_once_before_issue_opens_and_capped() {
+    let s = setup_closed(Compliance::Open, [false; 3]);
     assert_eq!(
         s.fund.try_init_fee(&(crate::MAX_FEE_BPS + 1)),
         Err(Ok(FundError::FeeTooHigh.into()))
@@ -675,11 +692,9 @@ fn fee_is_set_once_before_the_first_share_and_capped() {
     assert_eq!(s.fund.fee().unwrap().rate_bps, 50);
 
     let late = setup(Compliance::Open, [false; 3]);
-    let investor = funded_investor(&late, 1_000 * SHARE_SCALE);
-    late.fund.issue(&investor, &investor, &SHARE_SCALE);
     assert_eq!(
         late.fund.try_init_fee(&50),
-        Err(Ok(FundError::FundNotEmpty.into()))
+        Err(Ok(FundError::IssuanceOpen.into()))
     );
 }
 
@@ -699,8 +714,7 @@ fn platform_cut_is_admin_only_and_capped_at_half() {
 
 #[test]
 fn fee_recipient_change_settles_the_old_recipient_first() {
-    let s = setup(Compliance::Open, [false; 3]);
-    s.fund.init_fee(&100);
+    let s = with_fee(Compliance::Open, 100);
     let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     at(&s, YEAR_SECONDS);
@@ -716,7 +730,7 @@ fn fee_recipient_change_settles_the_old_recipient_first() {
 }
 
 #[test]
-fn a_fund_is_locked_unless_its_manager_chose_managed_before_the_first_share() {
+fn a_fund_is_locked_unless_its_manager_chose_managed_before_opening() {
     let s = setup(Compliance::Open, [false; 3]);
     assert_eq!(s.fund.mandate(), Mandate::Locked);
     let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
@@ -734,10 +748,11 @@ fn a_fund_is_locked_unless_its_manager_chose_managed_before_the_first_share() {
     );
     assert_eq!(
         s.fund.try_set_mandate(&Mandate::Managed),
-        Err(Ok(FundError::FundNotEmpty.into()))
+        Err(Ok(FundError::IssuanceOpen.into()))
     );
 
-    let fresh = managed(Compliance::Open);
+    let fresh = setup_closed(Compliance::Open, [false; 3]);
+    fresh.fund.set_mandate(&Mandate::Managed);
     assert_eq!(
         fresh.fund.try_set_mandate(&Mandate::Locked),
         Err(Ok(FundError::MandateFixed.into()))
@@ -926,4 +941,74 @@ fn nav_falls_back_to_the_compiled_network_default() {
     );
     let nav = with_oracle(&s);
     assert_eq!(s.fund.nav(), Some(nav.address));
+}
+
+#[test]
+fn nobody_can_issue_before_the_manager_opens_the_fund() {
+    let s = setup_closed(Compliance::Open, [false; 3]);
+    let early = funded_investor(&s, 1_000 * SHARE_SCALE);
+    assert!(!s.fund.is_open());
+    assert_eq!(
+        s.fund.try_issue(&early, &early, &SHARE_SCALE),
+        Err(Ok(FundError::IssuanceClosed.into()))
+    );
+    // The manager can still configure, then opens.
+    s.fund.init_fee(&100);
+    s.fund.set_mandate(&Mandate::Managed);
+    s.fund.open_for_issue();
+    assert_eq!(s.env.auths()[0].0, s.manager);
+    assert_eq!(
+        s.fund.try_open_for_issue(),
+        Err(Ok(FundError::IssuanceOpen.into()))
+    );
+    s.fund.issue(&early, &early, &SHARE_SCALE);
+    assert_eq!(s.fund.balance(&early), SHARE_SCALE);
+}
+
+#[test]
+fn fee_recipients_must_pass_the_allowlist() {
+    let s = with_fee(Compliance::Allowlist, 100);
+    let outsider = Address::generate(&s.env);
+    assert_eq!(
+        s.fund.try_set_fee_recipient(&outsider),
+        Err(Ok(FundError::NotAllowlisted.into()))
+    );
+    assert_eq!(
+        s.fund.try_set_platform_fee(&1_000, &outsider),
+        Err(Ok(FundError::NotAllowlisted.into()))
+    );
+}
+
+#[test]
+fn fee_for_a_recipient_off_the_allowlist_waits_in_escrow() {
+    let s = with_fee(Compliance::Allowlist, 100);
+    let platform_cut = Address::generate(&s.env);
+    s.fund.set_investor(&platform_cut, &true);
+    s.fund.set_platform_fee(&5_000, &platform_cut);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.set_investor(&investor, &true);
+    s.fund.issue(&investor, &investor, &(99 * SHARE_SCALE));
+
+    // The manager, the default recipient, was never allowlisted, and the
+    // platform recipient is removed before the fee accrues.
+    s.fund.set_investor(&platform_cut, &false);
+    at(&s, YEAR_SECONDS);
+    let minted = s.fund.accrue_fee();
+    assert_eq!(minted, 10_000_000);
+    assert_eq!(s.fund.balance(&s.manager), 0);
+    assert_eq!(s.fund.balance(&platform_cut), 0);
+    assert_eq!(s.fund.fee_escrow(&s.manager), 5_000_000);
+    assert_eq!(s.fund.fee_escrow(&platform_cut), 5_000_000);
+    assert_eq!(s.fund.balance(&s.fund.address), minted);
+    assert_eq!(s.fund.total_supply(), 100 * SHARE_SCALE);
+
+    assert_eq!(
+        s.fund.try_claim_fee(&s.manager),
+        Err(Ok(FundError::NotAllowlisted.into()))
+    );
+    s.fund.set_investor(&s.manager, &true);
+    assert_eq!(s.fund.claim_fee(&s.manager), 5_000_000);
+    assert_eq!(s.fund.balance(&s.manager), 5_000_000);
+    assert_eq!(s.fund.fee_escrow(&s.manager), 0);
+    assert_eq!(s.fund.balance(&s.fund.address), 5_000_000);
 }

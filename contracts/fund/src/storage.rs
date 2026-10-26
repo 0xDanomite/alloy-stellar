@@ -97,6 +97,8 @@ enum DataKey {
     Metadata,
     Losses,
     LastRebalance,
+    Opened,
+    FeeEscrow(Address),
 }
 
 pub(crate) fn bump_instance(env: &Env) {
@@ -380,4 +382,20 @@ pub(crate) fn last_rebalance(env: &Env) -> Option<u64> {
 
 pub(crate) fn set_last_rebalance(env: &Env, at: u64) {
     env.storage().instance().set(&DataKey::LastRebalance, &at);
+}
+
+pub(crate) fn is_open(env: &Env) -> bool {
+    env.storage().instance().has(&DataKey::Opened)
+}
+
+pub(crate) fn set_open(env: &Env) {
+    env.storage().instance().set(&DataKey::Opened, &true);
+}
+
+pub(crate) fn fee_escrow(env: &Env, recipient: &Address) -> i128 {
+    read_persistent_i128(env, &DataKey::FeeEscrow(recipient.clone()))
+}
+
+pub(crate) fn set_fee_escrow(env: &Env, recipient: &Address, shares: i128) {
+    write_persistent_i128(env, &DataKey::FeeEscrow(recipient.clone()), shares);
 }

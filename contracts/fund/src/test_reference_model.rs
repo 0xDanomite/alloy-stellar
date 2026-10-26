@@ -97,6 +97,7 @@ proptest! {
             ),
         );
         let fund = FundClient::new(&env, &id);
+        fund.open_for_issue();
         let model = FixedUnitModel { units: initial_units.clone() };
         let held = |i: usize| TokenClient::new(&env, &tokens[i]).balance(&id);
 

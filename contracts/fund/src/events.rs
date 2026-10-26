@@ -152,3 +152,6 @@ pub struct MetadataSet {
     pub key: Symbol,
     pub value: String,
 }
+
+#[contractevent(topics = ["issuance_opened"], data_format = "single-value")]
+pub struct IssuanceOpened {}

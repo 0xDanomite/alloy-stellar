@@ -67,7 +67,7 @@ pub enum FundError {
     SameComponent = 17,
     MandateLocked = 18,
     MandateFixed = 19,
-    FundNotEmpty = 20,
+    IssuanceOpen = 20,
     FeeAlreadySet = 21,
     FeeTooHigh = 22,
     ShareTooHigh = 23,
@@ -76,6 +76,7 @@ pub enum FundError {
     LossBudgetExceeded = 26,
     RebalanceCooldown = 27,
     BadPrice = 28,
+    IssuanceClosed = 29,
 }
 
 /// Mirrors `alloy_platform::ShelfStatus`.
@@ -142,7 +143,7 @@ fn require_positive(env: &Env, amount: i128) {
 }
 
 fn require_can_hold(env: &Env, holder: &Address) {
-    if storage::compliance(env) == Compliance::Allowlist && !storage::is_investor(env, holder) {
+    if !can_hold(env, holder) {
         panic_with_error!(env, FundError::NotAllowlisted);
     }
 }
@@ -319,14 +320,10 @@ fn accrue_fee(env: &Env) -> i128 {
     });
     let recipient = storage::fee_recipient(env);
     let manager_shares = minted - platform_shares;
-    if manager_shares > 0 {
-        mint(env, &recipient, manager_shares);
-    }
+    pay_fee(env, &recipient, manager_shares);
     let platform_recipient = platform.map(|cut| cut.recipient);
     if let Some(to) = &platform_recipient {
-        if platform_shares > 0 {
-            mint(env, to, platform_shares);
-        }
+        pay_fee(env, to, platform_shares);
     }
     events::FeeAccrued {
         recipient,
@@ -338,9 +335,31 @@ fn accrue_fee(env: &Env) -> i128 {
     minted
 }
 
-fn require_empty(env: &Env) {
-    if storage::supply(env) != 0 {
-        panic_with_error!(env, FundError::FundNotEmpty);
+fn can_hold(env: &Env, holder: &Address) -> bool {
+    storage::compliance(env) == Compliance::Open || storage::is_investor(env, holder)
+}
+
+/// Fee shares go to a recipient only if it could hold them as an investor.
+/// Otherwise the fund mints them to itself and keeps them in escrow for that
+/// recipient until `claim_fee`, so dilution stays exact and no share ever
+/// lands outside the allowlist.
+fn pay_fee(env: &Env, to: &Address, shares: i128) {
+    if shares <= 0 {
+        return;
+    }
+    if can_hold(env, to) {
+        mint(env, to, shares);
+    } else {
+        mint(env, &env.current_contract_address(), shares);
+        storage::set_fee_escrow(env, to, storage::fee_escrow(env, to) + shares);
+    }
+}
+
+/// Fee terms and mandate are settled before anyone can buy in, so nobody
+/// can issue first and lock the manager out of them.
+fn require_not_open(env: &Env) {
+    if storage::is_open(env) {
+        panic_with_error!(env, FundError::IssuanceOpen);
     }
 }
 
@@ -486,11 +505,29 @@ impl Fund {
         storage::bump_instance(&env);
     }
 
+    /// Ends the fund's setup: after this, anyone allowed may `issue`, and the
+    /// fee and mandate can no longer be set. Manager only, once.
+    pub fn open_for_issue(env: Env) {
+        storage::manager(&env).require_auth();
+        storage::bump_instance(&env);
+        require_not_open(&env);
+        storage::set_open(&env);
+        events::IssuanceOpened {}.publish(&env);
+    }
+
+    pub fn is_open(env: Env) -> bool {
+        storage::is_open(&env)
+    }
+
     /// Deposit the basket for `shares` from `investor`, minting to `to`.
     /// Returns what was pulled per component, in `components()` order.
+    /// Refused until the manager has called `open_for_issue`.
     pub fn issue(env: Env, investor: Address, to: Address, shares: i128) -> Vec<i128> {
         investor.require_auth();
         storage::bump_instance(&env);
+        if !storage::is_open(&env) {
+            panic_with_error!(&env, FundError::IssuanceClosed);
+        }
         require_positive(&env, shares);
         require_can_hold(&env, &to);
         accrue_fee(&env);
@@ -764,8 +801,8 @@ impl Fund {
         mandate(&env)
     }
 
-    /// Commits the fund to `Locked` or `Managed`. Allowed once, before the
-    /// first share exists, so holders always know which one they bought.
+    /// Commits the fund to `Locked` or `Managed`. Allowed once, before
+    /// `open_for_issue`, so holders always know which one they bought.
     /// A fund that never chooses is `Locked`.
     pub fn set_mandate(env: Env, mandate: Mandate) {
         storage::manager(&env).require_auth();
@@ -773,7 +810,7 @@ impl Fund {
         if storage::mandate(&env).is_some() {
             panic_with_error!(&env, FundError::MandateFixed);
         }
-        require_empty(&env);
+        require_not_open(&env);
         storage::set_mandate(&env, mandate);
         events::MandateSet { mandate }.publish(&env);
     }
@@ -809,7 +846,7 @@ impl Fund {
         events::ComponentAdded { token }.publish(&env);
     }
 
-    /// Sets the annual management fee, once, before the first share exists.
+    /// Sets the annual management fee, once, before `open_for_issue`.
     /// Zero is a valid, permanent choice. The fee streams from this moment.
     pub fn init_fee(env: Env, rate_bps: u32) {
         storage::manager(&env).require_auth();
@@ -820,7 +857,7 @@ impl Fund {
         if rate_bps > MAX_FEE_BPS {
             panic_with_error!(&env, FundError::FeeTooHigh);
         }
-        require_empty(&env);
+        require_not_open(&env);
         storage::set_fee(
             &env,
             &FeeState {
@@ -841,6 +878,22 @@ impl Fund {
     /// Fee shares that `accrue_fee` would mint now.
     pub fn pending_fee(env: Env) -> i128 {
         pending_fee_shares(&env)
+    }
+
+    /// Fee shares held for `recipient` because it could not hold shares
+    /// when they accrued (off the allowlist of an `Allowlist` fund).
+    pub fn fee_escrow(env: Env, recipient: Address) -> i128 {
+        storage::fee_escrow(&env, &recipient)
+    }
+
+    /// Releases `recipient`'s escrowed fee shares once it may hold them.
+    /// Anyone may call it; the shares only ever go to `recipient`.
+    pub fn claim_fee(env: Env, recipient: Address) -> i128 {
+        storage::bump_instance(&env);
+        let shares = storage::fee_escrow(&env, &recipient);
+        move_shares(&env, &env.current_contract_address(), &recipient, shares);
+        storage::set_fee_escrow(&env, &recipient, 0);
+        shares
     }
 
     pub fn fee(env: Env) -> Option<FeeState> {
@@ -875,6 +928,7 @@ impl Fund {
         if share_bps > MAX_PLATFORM_SHARE_BPS {
             panic_with_error!(&env, FundError::ShareTooHigh);
         }
+        require_can_hold(&env, &recipient);
         accrue_fee(&env);
         storage::set_platform_fee(
             &env,
