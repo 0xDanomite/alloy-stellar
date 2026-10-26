@@ -13,6 +13,38 @@ export function minOut(quoted: bigint, bps = ZAP_SLIPPAGE_BPS): bigint {
   return (quoted * (BPS - bps)) / BPS;
 }
 
+/** A leg whose Soroswap quote is more than this far from its oracle value is too thin to zap. */
+export const DEPTH_TOLERANCE_BPS = 300;
+
+export interface LegDepth {
+  /** The leg's oracle value in USDC base units, or null with no price to compare. */
+  fair: bigint | null;
+  /** How much worse than the oracle value the quote is, in basis points; negative is better. */
+  worseBps: number | null;
+  thin: boolean;
+}
+
+/**
+ * Compares one leg's Soroswap quote with its oracle value. Issuing, the
+ * quote is the USDC it costs to buy `amount`, worse when higher; redeeming,
+ * it is the USDC selling `amount` pays, worse when lower. A leg with no
+ * price can't be judged and passes.
+ */
+export function legDepth(
+  quoted: bigint,
+  amount: bigint,
+  priceUsd: number | null,
+  direction: "issue" | "redeem",
+  toleranceBps = DEPTH_TOLERANCE_BPS,
+): LegDepth {
+  if (priceUsd === null || !(priceUsd > 0) || amount <= 0n) return { fair: null, worseBps: null, thin: false };
+  const fair = Number(amount) * priceUsd;
+  if (!(fair >= 1)) return { fair: null, worseBps: null, thin: false };
+  const gap = direction === "issue" ? Number(quoted) - fair : fair - Number(quoted);
+  const worseBps = Math.round((gap / fair) * 10_000);
+  return { fair: BigInt(Math.round(fair)), worseBps, thin: quoted <= 0n || worseBps > toleranceBps };
+}
+
 /** Soroswap pairs are unordered: one key per token pair. */
 export function pairKey(a: string, b: string): string {
   return a < b ? `${a}:${b}` : `${b}:${a}`;
