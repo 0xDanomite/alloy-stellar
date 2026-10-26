@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { deployments, links, oracles } from "../lib/config";
 import { shortId } from "../lib/format";
+import { adminRoles } from "../lib/admin";
 import { portfolio } from "../lib/portfolio";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
@@ -23,6 +24,34 @@ function WalletButton() {
       <span className="sm:hidden">Connect</span>
       <span className="hidden sm:inline">Connect wallet</span>
     </Button>
+  );
+}
+
+/**
+ * Shown only to the platform admin and timelock proposers or executors: in
+ * the header from tablet width up, and in the footer on phones, where the
+ * header has no room left.
+ */
+function AdminLink({ placement }: { placement: "header" | "footer" }) {
+  const { address } = useWallet();
+  const roles = useAsync(() => adminRoles(address ?? ""), deployments && address ? `admin:${address}` : null);
+  if (!roles.data?.length) return null;
+  if (placement === "footer") {
+    return (
+      <Link to="/admin" className="hover:text-foreground sm:hidden">
+        Platform admin
+      </Link>
+    );
+  }
+  return (
+    <NavLink
+      to="/admin"
+      className={({ isActive }) =>
+        `hidden rounded-md px-3 py-2 text-label hover:bg-secondary sm:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
+      }
+    >
+      Admin
+    </NavLink>
   );
 }
 
@@ -95,6 +124,7 @@ export function Layout() {
             >
               What we built
             </NavLink>
+            <AdminLink placement="header" />
             <AttentionBell />
             <ThemeToggle />
             <WalletButton />
@@ -118,6 +148,7 @@ export function Layout() {
             Alloy on Stellar, built at HackMeridian 2026
           </span>
           <Link to="/built" className="hover:text-foreground">What we built</Link>
+          <AdminLink placement="footer" />
           <a href={links.repo} target="_blank" rel="noreferrer" className="hover:text-foreground">Source on GitHub</a>
           {links.deck && (
             <a href={links.deck} target="_blank" rel="noreferrer" className="hover:text-foreground">Deck</a>

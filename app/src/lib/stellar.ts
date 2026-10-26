@@ -113,6 +113,22 @@ interface NavLegRaw extends NavQuoteRaw {
 interface NavMethods {
   nav(args: { fund: string }): AT<contract.Result<{ per_share_usd: bigint; legs: NavLegRaw[]; total_usd: bigint }>>;
   price(args: { token: string }): AT<contract.Result<NavQuoteRaw>>;
+  primary(args: { token: string }): AT<NavRouteRaw | undefined>;
+  secondary(args: { token: string }): AT<NavRouteRaw | undefined>;
+}
+
+export interface NavRouteRaw {
+  oracle: string;
+  feed: { tag: "Sep40" | "RedStoneFeed"; values?: unknown[] };
+  quote: Tagged<"Usd" | "Usdc">;
+  max_age_secs: bigint;
+  source: string;
+}
+
+interface TimelockMethods {
+  schedule(args: { proposer: string; target: string; fn_name: string; args: xdr.ScVal[]; salt: Buffer }): AT<Buffer>;
+  execute(args: { executor: string; target: string; fn_name: string; args: xdr.ScVal[]; salt: Buffer }): AT<unknown>;
+  cancel(args: { proposer: string; id: Buffer }): AT<null>;
 }
 
 interface SacMethods {
@@ -180,6 +196,7 @@ export const platformClients = bundledClient<PlatformMethods>(SPECS.platform);
 export const fundClient = bundledClient<FundMethods>(SPECS.fund);
 const sacClient = fetchedClient<SacMethods>();
 export const navClient = bundledClient<NavMethods>(SPECS.nav);
+export const timelockClient = bundledClient<TimelockMethods>(SPECS.timelock);
 
 function requireDeployments() {
   if (!deployments) throw new Error(`deployments/${network}.json is missing from this build.`);
