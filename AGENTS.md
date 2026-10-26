@@ -24,7 +24,7 @@ read [SKILL.md](SKILL.md). For the design and its guarantees, read
 | `contracts/timelock` | Timelock meant to be the platform and NAV admin: `schedule`, `execute` after a delay, `cancel`, fixed proposer and executor roles |
 | `contracts/nav` | Read-only NAV contract: per-asset RedStone and Reflector routes, staleness limits, fallback, divergence |
 | `contracts/zap` | Stateless USDC zap: `issue_with_usdc` and `redeem_to_usdc` buy or sell every leg through the Soroswap router in one transaction |
-| `app` | Vite + React app: fund pages, oracle NAV, buy the basket via SDEX path payments, deposit, redeem, create and manage funds |
+| `app` | Vite + React app: fund pages, oracle NAV, USDC in and out through the zap, buy the basket via SDEX path payments, deposit, redeem, create and manage funds |
 | `scripts/alloy.sh` | CLI, one command per journey step, testnet and mainnet |
 | `scripts/lib.sh` | Shared network config, identities, `invoke` and `view` helpers |
 | `scripts/testnet-launch.sh`, `scripts/mainnet-launch.sh` | Full launch rehearsals |
