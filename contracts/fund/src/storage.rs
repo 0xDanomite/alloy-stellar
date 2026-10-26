@@ -22,13 +22,15 @@ pub struct Component {
 
 /// `Locked` freezes the asset universe: the components never change, though
 /// the manager may re-weight among them within the oracle bounds. `Managed`
-/// also lets the manager add shelf assets. Chosen once, before the fund
+/// also lets the manager add shelf assets. `Static` promises never to trade:
+/// no rebalances, no trades, no new components. Chosen once, before the fund
 /// opens for issue.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mandate {
     Locked,
     Managed,
+    Static,
 }
 
 #[contracttype]

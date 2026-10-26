@@ -82,6 +82,7 @@ pub enum FundError {
     NoRouter = 30,
     InvalidPath = 31,
     SwapShortfall = 32,
+    MandateStatic = 33,
 }
 
 /// Mirrors `alloy_platform::ShelfStatus`.
@@ -426,10 +427,13 @@ fn fund_value(env: &Env, oracle: &NavClient) -> i128 {
     total
 }
 
-/// The checks every manager trade shares: two distinct components, enough
-/// of the sold one, the cooldown, and an oracle. Either mandate may trade
-/// among its existing components.
+/// The checks every manager trade shares: a mandate that trades (`Locked` or
+/// `Managed`), two distinct components, enough of the sold one, the
+/// cooldown, and an oracle.
 fn begin_trade(env: &Env, sell: &Address, sold: i128, buy: &Address) -> NavClient<'static> {
+    if mandate(env) == Mandate::Static {
+        panic_with_error!(env, FundError::MandateStatic);
+    }
     require_positive(env, sold);
     if sell == buy {
         panic_with_error!(env, FundError::SameComponent);
@@ -781,8 +785,8 @@ impl Fund {
     /// least 99% of what leaves the fund at oracle prices, everything given
     /// up within a rolling day must stay under 2% of fund value, and trades
     /// are at least a minute apart, so a manager or agent can't drain value
-    /// through bad fills, one at a time or in a burst. Both mandates
-    /// rebalance among existing components. Where the manager sources the
+    /// through bad fills, one at a time or in a burst. `Locked` and `Managed`
+    /// funds rebalance among existing components; `Static` funds never do. Where the manager sources the
     /// bought asset (SDEX, Soroswap, an RFQ desk) is up to them.
     pub fn rebalance(env: Env, sell: Address, sold: i128, buy: Address, bought: i128) {
         let manager = storage::manager(&env);
@@ -818,7 +822,8 @@ impl Fund {
     /// authorizes exactly one transfer, `sold` of `sell` into the route's
     /// first pair, and demands at least the larger of `min_bought` and 99%
     /// of `sold` at oracle prices. The result counts toward the same loss
-    /// budget and cooldown as `rebalance`. Returns the amount bought.
+    /// budget and cooldown as `rebalance`, and a `Static` fund refuses it.
+    /// Returns the amount bought.
     pub fn trade(
         env: Env,
         sell: Address,
@@ -927,7 +932,7 @@ impl Fund {
         mandate(&env)
     }
 
-    /// Commits the fund to `Locked` or `Managed`. Allowed once, before
+    /// Commits the fund to `Locked`, `Managed` or `Static`. Allowed once, before
     /// `open_for_issue`, so holders always know which one they bought.
     /// A fund that never chooses is `Locked`.
     pub fn set_mandate(env: Env, mandate: Mandate) {
@@ -947,8 +952,10 @@ impl Fund {
     pub fn add_component(env: Env, token: Address) {
         storage::manager(&env).require_auth();
         storage::bump_instance(&env);
-        if mandate(&env) != Mandate::Managed {
-            panic_with_error!(&env, FundError::MandateLocked);
+        match mandate(&env) {
+            Mandate::Managed => {}
+            Mandate::Locked => panic_with_error!(&env, FundError::MandateLocked),
+            Mandate::Static => panic_with_error!(&env, FundError::MandateStatic),
         }
         let mut components = storage::components(&env);
         if components.len() >= MAX_COMPONENTS {

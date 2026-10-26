@@ -1288,3 +1288,66 @@ fn router_is_set_by_the_platform_admin() {
     assert_eq!(s.env.auths()[0].0, s.fund.platform());
     assert_eq!(s.fund.router(), Some(router));
 }
+
+/// An open fund holding 10 shares under `mandate`, with an oracle, a
+/// one-to-one router and a manager able to fund a rebalance.
+fn fund_with_mandate<'a>(mandate: Mandate) -> Setup<'a> {
+    let s = setup_closed(Compliance::Open, [false; 3]);
+    if mandate != Mandate::Locked {
+        s.fund.set_mandate(&mandate);
+    }
+    s.fund.open_for_issue();
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    s.assets[1].admin.mint(&s.manager, &(10 * SHARE_SCALE));
+    s
+}
+
+/// The contract error a call failed with, or `None` if it succeeded.
+fn refusal<T, C, E>(
+    result: Result<Result<T, C>, Result<soroban_sdk::Error, E>>,
+) -> Option<FundError> {
+    match result {
+        Ok(_) => None,
+        Err(Ok(error)) => Some(FundError::try_from(error).unwrap()),
+        Err(Err(_)) => panic!("call failed outside the contract"),
+    }
+}
+
+#[test]
+fn each_mandate_allows_exactly_its_actions() {
+    use FundError::{MandateLocked, MandateStatic};
+    for (mandate, trading, adding) in [
+        (Mandate::Locked, None, Some(MandateLocked)),
+        (Mandate::Managed, None, None),
+        (Mandate::Static, Some(MandateStatic), Some(MandateStatic)),
+    ] {
+        let s = fund_with_mandate(mandate);
+        assert_eq!(s.fund.mandate(), mandate);
+        with_router(&s, 10_000);
+        let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+
+        let rebalanced = refusal(s.fund.try_rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE));
+        assert_eq!(rebalanced, trading, "rebalance under {mandate:?}");
+        at(&s, 60);
+        let traded = refusal(s.fund.try_trade(b, &SHARE_SCALE, a, &0, &route(&s, 1, 0)));
+        assert_eq!(traded, trading, "trade under {mandate:?}");
+
+        let extra = create_asset(&s.env, false);
+        let added = refusal(s.fund.try_add_component(&extra.token.address));
+        assert_eq!(added, adding, "add_component under {mandate:?}");
+    }
+}
+
+#[test]
+fn static_is_chosen_once_before_opening() {
+    let s = setup_closed(Compliance::Open, [false; 3]);
+    s.fund.set_mandate(&Mandate::Static);
+    assert_eq!(
+        s.fund.try_set_mandate(&Mandate::Managed),
+        Err(Ok(FundError::MandateFixed.into()))
+    );
+    s.fund.open_for_issue();
+    assert_eq!(s.fund.mandate(), Mandate::Static);
+}
