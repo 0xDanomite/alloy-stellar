@@ -3,7 +3,7 @@ import { oracleFor } from "../lib/config";
 import { formatAge, formatAmount, formatUsd, ONE } from "../lib/format";
 import { fundValueUsd, legWeights } from "../lib/fund-math";
 import { DEMO_ISSUER_LABEL } from "../lib/issuers";
-import type { Fund, FundComponent } from "../lib/stellar";
+import type { Fund, FundComponent, Mandate } from "../lib/stellar";
 import { Usd } from "./ui";
 
 export function IssuerName({ leg }: { leg: Pick<FundComponent, "issuerLabel" | "verified"> }) {
@@ -14,6 +14,36 @@ export function IssuerName({ leg }: { leg: Pick<FundComponent, "issuerLabel" | "
 
 export function complianceLabel(fund: Fund): string {
   return fund.compliance === "Open" ? "Open to anyone" : "Approved investors";
+}
+
+export const MANDATES: Record<Mandate, { label: string; summary: string; detail: string }> = {
+  Locked: {
+    label: "Locked",
+    summary: "Same assets, adjustable weights",
+    detail: "The assets in the basket never change. The manager can shift weight between them, within oracle price bounds.",
+  },
+  Managed: {
+    label: "Managed",
+    summary: "Can add assets from the shelf",
+    detail: "The manager can also add assets from the platform's approved shelf, then build them up through rebalances.",
+  },
+  Static: {
+    label: "Static",
+    summary: "Never trades",
+    detail: "No rebalances, no swaps, no new assets. A share holds the same mix from launch to redemption.",
+  },
+};
+
+/** The mandate a v0.4 fund holds itself to; one never chosen is Locked. */
+export function mandateOf(fund: Fund): Mandate | null {
+  return fund.setup ? (fund.setup.mandate ?? "Locked") : null;
+}
+
+/** The profile line a fund shows under its name: description, else strategy. */
+export function FundBlurb({ fund, className = "" }: { fund: Fund; className?: string }) {
+  const text = fund.metadata.description ?? fund.metadata.strategy;
+  if (!text) return null;
+  return <p className={`text-muted-foreground ${className}`}>{text}</p>;
 }
 
 export function IssuerFlags({ leg }: { leg: FundComponent }) {

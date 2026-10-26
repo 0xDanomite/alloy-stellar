@@ -22,6 +22,10 @@ function fund(id: string, overrides: Partial<Fund> = {}): Fund {
     awaitingIssuer: [],
     manager: "GOTHER",
     wasmHash: null,
+    platform: "CPLATFORM",
+    navContract: null,
+    setup: null,
+    metadata: {},
     ...overrides,
   };
 }
@@ -79,6 +83,13 @@ describe("buildPortfolio", () => {
     expect(p.positions.find((x) => x.fund.id === "A")?.onAllowlist).toBe(false);
     expect(p.positions.find((x) => x.fund.id === "B")?.onAllowlist).toBe(true);
     expect(p.attention.map((a) => [a.kind, a.fund.id])).toEqual([["allowlist", "A"]]);
+  });
+
+  it("asks the manager to finish setting up a v0.4 fund that isn't open", () => {
+    const setup = { open: false, mandate: null, fee: null, platformFee: null, feeRecipient: ME, lastRebalance: null };
+    const funds = [fund("A", { manager: ME, setup }), fund("B", { manager: ME, setup: { ...setup, open: true } }), fund("C", { setup })];
+    const p = buildPortfolio(ME, funds, state({}));
+    expect(p.attention.map((a) => [a.kind, a.fund.id, a.tab])).toEqual([["setup", "A", "manage"]]);
   });
 
   it("is empty for an address with nothing on the platform", () => {

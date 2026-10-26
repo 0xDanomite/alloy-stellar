@@ -107,9 +107,63 @@ export function fundRelease(wasmHash: string | null): { tag: string; url: string
   return tag ? { tag, url: `${links.repo}/releases/tag/${tag}` } : null;
 }
 
+/**
+ * Fund code released before v0.4, which has no fee, mandate, metadata,
+ * issuance gate or Soroswap trade. Unlisted hashes are left to a probe.
+ */
+export function isLegacyFundCode(wasmHash: string | null): boolean {
+  const tag = wasmHash ? FUND_RELEASES[wasmHash] : undefined;
+  return tag !== undefined && /^v0\.[0-3]\./.test(tag);
+}
+
+/**
+ * A second platform deployed with fund v0.4 code, read from
+ * `deployments/<network>-v4.json` when that file exists. Its funds list
+ * alongside the first platform's, and new funds are created on it.
+ */
+export interface PlatformDeployment {
+  contracts: { platform: string; nav?: string; funds?: Record<string, string> };
+}
+
+export interface PlatformSlot {
+  id: string;
+  /** The NAV contract this platform's funds are priced by. */
+  nav: string | null;
+  /** Launch funds by symbol: they list first and keep their short symbol. */
+  launched: Record<string, string>;
+}
+
+const v4Deployment = files[`../../../deployments/${network}-v4.json`] as PlatformDeployment | undefined;
+
+const primarySlot: PlatformSlot | null = deployments
+  ? { id: deployments.contracts.platform, nav: deployments.contracts.nav ?? null, launched: deployments.contracts.funds }
+  : null;
+
+const v4Slot: PlatformSlot | null = v4Deployment
+  ? {
+      id: v4Deployment.contracts.platform,
+      nav: v4Deployment.contracts.nav ?? primarySlot?.nav ?? null,
+      launched: v4Deployment.contracts.funds ?? {},
+    }
+  : null;
+
+/** Every platform this build reads funds from: the original first, then the v0.4 one when deployed. */
+export const platforms: PlatformSlot[] = [primarySlot, v4Slot].filter((p): p is PlatformSlot => p !== null);
+
+/** Where new funds are created: the v0.4 platform when deployed, else the original. */
+export const creationPlatform: PlatformSlot | null = v4Slot ?? primarySlot;
+
+export function platformSlot(id: string): PlatformSlot | null {
+  return platforms.find((p) => p.id === id) ?? null;
+}
+
 /** Reflector's mainnet oracle for Stellar assets, quoted in USDC. Its price history lives about a day. */
 export const REFLECTOR_ORACLE: string | null =
   network === "mainnet" ? "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M" : null;
+
+/** Soroswap's router, as published in soroswap/core; v0.4 mainnet fund builds compile it in. */
+export const SOROSWAP_ROUTER: string | null =
+  network === "mainnet" ? "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH" : null;
 
 export const oracles = {
   redstone: { label: "RedStone", url: "https://redstone.finance" },

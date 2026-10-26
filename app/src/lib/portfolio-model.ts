@@ -16,7 +16,7 @@ export interface FundPosition {
   onAllowlist: boolean | null;
 }
 
-export type AttentionKind = "owed" | "issuer" | "allowlist";
+export type AttentionKind = "owed" | "issuer" | "allowlist" | "setup";
 
 export interface Attention {
   kind: AttentionKind;
@@ -24,7 +24,7 @@ export interface Attention {
   title: string;
   detail: string;
   /** Where on the fund page the fix lives. */
-  tab: "redeem" | null;
+  tab: "redeem" | "manage" | null;
 }
 
 export interface Portfolio {
@@ -58,6 +58,15 @@ function attentionFor(position: FundPosition | undefined, fund: Fund, manages: b
         ? `Issuing stays closed until the ${codes} issuer authorizes the fund's address. Send them the fund contract ID.`
         : `Issuing stays closed until the ${codes} issuer authorizes the fund. Redemption is open.`,
       tab: null,
+    });
+  }
+  if (manages && fund.setup && !fund.setup.open) {
+    items.push({
+      kind: "setup",
+      fund,
+      title: `Finish setting up ${fund.symbol}`,
+      detail: "The fund is deployed but not open for investment. Settle its fee and mandate and open it from the Manage tab.",
+      tab: "manage",
     });
   }
   if (position && position.shares > 0n && position.onAllowlist === false) {
