@@ -6,14 +6,17 @@ import { addUsdcTrustline, routeLabel, type ZapPlan } from "../lib/zap";
 import { Button, TxNotice, type TxPhase } from "./ui";
 
 /** Each non-USDC leg and the Soroswap route the zap takes for it. */
-export function ZapRoutes({ plan, direction }: { plan: ZapPlan; direction: "issue" | "redeem" }) {
+export function ZapRoutes({ plan, direction, thin = [] }: { plan: ZapPlan; direction: "issue" | "redeem"; thin?: string[] }) {
   const routed = plan.routes.filter((r) => r.path);
   if (!routed.length) return null;
   return (
     <ul className="space-y-1 text-[0.8125rem] text-muted-foreground">
       {routed.map((route) => (
         <li key={route.token} className="flex justify-between gap-3">
-          <span>{route.code}</span>
+          <span className={thin.includes(route.code) ? "text-destructive" : undefined}>
+            {route.code}
+            {thin.includes(route.code) && " (pool too thin)"}
+          </span>
           <span>{routeLabel(plan, route, direction)}</span>
         </li>
       ))}
