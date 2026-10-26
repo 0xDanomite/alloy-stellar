@@ -232,6 +232,14 @@ The switch in the header moves between mainnet and testnet.
   6. Issuer authorizations, starting with BENJI.
   7. Private, ZK-verified investor allowlists.
 
+## Source verification
+
+**The mainnet platform contract runs exactly the code in this repo, independently rebuilt and matched byte for byte.**
+
+The platform contract ([`CDV2FJ4J…6KDM`](https://stellar.expert/explorer/public/contract/CDV2FJ4J2IIFSUREC5VAHINVCSVZGOMIMXJHA32XD7H2CMY6DNXD6KDM)) is source-verified with the [BlockSmith Contract Verifier](https://staging.sv.blocksmith.co/docs/), built by 57Blocks, a mentor company at the hackathon. It rebuilt this repo at `v0.2.0` in a network-isolated sandbox and got Wasm hash `4259665f…f167d2`, identical to the one deployed on chain. Stellar stores compiled bytes, not source, so this proves the platform runs exactly the code here. The result is published permanently, and anyone can repeat the rebuild. Verification is not an audit: it proves the source matches the deployed bytes, not that the code is safe. Fund code since v0.3.0 is covered by our own attested releases (SEP-0055).
+
+[Verification job](https://staging.sv.blocksmith.co/verify/jobs/6897a2ab-c006-4684-8e6c-02d8f83bde87) · [Published report](https://results.staging.sv.blocksmith.co/reports/1f85c34fe2f69e7d306cdefdb8dc1a66b610962798bc2bdb1858e19dbf8fcd8c.json)
+
 ## Our Team
 
 **Two founders who have built together for almost ten years, across web2 and web3.**
