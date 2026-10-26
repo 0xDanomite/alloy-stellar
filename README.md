@@ -9,6 +9,8 @@ underneath at any time.
 
 **Live app:** [alloy-stellar.vercel.app](https://alloy-stellar.vercel.app) · **Create a fund:** [/create](https://alloy-stellar.vercel.app/create) · **Pitch deck:** [deck](https://claude.ai/artifact/D2Epdk9Z7XFDSz6Qg8Y7iG) · **New code since arrival:** [arrival...submission](https://github.com/0xDanomite/alloy-stellar/compare/arrival...submission)
 
+**For AI agents:** [AGENTS.md](AGENTS.md) (working in this repo) · [SKILL.md](SKILL.md) (using Alloy on mainnet)
+
 **Tracks:** Scale, Stellar Composed (Soroban contracts + SDEX path payments + RedStone and Reflector oracles + Stellar Wallets Kit)
 
 ## At a glance
