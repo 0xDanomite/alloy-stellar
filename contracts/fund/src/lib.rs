@@ -487,7 +487,9 @@ impl Fund {
     /// The oracle that bounds rebalances. Only the platform admin sets it,
     /// so a manager can't point the fund at prices they control.
     pub fn set_nav(env: Env, nav: Address) {
-        PlatformClient::new(&env, &storage::platform(&env)).admin().require_auth();
+        PlatformClient::new(&env, &storage::platform(&env))
+            .admin()
+            .require_auth();
         storage::bump_instance(&env);
         storage::set_nav(&env, &nav);
         events::NavSet { nav }.publish(&env);
@@ -522,11 +524,18 @@ impl Fund {
             panic_with_error!(&env, FundError::InsufficientBalance);
         }
 
-        let nav = storage::nav(&env).unwrap_or_else(|| panic_with_error!(&env, FundError::NoOracle));
+        let nav =
+            storage::nav(&env).unwrap_or_else(|| panic_with_error!(&env, FundError::NoOracle));
         let oracle = NavClient::new(&env, &nav);
         let value_out = mul_div(&env, sold, oracle.price(&sell).price, SHARE_SCALE, true);
         let value_in = mul_div(&env, bought, oracle.price(&buy).price, SHARE_SCALE, false);
-        let floor = mul_div(&env, value_out, 10_000 - MAX_REBALANCE_LOSS_BPS, 10_000, true);
+        let floor = mul_div(
+            &env,
+            value_out,
+            10_000 - MAX_REBALANCE_LOSS_BPS,
+            10_000,
+            true,
+        );
         if value_in < floor {
             panic_with_error!(&env, FundError::PriceTooLow);
         }
@@ -534,7 +543,14 @@ impl Fund {
         let fund = env.current_contract_address();
         TokenClient::new(&env, &buy).transfer(&manager, &fund, &bought);
         TokenClient::new(&env, &sell).transfer(&fund, &manager, &sold);
-        events::Rebalanced { manager, sell, sold, buy, bought }.publish(&env);
+        events::Rebalanced {
+            manager,
+            sell,
+            sold,
+            buy,
+            bought,
+        }
+        .publish(&env);
     }
 
     pub fn set_manager(env: Env, new_manager: Address) {

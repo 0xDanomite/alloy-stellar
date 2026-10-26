@@ -7,7 +7,9 @@ use soroban_sdk::{
     vec, Address, Env, String, Vec,
 };
 
-use crate::{Compliance, Component, Fund, FundClient, FundError, PriceQuote, ShelfStatus, SHARE_SCALE};
+use crate::{
+    Compliance, Component, Fund, FundClient, FundError, PriceQuote, ShelfStatus, SHARE_SCALE,
+};
 
 /// Classes every token Open except the one stored under "perm".
 #[contract]
@@ -506,7 +508,8 @@ fn rebalance_reweights_every_share_within_the_oracle_bound() {
     let (sell, buy) = (&s.assets[1].token, &s.assets[0].token);
     s.assets[0].admin.mint(&s.manager, &(5 * SHARE_SCALE));
     // 5.0 of asset 1 out, 4.96 of asset 0 in: a 0.8% haircut, inside the 1% bound.
-    s.fund.rebalance(&sell.address, &(5 * SHARE_SCALE), &buy.address, &49_600_000);
+    s.fund
+        .rebalance(&sell.address, &(5 * SHARE_SCALE), &buy.address, &49_600_000);
 
     let units = s.fund.units_per_share();
     assert_eq!(units.get(0), Some(14_960_000));
@@ -514,7 +517,8 @@ fn rebalance_reweights_every_share_within_the_oracle_bound() {
     assert_eq!(sell.balance(&s.manager), 5 * SHARE_SCALE);
 
     let before = balances(&s, &investor);
-    s.fund.redeem(&investor, &investor, &(10 * SHARE_SCALE), &Vec::new(&s.env));
+    s.fund
+        .redeem(&investor, &investor, &(10 * SHARE_SCALE), &Vec::new(&s.env));
     let after = balances(&s, &investor);
     assert_eq!(after[0] - before[0], 149_600_000);
     assert_eq!(after[1] - before[1], 150_000_000);
@@ -530,9 +534,19 @@ fn rebalance_rejects_a_fill_worse_than_the_oracle_bound() {
 
     s.assets[1].admin.mint(&s.manager, &(10 * SHARE_SCALE));
     // 1.0 of asset 0 ($2) out for 1.9 of asset 1 ($1.90): a 5% loss.
-    let result = s.fund.try_rebalance(&s.assets[0].token.address, &SHARE_SCALE, &s.assets[1].token.address, &19_000_000);
+    let result = s.fund.try_rebalance(
+        &s.assets[0].token.address,
+        &SHARE_SCALE,
+        &s.assets[1].token.address,
+        &19_000_000,
+    );
     assert_eq!(result, Err(Ok(FundError::PriceTooLow.into())));
-    let ok = s.fund.try_rebalance(&s.assets[0].token.address, &SHARE_SCALE, &s.assets[1].token.address, &19_900_000);
+    let ok = s.fund.try_rebalance(
+        &s.assets[0].token.address,
+        &SHARE_SCALE,
+        &s.assets[1].token.address,
+        &19_900_000,
+    );
     assert!(ok.is_ok());
 }
 
@@ -542,17 +556,25 @@ fn rebalance_needs_an_admin_set_oracle_and_known_components() {
     let investor = funded_investor(&s, 100 * SHARE_SCALE);
     s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
     let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
-    assert_eq!(s.fund.try_rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE), Err(Ok(FundError::NoOracle.into())));
+    assert_eq!(
+        s.fund.try_rebalance(a, &SHARE_SCALE, b, &SHARE_SCALE),
+        Err(Ok(FundError::NoOracle.into()))
+    );
 
     with_oracle(&s);
     let stranger = create_asset(&s.env, false);
     assert_eq!(
-        s.fund.try_rebalance(a, &SHARE_SCALE, &stranger.token.address, &SHARE_SCALE),
+        s.fund
+            .try_rebalance(a, &SHARE_SCALE, &stranger.token.address, &SHARE_SCALE),
         Err(Ok(FundError::UnknownComponent.into()))
     );
-    assert_eq!(s.fund.try_rebalance(a, &SHARE_SCALE, a, &SHARE_SCALE), Err(Ok(FundError::SameComponent.into())));
     assert_eq!(
-        s.fund.try_rebalance(a, &(100 * SHARE_SCALE), b, &(100 * SHARE_SCALE)),
+        s.fund.try_rebalance(a, &SHARE_SCALE, a, &SHARE_SCALE),
+        Err(Ok(FundError::SameComponent.into()))
+    );
+    assert_eq!(
+        s.fund
+            .try_rebalance(a, &(100 * SHARE_SCALE), b, &(100 * SHARE_SCALE)),
         Err(Ok(FundError::InsufficientBalance.into()))
     );
 }
