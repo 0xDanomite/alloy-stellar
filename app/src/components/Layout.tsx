@@ -144,6 +144,14 @@ export function Layout() {
               Portfolio
             </NavLink>
             <NavLink
+              to="/how"
+              className={({ isActive }) =>
+                `hidden rounded-md px-3 py-2 text-label hover:bg-secondary lg:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
+              }
+            >
+              How it works
+            </NavLink>
+            <NavLink
               to="/built"
               className={({ isActive }) =>
                 `hidden rounded-md px-3 py-2 text-label hover:bg-secondary lg:block ${isActive ? "text-foreground" : "text-muted-foreground"}`
@@ -174,6 +182,7 @@ export function Layout() {
             <AlloyMark className="h-4 w-auto" />
             Alloy on Stellar, built at HackMeridian 2026
           </span>
+          <Link to="/how" className="hover:text-foreground">How it works</Link>
           <Link to="/built" className="hover:text-foreground">What we built</Link>
           <AdminLink placement="footer" />
           <a href={links.repo} target="_blank" rel="noreferrer" className="hover:text-foreground">Source on GitHub</a>
