@@ -5,7 +5,8 @@
       "aLQD": "CC5QR5OOQMCPVSL3SJMH7QESCFINWUMX3427CT4NIDBS3FRVDHAM4NAJ"
     },
     "platform": "CDL3FYEGDRYQP2MOW7Z4UBGUQLEHJ6VBPBLGE3YJ5ITVDB5CMKY7CJ7R",
-    "timelock": "CBI225UGSIKUZUVV4NIXDRCFST5TIMNJG3ISE6AAZMPVGWUSM4TJUKDM"
+    "timelock": "CBI225UGSIKUZUVV4NIXDRCFST5TIMNJG3ISE6AAZMPVGWUSM4TJUKDM",
+    "zap": "CCYOZPNZDURTF6JWXYDLRSIP3X3QFQNOOTLGUIA7PQ4PLEHNTYMEK4DP"
   },
   "assets": {
     "XLM": {
@@ -155,6 +156,26 @@
       "label": "timelock execute: platform admin is the timelock",
       "hash": "9cb38093f19b9cf65b476d216b64155c70f7ac5737472559c6e14e8edd23b9d5",
       "url": "https://stellar.expert/explorer/public/tx/9cb38093f19b9cf65b476d216b64155c70f7ac5737472559c6e14e8edd23b9d5"
+    },
+    {
+      "label": "deploy zap v0.5.0 (upload)",
+      "hash": "899b59b9dc4fca372199ae481aa2fe14b49ea2764254b697d539e7ffb959411c",
+      "url": "https://stellar.expert/explorer/public/tx/899b59b9dc4fca372199ae481aa2fe14b49ea2764254b697d539e7ffb959411c"
+    },
+    {
+      "label": "deploy zap v0.5.0",
+      "hash": "ee04da299f10b90d3205d32a6e48dac51e2347e694943eae357ede3428c817b0",
+      "url": "https://stellar.expert/explorer/public/tx/ee04da299f10b90d3205d32a6e48dac51e2347e694943eae357ede3428c817b0"
+    },
+    {
+      "label": "zap: 1.0608 USDC in, 1 aLQD out, one signature",
+      "hash": "122b1775aab244ceb02ce5a10728aa1efd2045f7d29444b0a466fd0d42fbeb6b",
+      "url": "https://stellar.expert/explorer/public/tx/122b1775aab244ceb02ce5a10728aa1efd2045f7d29444b0a466fd0d42fbeb6b"
+    },
+    {
+      "label": "zap: 0.5 aLQD in, 0.5287 USDC out, one signature",
+      "hash": "48d69f264e962e4f833f75ccb8ff09f3287d767e70c9297c627c456eddb73ed5",
+      "url": "https://stellar.expert/explorer/public/tx/48d69f264e962e4f833f75ccb8ff09f3287d767e70c9297c627c456eddb73ed5"
     }
   ],
   "fund_wasm": "a85d6d53dfe894ef6483aad0613359584e5a78629c159cf3dbf53d74395a0404",
