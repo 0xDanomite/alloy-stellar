@@ -91,6 +91,8 @@ simulates and needs no fee.
 | `fee_escrow(recipient)`, `claim_fee(recipient)` | anyone | Fee shares held for a recipient that could not hold them when they accrued, and their release once it can |
 | `set_platform_fee(share_bps, recipient)` | platform admin | The platform's cut of the fee, at most 5000 bps of it; recipient must pass the allowlist |
 | `set_metadata(key, value)`, `metadata()` | manager / anyone | Up to 8 entries such as `description`, `strategy`, `website`, 512 bytes each; an empty value removes one |
+| `trade(sell, sold, buy, min_bought, path)` | manager, `Managed` only | Swap inside the fund through the Soroswap router; min out is the larger of `min_bought` and 99% at oracle prices; returns the amount bought |
+| `set_router(router)`, `router()` | platform admin / anyone | The DEX router `trade` uses; `mainnet` builds default to Soroswap's |
 | `window_loss_ppb()`, `last_rebalance()` | anyone | Rebalance loss used in the rolling 24 hour window, and the last rebalance time |
 | SEP-41: `balance`, `transfer`, `transfer_from`, `approve`, `allowance`, `burn`, `burn_from`, `decimals`, `name`, `symbol` | | Standard token interface |
 
@@ -217,9 +219,12 @@ Before signing, check `price` for both tokens and confirm
 `bought * price(buy) >= 0.99 * sold * price(sell)`. Where the manager
 sources the bought asset (SDEX, an RFQ desk) is up to them.
 
-Agent-run rebalancing through Soroswap's aggregator, under a manager policy
-(target weights, drift bands, spend limits), is on the roadmap. It is not
-shipped.
+Fund code v0.4.0 (not yet released) adds `trade`, which swaps inside the
+fund through the Soroswap router instead of through the manager's
+wallet. Soroswap has usable pools only for XLM/USDC and USDC/USTRY today;
+see docs/how-it-works.md for the measured reserves. Agent-run rebalancing
+under a manager policy (target weights, drift bands, spend limits) is on
+the roadmap. It is not shipped.
 
 ## CLI
 

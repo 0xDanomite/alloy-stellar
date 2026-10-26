@@ -2,9 +2,9 @@ extern crate std;
 
 use soroban_sdk::{
     contract, contractimpl,
-    testutils::{Address as _, IssuerFlags, Ledger as _},
+    testutils::{Address as _, IssuerFlags, Ledger as _, MockAuth, MockAuthInvoke},
     token::{StellarAssetClient, TokenClient},
-    vec, Address, Env, String, Symbol, Vec,
+    vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
 use crate::{
@@ -1013,4 +1013,275 @@ fn fee_for_a_recipient_off_the_allowlist_waits_in_escrow() {
     assert_eq!(s.fund.balance(&s.manager), 5_000_000);
     assert_eq!(s.fund.fee_escrow(&s.manager), 0);
     assert_eq!(s.fund.balance(&s.fund.address), 5_000_000);
+}
+
+/// A one-pool stand-in for the Soroswap router with the same call shape:
+/// it requires `to`'s auth, pulls `amount_in` of `path[0]` from `to` into
+/// the pool (itself), and pays `amount_in * rate / 10_000` of the last token.
+/// `skim` pays half and ignores the minimum; `greedy` pulls one unit extra.
+#[contract]
+struct MockRouter;
+
+#[contractimpl]
+impl MockRouter {
+    pub fn configure(env: Env, rate_bps: i128, skim: bool, greedy: bool) {
+        let instance = env.storage().instance();
+        instance.set(&soroban_sdk::symbol_short!("rate"), &rate_bps);
+        instance.set(&soroban_sdk::symbol_short!("skim"), &skim);
+        instance.set(&soroban_sdk::symbol_short!("greedy"), &greedy);
+    }
+
+    pub fn router_pair_for(env: Env, _token_a: Address, _token_b: Address) -> Address {
+        env.current_contract_address()
+    }
+
+    pub fn swap_exact_tokens_for_tokens(
+        env: Env,
+        amount_in: i128,
+        amount_out_min: i128,
+        path: Vec<Address>,
+        to: Address,
+        deadline: u64,
+    ) -> Vec<i128> {
+        to.require_auth();
+        assert!(env.ledger().timestamp() < deadline, "deadline expired");
+        let instance = env.storage().instance();
+        let rate: i128 = instance
+            .get(&soroban_sdk::symbol_short!("rate"))
+            .unwrap_or(10_000);
+        let skim: bool = instance
+            .get(&soroban_sdk::symbol_short!("skim"))
+            .unwrap_or(false);
+        let greedy: bool = instance
+            .get(&soroban_sdk::symbol_short!("greedy"))
+            .unwrap_or(false);
+        let out = amount_in * rate / 10_000;
+        assert!(skim || out >= amount_out_min, "insufficient output amount");
+        let pool = env.current_contract_address();
+        let pulled = if greedy { amount_in + 1 } else { amount_in };
+        TokenClient::new(&env, &path.first_unchecked()).transfer(&to, &pool, &pulled);
+        let paid = if skim { out / 2 } else { out };
+        TokenClient::new(&env, &path.last_unchecked()).transfer(&pool, &to, &paid);
+        vec![&env, amount_in, paid]
+    }
+}
+
+fn with_router<'a>(s: &'a Setup<'a>, rate_bps: i128) -> MockRouterClient<'a> {
+    let id = s.env.register(MockRouter, ());
+    let router = MockRouterClient::new(&s.env, &id);
+    router.configure(&rate_bps, &false, &false);
+    for asset in &s.assets {
+        asset.admin.mint(&id, &(1_000 * SHARE_SCALE));
+    }
+    s.fund.set_router(&id);
+    router
+}
+
+/// A managed fund holding 10 shares (10, 20 and 5 of the three assets at
+/// $1 each) with an oracle set.
+fn trading_fund<'a>() -> Setup<'a> {
+    let s = managed(Compliance::Open);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    with_oracle(&s);
+    s
+}
+
+fn route(s: &Setup, from: usize, to: usize) -> Vec<Address> {
+    vec![
+        &s.env,
+        s.assets[from].token.address.clone(),
+        s.assets[to].token.address.clone(),
+    ]
+}
+
+#[test]
+fn trade_swaps_through_the_router_with_the_fund_as_trader() {
+    let s = trading_fund();
+    with_router(&s, 9_950);
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+
+    // Only the manager signs; the fund authorizes its own input transfer.
+    let path = route(&s, 1, 0);
+    s.env.mock_auths(&[MockAuth {
+        address: &s.manager,
+        invoke: &MockAuthInvoke {
+            contract: &s.fund.address,
+            fn_name: "trade",
+            args: (sell, 5 * SHARE_SCALE, buy, 0i128, path.clone()).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    let bought = s.fund.trade(sell, &(5 * SHARE_SCALE), buy, &0, &path);
+
+    assert_eq!(bought, 49_750_000);
+    assert_eq!(s.fund.holdings().get_unchecked(0), 149_750_000);
+    assert_eq!(s.fund.holdings().get_unchecked(1), 150_000_000);
+    assert_eq!(s.assets[0].token.balance(&s.manager), 0);
+    assert_eq!(s.assets[1].token.balance(&s.manager), 0);
+    assert!(s.fund.window_loss_ppb() > 0);
+}
+
+#[test]
+fn trade_demands_the_larger_of_the_callers_minimum_and_the_oracle_floor() {
+    let s = trading_fund();
+    let router = with_router(&s, 9_850);
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+    let path = route(&s, 1, 0);
+
+    // 1.5% worse than the oracle: the router is asked for at least 99%.
+    assert!(s
+        .fund
+        .try_trade(sell, &(5 * SHARE_SCALE), buy, &0, &path)
+        .is_err());
+
+    router.configure(&9_950, &false, &false);
+    assert!(s
+        .fund
+        .try_trade(sell, &(5 * SHARE_SCALE), buy, &49_800_000, &path)
+        .is_err());
+    assert_eq!(
+        s.fund
+            .trade(sell, &(5 * SHARE_SCALE), buy, &49_700_000, &path),
+        49_750_000
+    );
+}
+
+#[test]
+fn trade_trusts_balances_not_the_router() {
+    let s = trading_fund();
+    let router = with_router(&s, 10_000);
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+    let path = route(&s, 1, 0);
+
+    router.configure(&10_000, &true, &false);
+    assert_eq!(
+        s.fund.try_trade(sell, &(5 * SHARE_SCALE), buy, &0, &path),
+        Err(Ok(FundError::SwapShortfall.into()))
+    );
+}
+
+#[test]
+fn the_fund_authorizes_exactly_its_input_and_nothing_more() {
+    let s = trading_fund();
+    let router = with_router(&s, 10_000);
+    router.configure(&10_000, &false, &true);
+    let (sell, buy) = (&s.assets[1].token.address, &s.assets[0].token.address);
+    let path = route(&s, 1, 0);
+    s.env.mock_auths(&[MockAuth {
+        address: &s.manager,
+        invoke: &MockAuthInvoke {
+            contract: &s.fund.address,
+            fn_name: "trade",
+            args: (sell, 5 * SHARE_SCALE, buy, 0i128, path.clone()).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    let result = s.fund.try_trade(sell, &(5 * SHARE_SCALE), buy, &0, &path);
+    assert!(result.is_err());
+    assert_ne!(result, Err(Ok(FundError::SwapShortfall.into())));
+    assert_eq!(s.fund.holdings().get_unchecked(1), 200_000_000);
+}
+
+#[test]
+fn trade_checks_route_router_and_mandate() {
+    let s = trading_fund();
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    #[cfg(not(any(feature = "mainnet", feature = "testnet")))]
+    assert_eq!(
+        s.fund.try_trade(b, &SHARE_SCALE, a, &0, &route(&s, 1, 0)),
+        Err(Ok(FundError::NoRouter.into()))
+    );
+    with_router(&s, 10_000);
+    for path in [
+        route(&s, 0, 1),
+        vec![&s.env, b.clone()],
+        vec![
+            &s.env,
+            b.clone(),
+            b.clone(),
+            a.clone(),
+            b.clone(),
+            a.clone(),
+        ],
+    ] {
+        assert_eq!(
+            s.fund.try_trade(b, &SHARE_SCALE, a, &0, &path),
+            Err(Ok(FundError::InvalidPath.into()))
+        );
+    }
+    let hop = vec![
+        &s.env,
+        b.clone(),
+        s.assets[2].token.address.clone(),
+        a.clone(),
+    ];
+    assert_eq!(s.fund.trade(b, &SHARE_SCALE, a, &0, &hop), SHARE_SCALE);
+
+    let locked = setup(Compliance::Open, [false; 3]);
+    let (a, b) = (
+        &locked.assets[0].token.address,
+        &locked.assets[1].token.address,
+    );
+    assert_eq!(
+        locked
+            .fund
+            .try_trade(b, &SHARE_SCALE, a, &0, &route(&locked, 1, 0)),
+        Err(Ok(FundError::MandateLocked.into()))
+    );
+}
+
+#[test]
+fn trades_share_the_rebalance_cooldown_and_loss_budget() {
+    let s = trading_fund();
+    with_router(&s, 9_920);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    s.assets[0].admin.mint(&s.manager, &(10 * SHARE_SCALE));
+
+    at(&s, 1_000);
+    s.fund.trade(b, &(5 * SHARE_SCALE), a, &0, &route(&s, 1, 0));
+    assert_eq!(
+        s.fund.try_rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE),
+        Err(Ok(FundError::RebalanceCooldown.into()))
+    );
+
+    // Each trade gives up 0.8% of $5 out of a ~$35 fund, about 11.4 bps.
+    let mut now = 1_000;
+    let mut accepted = 1;
+    let refused = loop {
+        now += 60;
+        at(&s, now);
+        let (sell, path) = if accepted % 2 == 0 {
+            (b, route(&s, 1, 0))
+        } else {
+            (a, route(&s, 0, 1))
+        };
+        let buy = &path.last_unchecked();
+        match s.fund.try_trade(sell, &(5 * SHARE_SCALE), buy, &0, &path) {
+            Ok(_) => accepted += 1,
+            Err(error) => break error,
+        }
+        assert!(accepted < 32);
+    };
+    assert_eq!(refused, Ok(FundError::LossBudgetExceeded.into()));
+    assert!(s.fund.window_loss_ppb() <= crate::MAX_WINDOW_LOSS_BPS * 100_000);
+}
+
+#[test]
+fn router_is_set_by_the_platform_admin() {
+    let s = setup(Compliance::Open, [false; 3]);
+    #[cfg(not(any(feature = "mainnet", feature = "testnet")))]
+    assert_eq!(s.fund.router(), None);
+    #[cfg(feature = "mainnet")]
+    assert_eq!(
+        s.fund.router(),
+        Some(Address::from_str(
+            &s.env,
+            "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH"
+        ))
+    );
+    let router = Address::generate(&s.env);
+    s.fund.set_router(&router);
+    assert_eq!(s.env.auths()[0].0, s.fund.platform());
+    assert_eq!(s.fund.router(), Some(router));
 }

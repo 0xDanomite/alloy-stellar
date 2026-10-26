@@ -23,8 +23,10 @@ mod network;
 mod storage;
 
 use soroban_sdk::{
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
-    token::TokenClient, Address, Env, Map, String, Symbol, Vec,
+    token::TokenClient,
+    vec, Address, Env, IntoVal, Map, String, Symbol, Vec,
 };
 
 pub use storage::{Compliance, Component, FeeState, Mandate, PlatformFee};
@@ -77,6 +79,9 @@ pub enum FundError {
     RebalanceCooldown = 27,
     BadPrice = 28,
     IssuanceClosed = 29,
+    NoRouter = 30,
+    InvalidPath = 31,
+    SwapShortfall = 32,
 }
 
 /// Mirrors `alloy_platform::ShelfStatus`.
@@ -108,6 +113,24 @@ pub struct PriceQuote {
 pub trait NavInterface {
     fn price(env: Env, token: Address) -> PriceQuote;
 }
+
+/// The two Soroswap router calls a trade makes. The router pulls `amount_in`
+/// of `path[0]` from `to` into the first pair and pays the output to `to`.
+#[contractclient(name = "RouterClient")]
+pub trait RouterInterface {
+    fn swap_exact_tokens_for_tokens(
+        env: Env,
+        amount_in: i128,
+        amount_out_min: i128,
+        path: Vec<Address>,
+        to: Address,
+        deadline: u64,
+    ) -> Vec<i128>;
+    fn router_pair_for(env: Env, token_a: Address, token_b: Address) -> Address;
+}
+
+/// Longest swap route: the two components and up to two hops between them.
+pub const MAX_PATH: u32 = 4;
 
 /// The most value a rebalance may give up against oracle prices: 1%.
 pub const MAX_REBALANCE_LOSS_BPS: i128 = 100;
@@ -369,6 +392,10 @@ fn mandate(env: &Env) -> Mandate {
 
 fn nav_address(env: &Env) -> Option<Address> {
     storage::nav(env).or_else(|| network::DEFAULT_NAV.map(|id| Address::from_str(env, id)))
+}
+
+fn router_address(env: &Env) -> Option<Address> {
+    storage::router(env).or_else(|| network::DEFAULT_ROUTER.map(|id| Address::from_str(env, id)))
 }
 
 fn oracle_price(env: &Env, oracle: &NavClient, token: &Address) -> i128 {
@@ -785,6 +812,107 @@ impl Fund {
             bought,
         }
         .publish(&env);
+    }
+
+    /// The manager sells `sold` of one component for another through the
+    /// Soroswap router along `path` (`sell`, any hops, `buy`), with the fund
+    /// itself as the trader: assets never pass through the manager. The fund
+    /// authorizes exactly one transfer, `sold` of `sell` into the route's
+    /// first pair, and demands at least the larger of `min_bought` and 99%
+    /// of `sold` at oracle prices. The result counts toward the same loss
+    /// budget and cooldown as `rebalance`. Returns the amount bought.
+    pub fn trade(
+        env: Env,
+        sell: Address,
+        sold: i128,
+        buy: Address,
+        min_bought: i128,
+        path: Vec<Address>,
+    ) -> i128 {
+        let manager = storage::manager(&env);
+        manager.require_auth();
+        storage::bump_instance(&env);
+        if min_bought < 0 {
+            panic_with_error!(&env, FundError::InvalidAmount);
+        }
+        let oracle = begin_trade(&env, &sell, sold, &buy);
+        if path.len() < 2
+            || path.len() > MAX_PATH
+            || path.first_unchecked() != sell
+            || path.last_unchecked() != buy
+        {
+            panic_with_error!(&env, FundError::InvalidPath);
+        }
+        let router =
+            router_address(&env).unwrap_or_else(|| panic_with_error!(&env, FundError::NoRouter));
+
+        let buy_price = oracle_price(&env, &oracle, &buy);
+        let value_out = usd_value(&env, sold, oracle_price(&env, &oracle, &sell), true);
+        let floor = mul_div(&env, value_out, BPS - MAX_REBALANCE_LOSS_BPS, BPS, true);
+        let min_out = mul_div(&env, floor, SHARE_SCALE, buy_price, true).max(min_bought);
+        let value_before = fund_value(&env, &oracle);
+
+        let fund = env.current_contract_address();
+        let router_client = RouterClient::new(&env, &router);
+        let pair = router_client.router_pair_for(&sell, &path.get_unchecked(1));
+        let sell_before = held(&env, &sell);
+        let buy_before = held(&env, &buy);
+        // Covers only the next call this contract makes: the swap below.
+        env.authorize_as_current_contract(vec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: sell.clone(),
+                    fn_name: Symbol::new(&env, "transfer"),
+                    args: (fund.clone(), pair, sold).into_val(&env),
+                },
+                sub_invocations: Vec::new(&env),
+            }),
+        ]);
+        router_client.swap_exact_tokens_for_tokens(
+            &sold,
+            &min_out,
+            &path,
+            &fund,
+            &(env.ledger().timestamp() + 1),
+        );
+        // Balances, not the router's report, decide what the fund got.
+        let bought = held(&env, &buy) - buy_before;
+        if bought < min_out || sell_before - held(&env, &sell) > sold {
+            panic_with_error!(&env, FundError::SwapShortfall);
+        }
+        let value_in = usd_value(&env, bought, buy_price, false);
+        settle_trade(&env, value_before, value_out, value_in);
+
+        events::Traded {
+            manager,
+            router,
+            sell,
+            sold,
+            buy,
+            bought,
+            min_bought: min_out,
+        }
+        .publish(&env);
+        bought
+    }
+
+    /// The DEX router `trade` uses. Only the platform admin sets it, like the
+    /// oracle, so a manager can't route the fund's assets through a contract
+    /// they control.
+    pub fn set_router(env: Env, router: Address) {
+        PlatformClient::new(&env, &storage::platform(&env))
+            .admin()
+            .require_auth();
+        storage::bump_instance(&env);
+        storage::set_router(&env, &router);
+        events::RouterSet { router }.publish(&env);
+    }
+
+    /// The admin-set router, else the network default compiled into this
+    /// build, else none.
+    pub fn router(env: Env) -> Option<Address> {
+        router_address(&env)
     }
 
     /// What rebalances have given up against oracle prices inside the

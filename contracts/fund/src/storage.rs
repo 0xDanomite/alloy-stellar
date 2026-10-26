@@ -99,6 +99,7 @@ enum DataKey {
     LastRebalance,
     Opened,
     FeeEscrow(Address),
+    Router,
 }
 
 pub(crate) fn bump_instance(env: &Env) {
@@ -398,4 +399,12 @@ pub(crate) fn fee_escrow(env: &Env, recipient: &Address) -> i128 {
 
 pub(crate) fn set_fee_escrow(env: &Env, recipient: &Address, shares: i128) {
     write_persistent_i128(env, &DataKey::FeeEscrow(recipient.clone()), shares);
+}
+
+pub(crate) fn router(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Router)
+}
+
+pub(crate) fn set_router(env: &Env, router: &Address) {
+    env.storage().instance().set(&DataKey::Router, router);
 }
