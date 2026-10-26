@@ -54,3 +54,32 @@ export function Step({ n, title, done, children }: { n: number; title: string; d
     </section>
   );
 }
+
+/** Two ways to do the same thing, side by side: the panel below follows the choice. */
+export function ModeSwitch<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: readonly { id: T; label: string }[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-0.5 rounded-full border bg-surface-sunken/60 p-0.5" role="group" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          aria-pressed={value === option.id}
+          onClick={() => onChange(option.id)}
+          className={`min-h-9 rounded-full px-3 text-label ${value === option.id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}

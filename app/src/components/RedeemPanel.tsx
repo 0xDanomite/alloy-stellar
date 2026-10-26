@@ -17,8 +17,10 @@ import {
 } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
+import { explainZap, quoteZapRedeem, usdcWallet, zapPlan, zapRedeem, type ZapPlan } from "../lib/zap";
 import { Button, TxNotice, type TxPhase } from "./ui";
-import { SharesInput } from "./panel-bits";
+import { ModeSwitch, SharesInput } from "./panel-bits";
+import { AddUsdc, ZapQuote, ZapRoutes } from "./zap-bits";
 
 function OwedClaims({ fund, position, onChanged }: { fund: Fund; position: Position; onChanged: () => void }) {
   const { address } = useWallet();
@@ -136,6 +138,101 @@ function CashOut({ received }: { received: { leg: FundComponent; amount: bigint 
   );
 }
 
+type RedeemMode = "usdc" | "assets";
+
+const MODES = [
+  { id: "usdc", label: "Receive USDC" },
+  { id: "assets", label: "Receive the assets" },
+] as const;
+
+function UsdcRedeem({
+  fund,
+  plan,
+  shares,
+  position,
+  onDone,
+}: {
+  fund: Fund;
+  plan: ZapPlan;
+  shares: bigint | null;
+  position: Position | null;
+  onDone: () => void;
+}) {
+  const { address } = useWallet();
+  const [walletVersion, setWalletVersion] = useState(0);
+  const [quoteVersion, setQuoteVersion] = useState(0);
+  const [phase, setPhase] = useState<TxPhase>({ state: "idle" });
+  const valid = shares !== null && shares > 0n;
+  const wallet = useAsync(() => usdcWallet(address ?? ""), address ? `usdc:${address}` : null, walletVersion);
+  const holds = valid && position !== null && (shares ?? 0n) <= position.shares;
+  const owner = address && holds && wallet.data?.hasTrustline ? address : null;
+  const ready = !address || wallet.data !== undefined;
+  const quote = useAsync(
+    () => quoteZapRedeem(fund, plan, shares ?? 0n, owner),
+    valid && fund.totalSupply > 0n && ready ? `zap-redeem:${fund.id}:${shares}:${owner ?? ""}` : null,
+    quoteVersion,
+  );
+
+  async function run() {
+    if (!address || !shares || !quote.data) return;
+    setPhase({ state: "working", message: "Confirm in your wallet. One signature redeems and sells for USDC…" });
+    try {
+      const result = await zapRedeem(fund, plan, address, shares, quote.data.minUsdc);
+      setPhase({
+        state: "done",
+        message: `Redeemed ${formatAmount(shares)} ${fund.symbol} for ${formatAmount(result.result, 4)} USDC.`,
+        url: result.url,
+      });
+      setWalletVersion((v) => v + 1);
+      setQuoteVersion((v) => v + 1);
+      onDone();
+    } catch (err) {
+      setPhase({ state: "failed", message: explainZap(err) });
+    }
+  }
+
+  return (
+    <>
+      <div className="space-y-3">
+        <ZapQuote
+          label="You receive about"
+          usdc={quote.data?.usdc}
+          loading={valid && fund.totalSupply > 0n && (quote.loading || !ready)}
+          error={quote.error}
+          bound={
+            quote.data
+              ? `At least ${formatAmount(quote.data.minUsdc, 4)} USDC, ${quote.data.simulated ? "simulated on your shares" : "estimated on Soroswap"} just now with 1% room for price movement.`
+              : null
+          }
+        />
+        <ZapRoutes plan={plan} direction="redeem" />
+        <p className="text-[0.8125rem] text-muted-foreground">
+          The fund pays out its assets and Soroswap sells them for USDC, in one transaction. If the pools are thin,
+          receive the assets instead: that path can't be switched off.
+        </p>
+      </div>
+
+      {address && wallet.data && !wallet.data.hasTrustline ? (
+        <AddUsdc address={address} why="Receiving USDC needs it." onAdded={() => setWalletVersion((v) => v + 1)} />
+      ) : (
+        address && (
+          <>
+            <Button
+              className="w-full"
+              onClick={run}
+              busy={phase.state === "working"}
+              disabled={!holds || !quote.data || !quote.data.simulated}
+            >
+              Redeem {valid ? formatAmount(shares ?? 0n) : ""} {fund.symbol} for USDC
+            </Button>
+            <TxNotice phase={phase} />
+          </>
+        )
+      )}
+    </>
+  );
+}
+
 export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; position: Position | null; onChanged: () => void }) {
   const { address, connect, connecting } = useWallet();
   const [input, setInput] = useState("1");
@@ -144,8 +241,17 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
   const [phase, setPhase] = useState<TxPhase>({ state: "idle" });
   const [skipOffer, setSkipOffer] = useState<FundComponent[] | null>(null);
   const [received, setReceived] = useState<{ leg: FundComponent; amount: bigint }[] | null>(null);
+  const [chosen, setChosen] = useState<RedeemMode | null>(null);
 
-  const quote = useAsync(() => quoteRedeem(fund, shares ?? 0n), valid && fund.totalSupply > 0n ? `${fund.id}:${shares}` : null);
+  const zap = useAsync(() => zapPlan(fund), fund.id);
+  const plan = zap.data ?? null;
+  const zappable = plan !== null && plan.blocked === null;
+  const mode: RedeemMode = zappable ? (chosen ?? "usdc") : "assets";
+
+  const quote = useAsync(
+    () => quoteRedeem(fund, shares ?? 0n),
+    valid && fund.totalSupply > 0n && mode === "assets" ? `${fund.id}:${shares}` : null,
+  );
   const tooMany = valid && position !== null && (shares ?? 0n) > position.shares;
 
   async function run(skip: FundComponent[]) {
@@ -187,6 +293,12 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
 
   return (
     <div className="space-y-5">
+      {zap.loading && !zap.data ? (
+        <div className="skeleton h-10 w-full rounded-full" />
+      ) : (
+        zappable && <ModeSwitch label="How to be paid" options={MODES} value={mode} onChange={setChosen} />
+      )}
+
       <SharesInput
         id="redeem-shares"
         label={`Shares of ${fund.symbol}`}
@@ -205,64 +317,82 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
         }
       />
 
-      <div>
-        <div className="text-[0.8125rem] text-muted-foreground">You receive</div>
-        <ul className="mt-2 space-y-1.5">
-          {fund.components.map((leg, i) => (
-            <li key={leg.token} className="flex justify-between gap-3 text-[0.9375rem]">
-              <span>{leg.code}</span>
-              <span className="num">
-                {quote.data ? formatAmount(quote.data[i] ?? 0n) : valid && fund.totalSupply > 0n ? <span className="skeleton w-16">0</span> : "0"}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-3 text-[0.8125rem] text-muted-foreground">
-          Redemption pays out the assets themselves, straight from the fund. No manager or issuer setting can turn it off.
-        </p>
-      </div>
-
-      {!address ? (
-        <Button className="w-full" onClick={connect} busy={connecting}>
-          Connect wallet to redeem
-        </Button>
-      ) : (
+      {mode === "usdc" && plan ? (
         <>
-          {position && position.shares === 0n && phase.state !== "done" && (
+          {address && position && position.shares === 0n && (
             <p className="text-[0.875rem] text-muted-foreground">You don't hold any {fund.symbol} yet.</p>
           )}
           {tooMany && <p className="text-[0.875rem] text-destructive">That's more than the {formatAmount(position?.shares ?? 0n)} shares you hold.</p>}
-
-          {skipOffer ? (
-            <div className="space-y-3 rounded-lg border border-warning/40 bg-warning-surface p-4 text-[0.875rem]">
-              <p>
-                Your wallet can't receive {skipOffer.map((l) => l.code).join(", ")} right now: it needs a trustline, or the
-                issuer's approval.
-              </p>
-              <p>
-                You can redeem now and the fund keeps your {skipOffer.map((l) => l.code).join(", ")} set aside. Claim it any
-                time later from this page.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={() => run(skipOffer)}>Redeem and set aside {skipOffer.map((l) => l.code).join(", ")}</Button>
-                <Button variant="ghost" onClick={() => setSkipOffer(null)}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <Button
-              className="w-full"
-              onClick={() => run([])}
-              busy={phase.state === "working"}
-              disabled={!valid || tooMany || (position !== null && position.shares === 0n)}
-            >
-              Redeem {valid ? formatAmount(shares ?? 0n) : ""} {fund.symbol}
+          <UsdcRedeem fund={fund} plan={plan} shares={shares} position={position} onDone={onChanged} />
+          {!address && (
+            <Button className="w-full" onClick={connect} busy={connecting}>
+              Connect wallet to redeem
             </Button>
           )}
-          <TxNotice phase={phase} />
-          {phase.state === "done" && received && received.some((r) => r.leg.code !== "USDC") && <CashOut received={received} />}
-          {position && <OwedClaims fund={fund} position={position} onChanged={onChanged} />}
+          {address && position && <OwedClaims fund={fund} position={position} onChanged={onChanged} />}
+        </>
+      ) : (
+        <>
+          <div>
+            <div className="text-[0.8125rem] text-muted-foreground">You receive</div>
+            <ul className="mt-2 space-y-1.5">
+              {fund.components.map((leg, i) => (
+                <li key={leg.token} className="flex justify-between gap-3 text-[0.9375rem]">
+                  <span>{leg.code}</span>
+                  <span className="num">
+                    {quote.data ? formatAmount(quote.data[i] ?? 0n) : valid && fund.totalSupply > 0n ? <span className="skeleton w-16">0</span> : "0"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-[0.8125rem] text-muted-foreground">
+              Redemption pays out the assets themselves, straight from the fund. No manager or issuer setting can turn it off.
+            </p>
+          </div>
+
+          {!address ? (
+            <Button className="w-full" onClick={connect} busy={connecting}>
+              Connect wallet to redeem
+            </Button>
+          ) : (
+            <>
+              {position && position.shares === 0n && phase.state !== "done" && (
+                <p className="text-[0.875rem] text-muted-foreground">You don't hold any {fund.symbol} yet.</p>
+              )}
+              {tooMany && <p className="text-[0.875rem] text-destructive">That's more than the {formatAmount(position?.shares ?? 0n)} shares you hold.</p>}
+
+              {skipOffer ? (
+                <div className="space-y-3 rounded-lg border border-warning/40 bg-warning-surface p-4 text-[0.875rem]">
+                  <p>
+                    Your wallet can't receive {skipOffer.map((l) => l.code).join(", ")} right now: it needs a trustline, or the
+                    issuer's approval.
+                  </p>
+                  <p>
+                    You can redeem now and the fund keeps your {skipOffer.map((l) => l.code).join(", ")} set aside. Claim it any
+                    time later from this page.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => run(skipOffer)}>Redeem and set aside {skipOffer.map((l) => l.code).join(", ")}</Button>
+                    <Button variant="ghost" onClick={() => setSkipOffer(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  className="w-full"
+                  onClick={() => run([])}
+                  busy={phase.state === "working"}
+                  disabled={!valid || tooMany || (position !== null && position.shares === 0n)}
+                >
+                  Redeem {valid ? formatAmount(shares ?? 0n) : ""} {fund.symbol}
+                </Button>
+              )}
+              <TxNotice phase={phase} />
+              {phase.state === "done" && received && received.some((r) => r.leg.code !== "USDC") && <CashOut received={received} />}
+              {position && <OwedClaims fund={fund} position={position} onChanged={onChanged} />}
+            </>
+          )}
         </>
       )}
     </div>
