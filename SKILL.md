@@ -105,6 +105,16 @@ simulates and needs no fee.
 | `set_shelf_asset(token, Unlisted \| Open \| Permissioned)` | admin | Asset shelf |
 | `shelf()`, `shelf_status(token)`, `is_manager(manager)`, `is_fund(fund)`, `fund_count()`, `funds(start, limit)` | anyone | Views; `funds` pages at most 50 |
 
+**Timelock** (not yet deployed; meant to become the platform and NAV admin)
+
+| Function | Who | What |
+| --- | --- | --- |
+| `schedule(proposer, target, fn_name, args, salt)` | proposer | Queues `target.fn_name(args)`; returns the operation id |
+| `execute(executor, target, fn_name, args, salt)` | executor | Runs it once the delay has passed, with the timelock as caller |
+| `cancel(proposer, id)` | proposer | Drops a pending operation |
+| `hash_operation(target, fn_name, args, salt)`, `operation(id)`, `delay()`, `proposers()`, `executors()` | anyone | Views |
+| `set_delay(delay)` | the timelock itself, through `schedule` and `execute` | Changes the delay, at most 30 days |
+
 **NAV** (read-only, holds nothing)
 
 | Function | What |

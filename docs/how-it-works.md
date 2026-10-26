@@ -194,6 +194,32 @@ this way). Alloy treats that as a first-class case:
 - Funds are stored one ledger entry each and listed with
   `funds(start, limit)`.
 
+## Timelock
+
+`contracts/timelock` is the admin the platform and NAV contracts are meant
+to answer to. It has fixed proposers and executors (one to ten each, set at
+construction) and a delay of at most 30 days.
+
+- A proposer calls `schedule(proposer, target, fn_name, args, salt)`. The
+  `scheduled` event carries the full call and the time it becomes ready.
+- After the delay an executor calls `execute` with the same call and salt.
+  The timelock makes the call itself, so a target that checks
+  `admin.require_auth()` sees its admin as the direct caller and needs no
+  signature. Each operation runs once; the record stays so it can't be
+  replayed.
+- A proposer can `cancel` a pending operation.
+- The delay changes only through a scheduled call to the timelock itself
+  (`target` = the timelock, `fn_name` = `set_delay`), so it waits out the
+  delay it replaces. A contract can't call itself on Stellar, so `execute`
+  handles that one call internally and refuses any other self-call.
+
+Handing over a contract uses its two-party `set_admin`: schedule
+`set_admin(timelock)` on the platform (or NAV), and when it executes, the
+current admin signs for that inner call while the timelock consents by
+being the caller. From then on every admin action, including fund-level
+ones gated on the platform admin (`set_nav`, `set_router`,
+`set_platform_fee`), goes through the delay.
+
 ## Buying the basket
 
 Most tokenized-asset liquidity on Stellar is on the built-in order book
