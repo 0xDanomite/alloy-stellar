@@ -155,3 +155,20 @@ pub struct MetadataSet {
 
 #[contractevent(topics = ["issuance_opened"], data_format = "single-value")]
 pub struct IssuanceOpened {}
+
+#[contractevent(topics = ["router_set"], data_format = "single-value")]
+pub struct RouterSet {
+    pub router: Address,
+}
+
+#[contractevent(topics = ["trade"], data_format = "map")]
+pub struct Traded {
+    #[topic]
+    pub manager: Address,
+    pub router: Address,
+    pub sell: Address,
+    pub sold: i128,
+    pub buy: Address,
+    pub bought: i128,
+    pub min_bought: i128,
+}

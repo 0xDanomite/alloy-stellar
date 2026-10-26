@@ -119,6 +119,59 @@ The oracle is whatever the platform admin set with `set_nav`. A build
 with the `mainnet` cargo feature falls back to the mainnet NAV contract
 when none is set; default and `testnet` builds have no fallback.
 
+## Trading through Soroswap
+
+`trade(sell, sold, buy, min_bought, path)` lets the manager of a `Managed`
+fund swap one component for another on
+[Soroswap](https://soroswap.finance) without the assets ever leaving the
+fund's custody: the fund itself calls the router's
+`swap_exact_tokens_for_tokens(sold, min_out, path, fund, now + 1)`.
+
+- `path` runs from `sell` to `buy` through at most two hops
+  (`MAX_PATH = 4`).
+- The fund authorizes exactly one transfer on its own behalf
+  (`authorize_as_current_contract`): `sold` of `sell` to the route's first
+  pair, as named by `router_pair_for`. A router that tries to pull more, or
+  anything else, fails authorization.
+- The minimum out is the larger of the caller's `min_bought` and 99% of
+  `sold` at oracle prices, and the fund checks its own balances afterwards
+  rather than trusting the router's report (`SwapShortfall`).
+- A trade counts toward the same rolling loss budget and 60 second
+  cooldown as `rebalance`.
+- The router is set per fund by the platform admin (`set_router`), as the
+  oracle is, so a manager can't route assets through a contract they
+  control. `mainnet` builds fall back to the Soroswap router
+  `CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH` (wasm
+  `4c3db3eb...ba07`, deployed 2024-03-11, verified on chain and against
+  `soroswap/core` `public/mainnet.contracts.json`); `testnet` builds fall
+  back to `CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD`.
+
+Unit tests drive `trade` against a one-pool mock router with the same call
+shape and auth behavior (the router requires `to`'s auth and pulls the
+input from `to`). There is no fork test against the live router yet: run
+one before the first mainnet trade by registering a fund on a mainnet
+snapshot and calling `trade` with a small XLM/USDC amount.
+
+### Soroswap liquidity for shelf assets
+
+Reserves read from the mainnet router (`get_reserves` through factory
+`CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2`) on
+2026-10-26:
+
+| Pair | Reserves | Usable |
+| --- | --- | --- |
+| XLM / USDC | 342,673 XLM / 58,062 USDC | Yes |
+| USDC / USTRY | 46,369 USDC / 43,107 USTRY | Yes, for modest size |
+| USDC / CETES | 2.25 USDC / 35.06 CETES | No, dust |
+| XLM / USDY | 16.45 XLM / 2.52 USDY | No, dust |
+| USDC / USDY, XLM / USTRY, XLM / CETES, USDY / USTRY, USDY / CETES, USTRY / CETES | no pair | No |
+| BENJI with anything | no pair | No |
+
+So today `trade` is practical between XLM, USDC and USTRY (USTRY via
+USDC). USDY and CETES still trade on the SDEX through `rebalance`, and
+BENJI has no AMM market at all. A trade on a thin pool fails its 99%
+oracle floor rather than filling badly.
+
 ## Issuer rails
 
 Some Stellar assets are permissioned: the issuer sets `AUTH_REQUIRED`, so
