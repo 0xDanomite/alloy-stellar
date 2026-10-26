@@ -19,7 +19,7 @@ read [SKILL.md](SKILL.md). For the design and its guarantees, read
 
 | Path | What it holds |
 | --- | --- |
-| `contracts/fund` | Fund contract, one per fund: SEP-41 shares, `issue`, `redeem`, `withdraw_owed`, `rebalance`, investor allowlist |
+| `contracts/fund` | Fund contract, one per fund: SEP-41 shares, `issue`, `redeem`, `withdraw_owed`, `rebalance`, investor allowlist, streaming fee (`init_fee`, `accrue_fee`), mandate (`set_mandate`, `add_component`), `set_metadata` |
 | `contracts/platform` | Platform contract, one per venue: manager allowlist, asset shelf, `create_fund`, fund registry |
 | `contracts/nav` | Read-only NAV contract: per-asset RedStone and Reflector routes, staleness limits, fallback, divergence |
 | `app` | Vite + React app: fund pages, oracle NAV, buy the basket via SDEX path payments, deposit, redeem, create and manage funds |

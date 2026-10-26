@@ -480,7 +480,9 @@ fn nav_over_a_three_leg_fund() {
     for token in &tokens {
         StellarAssetClient::new(env, token).mint(&investor, &1_000_000_000);
     }
-    fund_wasm::Client::new(env, &fund).issue(&investor, &investor, &20_000_000);
+    let client = fund_wasm::Client::new(env, &fund);
+    client.open_for_issue();
+    client.issue(&investor, &investor, &20_000_000);
     let nav = s.nav.nav(&fund);
     assert_eq!(nav.per_share_usd, 5_200_000_000);
     assert_eq!(nav.total_usd, 10_400_000_000);
