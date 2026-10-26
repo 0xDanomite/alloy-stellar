@@ -228,6 +228,8 @@ Most tokenized-asset liquidity on Stellar is on the built-in order book
 (SDEX), which contracts cannot trade on. The app buys the basket with
 path payments in one classic transaction (direct or via Circle USDC only),
 then calls `issue` in a second. Two signatures, one flow.
+When every non-USDC leg has a Soroswap route, the app defaults to the
+USDC zap below instead: one signature in, one out.
 
 ## USDC in, USDC out
 

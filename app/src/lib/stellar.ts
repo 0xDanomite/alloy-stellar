@@ -131,6 +131,11 @@ interface TimelockMethods {
   cancel(args: { proposer: string; id: Buffer }): AT<null>;
 }
 
+interface ZapMethods {
+  issue_with_usdc(args: { investor: string; fund: string; shares: bigint; max_usdc: bigint; paths: string[][] }): AT<bigint>;
+  redeem_to_usdc(args: { owner: string; fund: string; shares: bigint; min_usdc: bigint; paths: string[][] }): AT<bigint>;
+}
+
 interface SacMethods {
   name(): AT<string>;
   authorized(args: { id: string }): AT<boolean>;
@@ -197,6 +202,7 @@ export const fundClient = bundledClient<FundMethods>(SPECS.fund);
 const sacClient = fetchedClient<SacMethods>();
 export const navClient = bundledClient<NavMethods>(SPECS.nav);
 export const timelockClient = bundledClient<TimelockMethods>(SPECS.timelock);
+export const zapClient = bundledClient<ZapMethods>(SPECS.zap);
 
 function requireDeployments() {
   if (!deployments) throw new Error(`deployments/${network}.json is missing from this build.`);
@@ -942,7 +948,7 @@ export interface TxResult {
   url: string;
 }
 
-export async function send<T>(tx: AT<T>): Promise<TxResult> {
+async function signAndSubmit<T>(tx: AT<T>) {
   const assembled = await tx;
   const simulation = assembled.simulation;
   if (simulation && rpc.Api.isSimulationError(simulation)) throw new ChainError(simulation.error);
@@ -952,7 +958,18 @@ export async function send<T>(tx: AT<T>): Promise<TxResult> {
   if (response && response.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
     throw new Error(`The transaction was submitted but did not succeed (${response.status}).`);
   }
-  return { hash, url: expert.tx(hash) };
+  return { hash, url: expert.tx(hash), sent };
+}
+
+export async function send<T>(tx: AT<T>): Promise<TxResult> {
+  const { hash, url } = await signAndSubmit(tx);
+  return { hash, url };
+}
+
+/** As `send`, and also returns what the contract call returned on chain. */
+export async function sendForResult<T>(tx: AT<T>): Promise<TxResult & { result: T }> {
+  const { hash, url, sent } = await signAndSubmit(tx);
+  return { hash, url, result: sent.result };
 }
 
 /** Simulate only: the same checks the network runs, without asking the wallet to sign. */

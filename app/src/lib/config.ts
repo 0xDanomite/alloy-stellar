@@ -124,7 +124,7 @@ export function isLegacyFundCode(wasmHash: string | null): boolean {
  * alongside the first platform's, and new funds are created on it.
  */
 export interface PlatformDeployment {
-  contracts: { platform: string; nav?: string; funds?: Record<string, string> };
+  contracts: { platform: string; nav?: string; funds?: Record<string, string>; zap?: string };
 }
 
 export interface PlatformSlot {
@@ -133,13 +133,15 @@ export interface PlatformSlot {
   nav: string | null;
   /** Launch funds by symbol: they list first and keep their short symbol. */
   launched: Record<string, string>;
+  /** The USDC zap deployed alongside this platform, for one-signature investing and redeeming. */
+  zap: string | null;
 }
 
 const v4Deployment = files[`../../../deployments/${network}-v4.json`] as PlatformDeployment | undefined;
 const demoDeployment = files[`../../../deployments/${network}-demo.json`] as PlatformDeployment | undefined;
 
 const primarySlot: PlatformSlot | null = deployments
-  ? { id: deployments.contracts.platform, nav: deployments.contracts.nav ?? null, launched: deployments.contracts.funds }
+  ? { id: deployments.contracts.platform, nav: deployments.contracts.nav ?? null, launched: deployments.contracts.funds, zap: null }
   : null;
 
 const v4Slot: PlatformSlot | null = v4Deployment
@@ -147,6 +149,7 @@ const v4Slot: PlatformSlot | null = v4Deployment
       id: v4Deployment.contracts.platform,
       nav: v4Deployment.contracts.nav ?? primarySlot?.nav ?? null,
       launched: v4Deployment.contracts.funds ?? {},
+      zap: v4Deployment.contracts.zap ?? null,
     }
   : null;
 
@@ -156,6 +159,7 @@ const demoSlot: PlatformSlot | null = demoDeployment
       id: demoDeployment.contracts.platform,
       nav: demoDeployment.contracts.nav ?? primarySlot?.nav ?? null,
       launched: demoDeployment.contracts.funds ?? {},
+      zap: demoDeployment.contracts.zap ?? null,
     }
   : null;
 

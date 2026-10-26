@@ -30,6 +30,10 @@ const BUILT_ON_STELLAR = [
     term: "SDEX path payments",
     body: "Buying the basket goes through Stellar's built-in exchange in one transaction, routed directly or through USDC, then you deposit it into the fund in a second.",
   },
+  {
+    term: "Soroswap",
+    body: "A stateless swap contract buys every asset through Soroswap's router and deposits the basket in the same transaction, or redeems and sells it back to USDC. One signature either way, and it holds nothing between calls.",
+  },
 ];
 
 const NETWORK_NAME: Record<Network, string> = { mainnet: "Stellar Mainnet", testnet: "Testnet" };
@@ -297,8 +301,8 @@ export function Landing() {
             title="Own a portfolio, not a spreadsheet."
             steps={[
               { icon: <Grid className="size-4" />, title: "Pick a fund", body: "Every fund shows its holdings, issuers and oracle prices, read live from Stellar." },
-              { icon: <Swap className="size-4" />, title: "Deposit the basket", body: "Buy the exact mix through the Stellar DEX in one transaction, then deposit it to mint your shares." },
-              { icon: <Scale className="size-4" />, title: "Hold or redeem", body: "One token backed by its share of the vault. Redeem for the assets themselves whenever you like." },
+              { icon: <Swap className="size-4" />, title: "Invest with USDC in one signature", body: "The exact mix is bought on Soroswap and deposited for you. Funds holding an asset with no pool take the basket in kind instead." },
+              { icon: <Scale className="size-4" />, title: "Hold or redeem", body: "One token backed by its share of the vault. Redeem for the assets themselves, or straight to USDC, whenever you like." },
             ]}
           />
           <Seat

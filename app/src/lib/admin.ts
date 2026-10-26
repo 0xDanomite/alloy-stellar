@@ -11,6 +11,8 @@ import {
   fundClient,
   clientOptions,
   invalidateFunds,
+  listFunds,
+  managedPlatform,
   navClient,
   read,
   send,
@@ -94,6 +96,20 @@ export function roleOf(control: PlatformControl, address: string): AdminRole {
 /** The platforms `address` can administer, directly or as a timelock proposer or executor. */
 export async function adminRoles(address: string): Promise<AdminRole[]> {
   return (await controls()).map((c) => roleOf(c, address)).filter((r) => r.isAdmin || r.isProposer || r.isExecutor);
+}
+
+export type AccountRole = "Admin" | "Manager" | "Investor";
+
+/**
+ * The strongest seat `address` holds: admin of any platform (directly or
+ * through its timelock), else a manager allowlisted on any platform or
+ * running any fund, else investor.
+ */
+export async function accountRole(address: string): Promise<AccountRole> {
+  if ((await adminRoles(address)).length) return "Admin";
+  if ((await managedPlatform(address)) !== null) return "Manager";
+  const funds = await listFunds().catch(() => []);
+  return funds.some((f) => f.manager === address) ? "Manager" : "Investor";
 }
 
 type Kind = "platform" | "fund";

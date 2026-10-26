@@ -1,6 +1,6 @@
 // Bundles each contract's interface (its spec) into the app so contract
 // clients never fetch it from the network. Reads the attested release wasm:
-//   gh release download v0.4.0 -R 0xDanomite/alloy-stellar -p "*.wasm" -D <dir>
+//   gh release download v0.5.0 -R 0xDanomite/alloy-stellar -p "*.wasm" -D <dir>
 //   node scripts/gen-specs.mjs <dir>
 // The fund's `-mainnet` asset has the same interface as the plain one.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -9,7 +9,7 @@ import { contract } from "@stellar/stellar-sdk";
 
 const dir = process.argv[2];
 if (!dir) throw new Error("usage: node scripts/gen-specs.mjs <dir with release wasm>");
-const wanted = { fund: "alloy-fund", platform: "alloy-platform", nav: "alloy-nav", timelock: "alloy-timelock" };
+const wanted = { fund: "alloy-fund", platform: "alloy-platform", nav: "alloy-nav", timelock: "alloy-timelock", zap: "alloy-zap" };
 const files = readdirSync(dir);
 const out = {};
 for (const [name, pkg] of Object.entries(wanted)) {
