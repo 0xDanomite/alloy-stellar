@@ -232,7 +232,7 @@ The switch in the header moves between mainnet and testnet.
 
 ## Our Team
 
-**Two founders who have built together for almost ten years, and in web3 for four.**
+**Two founders who have built together for almost ten years, across web2 and web3.**
 
 - **Dan**, co-founder: builds Alloy's contracts, app and infrastructure.
 - **Vik**, co-founder: leads Alloy's product, partners and fund managers.
