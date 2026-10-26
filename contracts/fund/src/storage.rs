@@ -56,6 +56,7 @@ enum DataKey {
     Investor(Address),
     Owed(OwedKey),
     Reserved(Address),
+    Nav,
 }
 
 pub(crate) fn bump_instance(env: &Env) {
@@ -252,4 +253,12 @@ pub(crate) fn set_allowance(
             .unwrap();
         storage.extend_ttl(&key, live_for, live_for);
     }
+}
+
+pub(crate) fn nav(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Nav)
+}
+
+pub(crate) fn set_nav(env: &Env, nav: &Address) {
+    env.storage().instance().set(&DataKey::Nav, nav);
 }

@@ -19,7 +19,7 @@ mod storage;
 
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error,
-    token::TokenClient, Address, Env, String, Vec,
+    token::TokenClient, Address, Env, String, Symbol, Vec,
 };
 
 use storage::Config;
@@ -47,6 +47,9 @@ pub enum FundError {
     InvalidExpiration = 12,
     PermissionedComponent = 13,
     ReserveShortfall = 14,
+    NoOracle = 15,
+    PriceTooLow = 16,
+    SameComponent = 17,
 }
 
 /// Mirrors `alloy_platform::ShelfStatus`.
@@ -61,7 +64,26 @@ pub enum ShelfStatus {
 #[contractclient(name = "PlatformClient")]
 pub trait PlatformInterface {
     fn shelf_status(env: Env, token: Address) -> ShelfStatus;
+    fn admin(env: Env) -> Address;
 }
+
+/// Mirrors `alloy_nav::PriceQuote`: USD per whole token, 8 decimals.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceQuote {
+    pub price: i128,
+    pub timestamp: u64,
+    pub source: Symbol,
+    pub divergence_bps: Option<u32>,
+}
+
+#[contractclient(name = "NavClient")]
+pub trait NavInterface {
+    fn price(env: Env, token: Address) -> PriceQuote;
+}
+
+/// The most value a rebalance may give up against oracle prices: 1%.
+pub const MAX_REBALANCE_LOSS_BPS: i128 = 100;
 
 #[contract]
 pub struct Fund;
@@ -460,6 +482,59 @@ impl Fund {
         }
         storage::set_compliance(&env, compliance);
         events::ComplianceSet { compliance }.publish(&env);
+    }
+
+    /// The oracle that bounds rebalances. Only the platform admin sets it,
+    /// so a manager can't point the fund at prices they control.
+    pub fn set_nav(env: Env, nav: Address) {
+        PlatformClient::new(&env, &storage::platform(&env)).admin().require_auth();
+        storage::bump_instance(&env);
+        storage::set_nav(&env, &nav);
+        events::NavSet { nav }.publish(&env);
+    }
+
+    pub fn nav(env: Env) -> Option<Address> {
+        storage::nav(&env)
+    }
+
+    /// The manager swaps `sold` of one component for `bought` of another:
+    /// the fund pays out `sell` and takes in `buy` in the same transaction.
+    /// Shares re-weight through the balances, and the trade must be worth at
+    /// least 99% of what leaves the fund at oracle prices, so a manager or
+    /// agent can't drain value through a bad fill. Where the manager sources
+    /// the bought asset (SDEX, Soroswap, an RFQ desk) is up to them.
+    pub fn rebalance(env: Env, sell: Address, sold: i128, buy: Address, bought: i128) {
+        let manager = storage::manager(&env);
+        manager.require_auth();
+        storage::bump_instance(&env);
+        require_positive(&env, sold);
+        require_positive(&env, bought);
+        if sell == buy {
+            panic_with_error!(&env, FundError::SameComponent);
+        }
+        let components = storage::components(&env);
+        for token in [&sell, &buy] {
+            if !components.iter().any(|c| &c.token == token) {
+                panic_with_error!(&env, FundError::UnknownComponent);
+            }
+        }
+        if sold > available(&env, &sell) {
+            panic_with_error!(&env, FundError::InsufficientBalance);
+        }
+
+        let nav = storage::nav(&env).unwrap_or_else(|| panic_with_error!(&env, FundError::NoOracle));
+        let oracle = NavClient::new(&env, &nav);
+        let value_out = mul_div(&env, sold, oracle.price(&sell).price, SHARE_SCALE, true);
+        let value_in = mul_div(&env, bought, oracle.price(&buy).price, SHARE_SCALE, false);
+        let floor = mul_div(&env, value_out, 10_000 - MAX_REBALANCE_LOSS_BPS, 10_000, true);
+        if value_in < floor {
+            panic_with_error!(&env, FundError::PriceTooLow);
+        }
+
+        let fund = env.current_contract_address();
+        TokenClient::new(&env, &buy).transfer(&manager, &fund, &bought);
+        TokenClient::new(&env, &sell).transfer(&fund, &manager, &sold);
+        events::Rebalanced { manager, sell, sold, buy, bought }.publish(&env);
     }
 
     pub fn set_manager(env: Env, new_manager: Address) {
