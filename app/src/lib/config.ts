@@ -100,6 +100,8 @@ export const links = {
 const FUND_RELEASES: Readonly<Record<string, string>> = {
   "32677e1a2abdbfb57c0f2da513aeed864aa081d604b192cde062f859ff4c446d": "v0.1.0",
   e783b595d4a15c50da44d3a701d2806b64987e01dd1cc041a1c04266efbcd422: "v0.3.0",
+  "a85d6d53dfe894ef6483aad0613359584e5a78629c159cf3dbf53d74395a0404": "v0.4.0",
+  "7d35c015a4abcfade8a6aed3c984f52d6fec44d3edaf604f4f8441f1033f0b5d": "v0.4.0",
 };
 
 export function fundRelease(wasmHash: string | null): { tag: string; url: string } | null {

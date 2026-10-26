@@ -1,0 +1,182 @@
+{
+  "contracts": {
+    "nav": "CBO42GCYFZPOM4ITSCKF7DXI7MBL5PMHRL4DBBEZ35HZLOWT76GLZVIC",
+    "funds": {
+      "aLQD": "CC5QR5OOQMCPVSL3SJMH7QESCFINWUMX3427CT4NIDBS3FRVDHAM4NAJ"
+    },
+    "platform": "CDL3FYEGDRYQP2MOW7Z4UBGUQLEHJ6VBPBLGE3YJ5ITVDB5CMKY7CJ7R",
+    "timelock": "CBI225UGSIKUZUVV4NIXDRCFST5TIMNJG3ISE6AAZMPVGWUSM4TJUKDM"
+  },
+  "assets": {
+    "XLM": {
+      "asset": "native",
+      "contract": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+      "status": "open"
+    },
+    "USDC": {
+      "asset": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "contract": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "status": "open"
+    },
+    "USDY": {
+      "asset": "USDY:GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+      "contract": "CB3YA656OYIHU57657I5KGSBRHE5I3OZU4VFC22PYAOANFZHEWNYGAGP",
+      "status": "open"
+    },
+    "USTRY": {
+      "asset": "USTRY:GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+      "contract": "CBLV4ATSIWU67CFSQU2NVRKINQIKUZ2ODSZBUJTJ43VJVRSBTZYOPNUR",
+      "status": "open"
+    },
+    "CETES": {
+      "asset": "CETES:GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+      "contract": "CAL6ER2TI6CTRAY6BFXWNWA7WTYXUXTQCHUBCIBU5O6KM3HJFG6Z6VXV",
+      "status": "open"
+    },
+    "BENJI": {
+      "asset": "BENJI:GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5",
+      "contract": "CCDSDPD7FXB74PFB2SYCHGQRWLXQRYRTQSPCVSRJ7FAOLOUGWEYAXQ7A",
+      "status": "permissioned"
+    },
+    "DEMOMMF": {
+      "asset": "DEMOMMF:GAPHKRSKDAJYL6FYCRBIIY4M6QP32CM6WOKPNGOOKZ3EQ52LW2K4Q2HM",
+      "contract": "CCDKWOUML7ZBLXBWCLLX2BAWW5OCSU3BYCASK7KHSGAZVJYYDMSXG347",
+      "status": "permissioned",
+      "issuer_identity": "alloy-main-issuer"
+    }
+  },
+  "txs": [
+    {
+      "label": "upload fund wasm (mainnet build)",
+      "hash": "49e5731d6b37fe7323554a784cded049bbc2a2c448bae7b7986744692161ee50",
+      "url": "https://stellar.expert/explorer/public/tx/49e5731d6b37fe7323554a784cded049bbc2a2c448bae7b7986744692161ee50"
+    },
+    {
+      "label": "deploy platform",
+      "hash": "d4fe5d4c491fe823cbd39a7578ef3d8a3caf0e47f1427c8fcb63b4dde24b5d71",
+      "url": "https://stellar.expert/explorer/public/tx/d4fe5d4c491fe823cbd39a7578ef3d8a3caf0e47f1427c8fcb63b4dde24b5d71"
+    },
+    {
+      "label": "shelf BENJI Permissioned",
+      "hash": "65def0e272a51b34c7c5127d9afae176ab64cda6f297aa7179481eb30b084b49",
+      "url": "https://stellar.expert/explorer/public/tx/65def0e272a51b34c7c5127d9afae176ab64cda6f297aa7179481eb30b084b49"
+    },
+    {
+      "label": "shelf CETES Open",
+      "hash": "039881f0847e6b8a5b397848e1b67434c4265d772722be3a0f55be5103985f91",
+      "url": "https://stellar.expert/explorer/public/tx/039881f0847e6b8a5b397848e1b67434c4265d772722be3a0f55be5103985f91"
+    },
+    {
+      "label": "shelf DEMOMMF Permissioned",
+      "hash": "cbfeb8b72f37b693d380857c0387786c4092b39520d9ab9942c2b98d8a043c61",
+      "url": "https://stellar.expert/explorer/public/tx/cbfeb8b72f37b693d380857c0387786c4092b39520d9ab9942c2b98d8a043c61"
+    },
+    {
+      "label": "shelf USDC Open",
+      "hash": "d85d2f7dcbe6c3324b4c66299b9d53ec95e2570bfff1a574ac96e5ab71563a4c",
+      "url": "https://stellar.expert/explorer/public/tx/d85d2f7dcbe6c3324b4c66299b9d53ec95e2570bfff1a574ac96e5ab71563a4c"
+    },
+    {
+      "label": "shelf USDY Open",
+      "hash": "1ba78f7d3e61218b4e66397e2a58ecd27ee0234b36b2de811d14eb064ee587f0",
+      "url": "https://stellar.expert/explorer/public/tx/1ba78f7d3e61218b4e66397e2a58ecd27ee0234b36b2de811d14eb064ee587f0"
+    },
+    {
+      "label": "shelf USTRY Open",
+      "hash": "a23edbda7bdf530824c5d718f83364032fb55dc41b9a469fc45915228c1a0ec5",
+      "url": "https://stellar.expert/explorer/public/tx/a23edbda7bdf530824c5d718f83364032fb55dc41b9a469fc45915228c1a0ec5"
+    },
+    {
+      "label": "shelf XLM Open",
+      "hash": "c8150e3fc42ede282ac8bc7aed9fdbf4e8e0712fb7b037ec37771210c771be5e",
+      "url": "https://stellar.expert/explorer/public/tx/c8150e3fc42ede282ac8bc7aed9fdbf4e8e0712fb7b037ec37771210c771be5e"
+    },
+    {
+      "label": "allowlist manager GDUEGR",
+      "hash": "98e73640881edc2a1a8995b1c14fe07e6df95d697fd85fcafde8212a18ad3fd2",
+      "url": "https://stellar.expert/explorer/public/tx/98e73640881edc2a1a8995b1c14fe07e6df95d697fd85fcafde8212a18ad3fd2"
+    },
+    {
+      "label": "allowlist manager GDQE5U",
+      "hash": "ebaf30ee3826fd644cdd96e4e2b2974330180852fd022bfdd629ef128f4d62e5",
+      "url": "https://stellar.expert/explorer/public/tx/ebaf30ee3826fd644cdd96e4e2b2974330180852fd022bfdd629ef128f4d62e5"
+    },
+    {
+      "label": "deploy timelock (300 s)",
+      "hash": "a0bb5172d5c360c19fb9861f075dd4932326d01cdd28e80b95d4d1c903ceebcf",
+      "url": "https://stellar.expert/explorer/public/tx/a0bb5172d5c360c19fb9861f075dd4932326d01cdd28e80b95d4d1c903ceebcf"
+    },
+    {
+      "label": "create fund aLQD",
+      "hash": "1d174dffd3ff63828f9753204f04d0e666477562f7b0bd3df0907e20a061a908",
+      "url": "https://stellar.expert/explorer/public/tx/1d174dffd3ff63828f9753204f04d0e666477562f7b0bd3df0907e20a061a908"
+    },
+    {
+      "label": "aLQD profile",
+      "hash": "f50e1ea58f4749e297cc15014866847234fc7a6cf8014d0d18e58f6b590fd00a",
+      "url": "https://stellar.expert/explorer/public/tx/f50e1ea58f4749e297cc15014866847234fc7a6cf8014d0d18e58f6b590fd00a"
+    },
+    {
+      "label": "aLQD mandate Managed",
+      "hash": "155e325b0701747fa8d4f45b7f23921cfee6596996275b07d0ebbdf6e2e78e6f",
+      "url": "https://stellar.expert/explorer/public/tx/155e325b0701747fa8d4f45b7f23921cfee6596996275b07d0ebbdf6e2e78e6f"
+    },
+    {
+      "label": "aLQD fee 0.5%/yr",
+      "hash": "2bf46621724a8ab9329d4090444785e17a1d18661746318d5c0b3d35ec3208ed",
+      "url": "https://stellar.expert/explorer/public/tx/2bf46621724a8ab9329d4090444785e17a1d18661746318d5c0b3d35ec3208ed"
+    },
+    {
+      "label": "aLQD open for issue",
+      "hash": "7a6e59d0cd668ddd42aa34cf4add3a2cd7008d5d1ab6be1053544838d1d635d1",
+      "url": "https://stellar.expert/explorer/public/tx/7a6e59d0cd668ddd42aa34cf4add3a2cd7008d5d1ab6be1053544838d1d635d1"
+    },
+    {
+      "label": "buy USTRY for aLQD seed",
+      "hash": "f74b27efd4d63f3b630a774f43ee07bfa5b859cd304e5cd793e530fe2f6930f6",
+      "url": "https://stellar.expert/explorer/public/tx/f74b27efd4d63f3b630a774f43ee07bfa5b859cd304e5cd793e530fe2f6930f6"
+    },
+    {
+      "label": "issue 1 aLQD (seed)",
+      "hash": "b23341da2abcae93e4f55d134f9e4a3aef5380802ddb33ab6a7a093176aad2f5",
+      "url": "https://stellar.expert/explorer/public/tx/b23341da2abcae93e4f55d134f9e4a3aef5380802ddb33ab6a7a093176aad2f5"
+    },
+    {
+      "label": "aLQD trade 0.5 XLM to USDC via Soroswap",
+      "hash": "b427a016026033959037be06d19655b08a6395f1d0fdfd581c3bd818f16db6df",
+      "url": "https://stellar.expert/explorer/public/tx/b427a016026033959037be06d19655b08a6395f1d0fdfd581c3bd818f16db6df"
+    },
+    {
+      "label": "timelock schedule set_admin(timelock)",
+      "hash": "7c08a50ece380e1cebc242530a829aad3f8c2a1e55a0357e5ded270745c9a971",
+      "url": "https://stellar.expert/explorer/public/tx/7c08a50ece380e1cebc242530a829aad3f8c2a1e55a0357e5ded270745c9a971"
+    },
+    {
+      "label": "timelock execute: platform admin is the timelock",
+      "hash": "9cb38093f19b9cf65b476d216b64155c70f7ac5737472559c6e14e8edd23b9d5",
+      "url": "https://stellar.expert/explorer/public/tx/9cb38093f19b9cf65b476d216b64155c70f7ac5737472559c6e14e8edd23b9d5"
+    }
+  ],
+  "fund_wasm": "a85d6d53dfe894ef6483aad0613359584e5a78629c159cf3dbf53d74395a0404",
+  "release": "v0.4.0",
+  "admin": "CBI225UGSIKUZUVV4NIXDRCFST5TIMNJG3ISE6AAZMPVGWUSM4TJUKDM",
+  "shelf": {
+    "BENJI": "done",
+    "CETES": "done",
+    "DEMOMMF": "done",
+    "USDC": "done",
+    "USDY": "done",
+    "USTRY": "done",
+    "XLM": "done"
+  },
+  "managers": {
+    "GDUEGRVWTOZJAEUSNHH2ZBSW2LDH3ZB5WFL46VP5XZLVZ7P2DSDZROK7": "done",
+    "GDQE5UEW4ZN6VTLGZI3PPIUWJEV6EU3TYICMS6ABKDRD25LCPZ3B5GHE": "done"
+  },
+  "setup": {
+    "metadata": "done",
+    "mandate": "done",
+    "fee": "done",
+    "open": "done"
+  }
+}
