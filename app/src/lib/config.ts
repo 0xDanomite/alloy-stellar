@@ -136,6 +136,7 @@ export interface PlatformSlot {
 }
 
 const v4Deployment = files[`../../../deployments/${network}-v4.json`] as PlatformDeployment | undefined;
+const demoDeployment = files[`../../../deployments/${network}-demo.json`] as PlatformDeployment | undefined;
 
 const primarySlot: PlatformSlot | null = deployments
   ? { id: deployments.contracts.platform, nav: deployments.contracts.nav ?? null, launched: deployments.contracts.funds }
@@ -149,8 +150,20 @@ const v4Slot: PlatformSlot | null = v4Deployment
     }
   : null;
 
-/** Every platform this build reads funds from: the original first, then the v0.4 one when deployed. */
-export const platforms: PlatformSlot[] = [primarySlot, v4Slot].filter((p): p is PlatformSlot => p !== null);
+/** A v0.4 platform kept for live demos, with its own timelock and roles. */
+const demoSlot: PlatformSlot | null = demoDeployment
+  ? {
+      id: demoDeployment.contracts.platform,
+      nav: demoDeployment.contracts.nav ?? primarySlot?.nav ?? null,
+      launched: demoDeployment.contracts.funds ?? {},
+    }
+  : null;
+
+/** Every platform this build reads funds from: the original first, then the v0.4 ones when deployed. */
+export const platforms: PlatformSlot[] = [primarySlot, v4Slot, demoSlot].filter((p): p is PlatformSlot => p !== null);
+
+/** Platforms a manager may create on, newest first. */
+export const creationCandidates: PlatformSlot[] = [demoSlot, v4Slot, primarySlot].filter((p): p is PlatformSlot => p !== null);
 
 /** Where new funds are created: the v0.4 platform when deployed, else the original. */
 export const creationPlatform: PlatformSlot | null = v4Slot ?? primarySlot;

@@ -1,0 +1,123 @@
+{
+  "contracts": {
+    "nav": "CBO42GCYFZPOM4ITSCKF7DXI7MBL5PMHRL4DBBEZ35HZLOWT76GLZVIC",
+    "funds": {},
+    "platform": "CB2CIGE5XAOSAOHMAUTVCCCWCASNBOFGFXISHLVJ5CZTBPO7JP5VO3KE",
+    "timelock": "CAMK7NFEVLQVMXIGTBK2QO56TSFQJ5YEVQSX6UJGHJ6VA34FQIVDJ42W"
+  },
+  "assets": {
+    "XLM": {
+      "asset": "native",
+      "contract": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+      "status": "open"
+    },
+    "USDC": {
+      "asset": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "contract": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "status": "open"
+    },
+    "USDY": {
+      "asset": "USDY:GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+      "contract": "CB3YA656OYIHU57657I5KGSBRHE5I3OZU4VFC22PYAOANFZHEWNYGAGP",
+      "status": "open"
+    },
+    "USTRY": {
+      "asset": "USTRY:GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+      "contract": "CBLV4ATSIWU67CFSQU2NVRKINQIKUZ2ODSZBUJTJ43VJVRSBTZYOPNUR",
+      "status": "open"
+    },
+    "CETES": {
+      "asset": "CETES:GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+      "contract": "CAL6ER2TI6CTRAY6BFXWNWA7WTYXUXTQCHUBCIBU5O6KM3HJFG6Z6VXV",
+      "status": "open"
+    },
+    "BENJI": {
+      "asset": "BENJI:GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5",
+      "contract": "CCDSDPD7FXB74PFB2SYCHGQRWLXQRYRTQSPCVSRJ7FAOLOUGWEYAXQ7A",
+      "status": "permissioned"
+    },
+    "DEMOMMF": {
+      "asset": "DEMOMMF:GAPHKRSKDAJYL6FYCRBIIY4M6QP32CM6WOKPNGOOKZ3EQ52LW2K4Q2HM",
+      "contract": "CCDKWOUML7ZBLXBWCLLX2BAWW5OCSU3BYCASK7KHSGAZVJYYDMSXG347",
+      "status": "permissioned",
+      "issuer_identity": "alloy-main-issuer"
+    }
+  },
+  "txs": [
+    {
+      "label": "deploy platform",
+      "hash": "1657a92582b52e67371d92abe2744dadbf888571d0cb2ee2faf3ed99085f1f25",
+      "url": "https://stellar.expert/explorer/public/tx/1657a92582b52e67371d92abe2744dadbf888571d0cb2ee2faf3ed99085f1f25"
+    },
+    {
+      "label": "shelf BENJI Permissioned",
+      "hash": "1c7abcb4d037d1900d62437b99d585932474d7a71218ee71a5694d3c19c6c2e6",
+      "url": "https://stellar.expert/explorer/public/tx/1c7abcb4d037d1900d62437b99d585932474d7a71218ee71a5694d3c19c6c2e6"
+    },
+    {
+      "label": "shelf CETES Open",
+      "hash": "47006bf9098866f2c03d44a69e55fdd1940e92eaaea8324e241da4af92a9129a",
+      "url": "https://stellar.expert/explorer/public/tx/47006bf9098866f2c03d44a69e55fdd1940e92eaaea8324e241da4af92a9129a"
+    },
+    {
+      "label": "shelf DEMOMMF Permissioned",
+      "hash": "96a4f0de08942b62bedbbbb5731bf5cf48e6072896e5acc37fd00a155b46e794",
+      "url": "https://stellar.expert/explorer/public/tx/96a4f0de08942b62bedbbbb5731bf5cf48e6072896e5acc37fd00a155b46e794"
+    },
+    {
+      "label": "shelf USDC Open",
+      "hash": "2e29f89423a170708552f71888bc6fb31cf85a17e82398bad34747a07522efd4",
+      "url": "https://stellar.expert/explorer/public/tx/2e29f89423a170708552f71888bc6fb31cf85a17e82398bad34747a07522efd4"
+    },
+    {
+      "label": "shelf USDY Open",
+      "hash": "23b2337f06f912c75d24b267f11ea49cda9f9031e52a3e665bc85571dc597915",
+      "url": "https://stellar.expert/explorer/public/tx/23b2337f06f912c75d24b267f11ea49cda9f9031e52a3e665bc85571dc597915"
+    },
+    {
+      "label": "shelf USTRY Open",
+      "hash": "4098e854c446d1c6959883f1d0c88c1cec5c7ffa667fa65d99c9cdf9337c2cd5",
+      "url": "https://stellar.expert/explorer/public/tx/4098e854c446d1c6959883f1d0c88c1cec5c7ffa667fa65d99c9cdf9337c2cd5"
+    },
+    {
+      "label": "shelf XLM Open",
+      "hash": "673c47b0b2d62b74f3eb6d81d6d403aa949cf13bbb4495210ec55eeb9b53fe03",
+      "url": "https://stellar.expert/explorer/public/tx/673c47b0b2d62b74f3eb6d81d6d403aa949cf13bbb4495210ec55eeb9b53fe03"
+    },
+    {
+      "label": "allowlist manager GAEZRB",
+      "hash": "b4b36c9d02e365bd2169494375b26708ffbc660e2315e8056ca8db923081ac78",
+      "url": "https://stellar.expert/explorer/public/tx/b4b36c9d02e365bd2169494375b26708ffbc660e2315e8056ca8db923081ac78"
+    },
+    {
+      "label": "deploy timelock (300 s)",
+      "hash": "73c0345438ae65f72d69663043df925cf658ef752f20803ad89fd9e4aca3e092",
+      "url": "https://stellar.expert/explorer/public/tx/73c0345438ae65f72d69663043df925cf658ef752f20803ad89fd9e4aca3e092"
+    },
+    {
+      "label": "timelock schedule set_admin(timelock)",
+      "hash": "0cf57c62ad30b7c55c66f5cf69afe128398750e9a0ff8553e7bd63babd102b5d",
+      "url": "https://stellar.expert/explorer/public/tx/0cf57c62ad30b7c55c66f5cf69afe128398750e9a0ff8553e7bd63babd102b5d"
+    },
+    {
+      "label": "timelock execute: platform admin is the timelock",
+      "hash": "66bed43f604d7663b43a88a135f76168f75d14aa2db549c1e3148a38b818680e",
+      "url": "https://stellar.expert/explorer/public/tx/66bed43f604d7663b43a88a135f76168f75d14aa2db549c1e3148a38b818680e"
+    }
+  ],
+  "fund_wasm": "a85d6d53dfe894ef6483aad0613359584e5a78629c159cf3dbf53d74395a0404",
+  "release": "v0.4.0",
+  "admin": "CAMK7NFEVLQVMXIGTBK2QO56TSFQJ5YEVQSX6UJGHJ6VA34FQIVDJ42W",
+  "shelf": {
+    "BENJI": "done",
+    "CETES": "done",
+    "DEMOMMF": "done",
+    "USDC": "done",
+    "USDY": "done",
+    "USTRY": "done",
+    "XLM": "done"
+  },
+  "managers": {
+    "GAEZRBJVV3YNONHVXCO6LSJQKVDWD7DPPE4EMDMQ3LNCJ3ZLQCEGVCXL": "done"
+  }
+}

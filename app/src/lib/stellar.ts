@@ -18,7 +18,7 @@ import {
   WalletConnectModule,
   WalletConnectTargetChain,
 } from "@creit.tech/stellar-wallets-kit/modules/wallet-connect";
-import { creationPlatform, deployments, endpoints, expert, isLegacyFundCode, network, platforms, platformSlot } from "./config";
+import { creationCandidates, creationPlatform, deployments, endpoints, expert, isLegacyFundCode, network, platforms, platformSlot } from "./config";
 import { addressVal, dataKey, instanceKey, instanceStorage, keyId, native, readEntries, variantKey } from "./ledger";
 import { SPECS } from "./specs";
 import { ONE, toDecimalString, unitsToNumber } from "./format";
@@ -1019,9 +1019,18 @@ export async function loadShelf(platformId = requireCreationPlatform(), withUnli
   return withUnlisted ? assets : assets.filter((a) => a.status !== "Unlisted");
 }
 
-export async function isManager(address: string, platformId = requireCreationPlatform()): Promise<boolean> {
+export async function isManager(address: string, platformId?: string): Promise<boolean> {
+  if (platformId === undefined) return (await managedPlatform(address)) !== null;
   const platform = await platformClients(platformId);
   return withRetry(() => read(platform.is_manager({ manager: address })));
+}
+
+/** The newest platform that allowlists `address` as a manager, or null when none does. */
+export async function managedPlatform(address: string): Promise<string | null> {
+  for (const slot of creationCandidates) {
+    if (await isManager(address, slot.id)) return slot.id;
+  }
+  return null;
 }
 
 /**
@@ -1058,7 +1067,7 @@ export interface NewFund {
 
 /** Deploys a fund through the platform; the connected wallet signs as its manager. */
 export async function createFund(address: string, spec: NewFund): Promise<TxResult & { fundId: string }> {
-  const platform = await platformClients(requireCreationPlatform(), address);
+  const platform = await platformClients((await managedPlatform(address)) ?? requireCreationPlatform(), address);
   const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
   const tx = platform.create_fund({
     manager: address,

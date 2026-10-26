@@ -8,6 +8,9 @@
 #   RELEASE_TAG=v0.4.0 ALLOY_YES=1 ./scripts/mainnet-v4-launch.sh
 #
 # Extra managers to allowlist: EXTRA_MANAGERS="G... G..."
+# A separate platform (for example a demo one): DEPLOY_NAME=mainnet-demo,
+# with ADMIN_IDENTITY as its timelock proposer and executor, and
+# SHOWCASE=0 to skip the showcase fund.
 set -euo pipefail
 export NETWORK=mainnet
 export ADMIN_IDENTITY="${ADMIN_IDENTITY:-alloy-main-admin}"
@@ -16,7 +19,7 @@ export RELEASE_TAG="${RELEASE_TAG:-v0.4.0}"
 . "$(dirname "$0")/lib.sh"
 
 V3="$DEPLOYMENTS"
-DEPLOYMENTS="$ROOT/deployments/mainnet-v4.json"
+DEPLOYMENTS="$ROOT/deployments/${DEPLOY_NAME:-mainnet-v4}.json"
 [ -f "$DEPLOYMENTS" ] || jq '{contracts: {nav: .contracts.nav, funds: {}}, assets: .assets, txs: []}' "$V3" > "$DEPLOYMENTS"
 
 [ "${ALLOY_YES:-}" = 1 ] || { echo "Mainnet launch. Set ALLOY_YES=1 to proceed." >&2; exit 1; }
@@ -33,6 +36,10 @@ release_wasm() {
 admin="$(addr "$ADMIN_IDENTITY")"
 manager="$(addr "$MANAGER_IDENTITY")"
 
+V4="$ROOT/deployments/mainnet-v4.json"
+if [ -z "$(get .fund_wasm)" ] && [ "$DEPLOYMENTS" != "$V4" ] && [ -f "$V4" ] && [ "$(jq -r .release "$V4")" = "$RELEASE_TAG" ]; then
+  put --arg w "$(jq -r .fund_wasm "$V4")" --arg r "$RELEASE_TAG" '.fund_wasm = $w | .release = $r'
+fi
 if [ -z "$(get .fund_wasm)" ]; then
   fund_wasm="$(run_tx "upload fund wasm (mainnet build)" stellar contract upload \
     --wasm "$(release_wasm alloy-fund-mainnet)" --source-account "$ADMIN_IDENTITY")"
@@ -72,6 +79,7 @@ if [ -z "$(get .contracts.timelock)" ]; then
 fi
 echo "timelock: $EXPERT/contract/$(get .contracts.timelock)"
 
+[ "${SHOWCASE:-1}" = 1 ] || { echo "done. Hand the platform to the timelock with: node scripts/timelock-handover.mjs $DEPLOYMENTS $ADMIN_IDENTITY"; exit 0; }
 symbol=aLQD
 if [ -z "$(get ".contracts.funds[\"$symbol\"]")" ]; then
   components="$(jq -c '[
