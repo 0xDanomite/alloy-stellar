@@ -1,5 +1,6 @@
-import { Account, BASE_FEE, Contract, nativeToScVal, rpc, scValToNative, TransactionBuilder, Address, type xdr } from "@stellar/stellar-sdk";
+import { Account, Address, BASE_FEE, Contract, nativeToScVal, Operation, rpc, scValToNative, Transaction, TransactionBuilder, type xdr } from "@stellar/stellar-sdk";
 import { deployments, endpoints } from "./config";
+import { credentialsAddress, encodeHandover, HANDOVER_LEDGERS, verifyHandover, type HandoverLink } from "./handover";
 import {
   ChainError,
   fundClient,
@@ -242,15 +243,16 @@ export async function quoteRoute(router: string, sell: { token: string; code: st
 export const trade = (fund: Fund, address: string, sell: string, sold: bigint, buy: string, minBought: bigint, path: string[]) =>
   fundCall(fund, address, (c) => send(c.trade({ sell, sold, buy, min_bought: minBought, path })));
 
-/** About a day of ledgers: how long the outgoing manager's approval stays usable. */
-const HANDOVER_LEDGERS = 17_280;
+function authOf(tx: { built?: Transaction }): xdr.SorobanAuthorizationEntry[] {
+  const op = tx.built?.operations[0];
+  return op && op.type === "invokeHostFunction" ? (op.auth ?? []) : [];
+}
 
 /**
  * The outgoing manager's half of a handover. `set_manager` needs both
  * managers to authorize it; this builds the call with the incoming manager
- * as the transaction source, has the outgoing manager sign their
- * authorization in their wallet, and returns the transaction for the
- * incoming manager to sign and submit within about a day.
+ * as the transaction source, has the outgoing manager sign only their own
+ * authorization in their wallet, and returns that entry encoded for a link.
  */
 export async function prepareHandover(fund: Fund, outgoing: string, incoming: string): Promise<string> {
   const c = await fundClient(fund.id, incoming);
@@ -259,38 +261,45 @@ export async function prepareHandover(fund: Fund, outgoing: string, incoming: st
   if (simulation && rpc.Api.isSimulationError(simulation)) throw new ChainError(simulation.error);
   const latest = await server.getLatestLedger();
   await tx.signAuthEntries({ address: outgoing, signAuthEntry: signAuthEntryWithWallet, expiration: latest.sequence + HANDOVER_LEDGERS });
-  return tx.toJson();
+  const signed = authOf(tx).find((e) => credentialsAddress(e.credentials) === outgoing);
+  if (!signed) throw new Error("The wallet didn't return a signed approval.");
+  return encodeHandover(signed);
 }
 
-/** The incoming manager's half: re-check with the signed approval, then sign and submit. */
-export async function acceptHandover(fund: Fund, incoming: string, json: string): Promise<TxResult> {
+/**
+ * The incoming manager's half. The transaction is rebuilt here from the
+ * fund and the connected account; the link contributes only the outgoing
+ * manager's signed entry, and only after `verifyHandover` confirms it
+ * authorizes this exact call. Nothing else from the link is signed.
+ */
+export async function acceptHandover(fund: Fund, incoming: string, link: HandoverLink): Promise<TxResult> {
+  const latest = await server.getLatestLedger();
+  const verified = verifyHandover(link, { fund: fund.id, manager: fund.manager, incoming, latestLedger: latest.sequence });
+  if ("error" in verified) throw new Error(verified.error);
+
   const c = await fundClient(fund.id, incoming);
-  const tx = c.txFromJson<null>(json);
+  const tx = await c.set_manager({ new_manager: incoming });
+  const simulation = tx.simulation;
+  if (simulation && rpc.Api.isSimulationError(simulation)) throw new ChainError(simulation.error);
+  const auth = authOf(tx);
+  const slot = auth.findIndex((e) => credentialsAddress(e.credentials) === fund.manager);
+  if (slot === -1 || auth.some((e, i) => i !== slot && e.credentials.type !== "sorobanCredentialsSourceAccount")) {
+    throw new Error("This handover needs approvals the link doesn't carry.");
+  }
+  const account = await server.getAccount(incoming);
+  tx.built = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: endpoints.passphrase })
+    .addOperation(
+      Operation.invokeContractFunction({
+        contract: fund.id,
+        function: "set_manager",
+        args: [new Address(incoming).toScVal()],
+        auth: auth.map((e, i) => (i === slot ? verified.entry : e)),
+      }),
+    )
+    .setTimeout(180)
+    .build();
   await tx.simulate();
   const result = await send(Promise.resolve(tx));
   invalidateFunds();
   return result;
-}
-
-export function encodeHandover(json: string): string {
-  return btoa(json).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-export interface Handover {
-  json: string;
-  /** The account that must sign and submit: the incoming manager. */
-  incoming: string;
-}
-
-export function decodeHandover(param: string): Handover | null {
-  try {
-    const json = atob(param.replace(/-/g, "+").replace(/_/g, "/"));
-    const parsed: unknown = JSON.parse(json);
-    const tx = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "tx") : undefined;
-    if (typeof tx !== "string") return null;
-    const built = TransactionBuilder.fromXDR(tx, endpoints.passphrase);
-    return "source" in built ? { json, incoming: built.source } : null;
-  } catch {
-    return null;
-  }
 }

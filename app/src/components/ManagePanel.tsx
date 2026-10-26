@@ -6,7 +6,6 @@ import { fundValueUsd } from "../lib/fund-math";
 import {
   accrueFee,
   claimFee,
-  encodeHandover,
   loadEarnings,
   loadSetupDraft,
   prepareHandover,
@@ -401,8 +400,8 @@ function Handover({ fund }: { fund: Fund }) {
     setLink(null);
     setPhase({ state: "working", message: "Approve the handover in your wallet…" });
     try {
-      const json = await prepareHandover(fund, address, incoming);
-      setLink(`${window.location.origin}/fund/${fund.id}?handover=${encodeHandover(json)}`);
+      const param = await prepareHandover(fund, address, incoming);
+      setLink(`${window.location.origin}/fund/${fund.id}?handover=${param}`);
       setPhase({ state: "idle" });
     } catch (err) {
       setPhase({ state: "failed", message: explain(err) });

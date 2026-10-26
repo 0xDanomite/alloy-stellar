@@ -13,7 +13,8 @@ import { Button, CopyId, Figure, TxNotice, Usd, type TxPhase } from "../componen
 import { deployments, expert } from "../lib/config";
 import { formatAmount, formatUsd, shortId, unitsToNumber } from "../lib/format";
 import { formatBps } from "../lib/fee-math";
-import { acceptHandover, decodeHandover, type Handover } from "../lib/manager";
+import { acceptHandover } from "../lib/manager";
+import { decodeHandover, handoverIncoming, type HandoverLink } from "../lib/handover";
 import { fundValueUsd } from "../lib/fund-math";
 import { loadHistories, type AssetHistory } from "../lib/history";
 import { changeOver } from "../lib/series";
@@ -149,16 +150,17 @@ function AwaitingIssuer({ fund }: { fund: Fund }) {
 }
 
 /** The incoming manager's side of a handover link. */
-function HandoverCard({ fund, handover, onChanged }: { fund: Fund; handover: Handover; onChanged: () => void }) {
+function HandoverCard({ fund, link, onChanged }: { fund: Fund; link: HandoverLink; onChanged: () => void }) {
   const { address, connect, connecting } = useWallet();
   const [phase, setPhase] = useState<TxPhase>({ state: "idle" });
-  const done = fund.manager === handover.incoming;
+  const incoming = handoverIncoming(link);
+  const done = incoming !== null && fund.manager === incoming;
 
   async function accept() {
     if (!address) return;
     setPhase({ state: "working", message: "Confirm in your wallet…" });
     try {
-      const result = await acceptHandover(fund, address, handover.json);
+      const result = await acceptHandover(fund, address, link);
       setPhase({ state: "done", message: `You manage ${fund.symbol} now.`, url: result.url });
       onChanged();
     } catch (err) {
@@ -177,7 +179,7 @@ function HandoverCard({ fund, handover, onChanged }: { fund: Fund; handover: Han
             <dt className="text-muted-foreground">From</dt>
             <dd className="min-w-0"><CopyId id={fund.manager} kind="account" head={4} tail={4} /></dd>
             <dt className="text-muted-foreground">To</dt>
-            <dd className="min-w-0"><CopyId id={handover.incoming} kind="account" head={4} tail={4} /></dd>
+            <dd className="min-w-0">{incoming ? <CopyId id={incoming} kind="account" head={4} tail={4} /> : <span className="text-destructive">unreadable</span>}</dd>
           </dl>
           <p className="text-[0.8125rem] text-muted-foreground">
             The current manager has approved. Signing calls set_manager on this fund from your account, which pays the network fee. You
@@ -187,9 +189,11 @@ function HandoverCard({ fund, handover, onChanged }: { fund: Fund; handover: Han
             <Button className="w-full" onClick={connect} busy={connecting}>
               Connect wallet
             </Button>
-          ) : address !== handover.incoming ? (
+          ) : incoming === null ? (
+            <p className="rounded-md bg-warning-surface px-3 py-2.5 text-[0.8125rem]">This handover link is damaged. Ask the current manager for a new one.</p>
+          ) : address !== incoming ? (
             <p className="rounded-md bg-warning-surface px-3 py-2.5 text-[0.8125rem]">
-              This handover is for {shortId(handover.incoming)}. Connect that account to accept it.
+              This handover is for {shortId(incoming)}. Connect that account to accept it.
             </p>
           ) : (
             <Button className="w-full" onClick={accept} busy={phase.state === "working"} disabled={phase.state === "done"}>
@@ -410,7 +414,7 @@ export function FundPage() {
         </div>
 
         <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
-          {f && handover && <HandoverCard fund={f} handover={handover} onChanged={refresh} />}
+          {f && handover && <HandoverCard fund={f} link={handover} onChanged={refresh} />}
           {manages && preview && (
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-primary/40 bg-accent/50 px-4 py-3 text-[0.875rem]">
               <span>You're seeing what an investor sees.</span>
