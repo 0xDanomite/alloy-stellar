@@ -94,3 +94,18 @@ pub struct ManagerSet {
     #[topic]
     pub manager: Address,
 }
+
+#[contractevent(topics = ["rebalance"], data_format = "map")]
+pub struct Rebalanced {
+    #[topic]
+    pub manager: Address,
+    pub sell: Address,
+    pub sold: i128,
+    pub buy: Address,
+    pub bought: i128,
+}
+
+#[contractevent(topics = ["nav_set"], data_format = "single-value")]
+pub struct NavSet {
+    pub nav: Address,
+}
