@@ -7,6 +7,7 @@ import { WalletProvider } from "./lib/wallet";
 import { Landing } from "./pages/Landing";
 import { FundPage } from "./pages/FundPage";
 import { FundsPage } from "./pages/FundsPage";
+import { PortfolioPage } from "./pages/PortfolioPage";
 import { Built } from "./pages/Built";
 import { CreatePage } from "./pages/CreatePage";
 import { NotFound } from "./pages/NotFound";
@@ -18,6 +19,7 @@ const router = createBrowserRouter([
       { path: "/", element: <Landing /> },
       { path: "/funds", element: <FundsPage /> },
       { path: "/fund/:id", element: <FundPage /> },
+      { path: "/portfolio", element: <PortfolioPage /> },
       { path: "/create", element: <CreatePage /> },
       { path: "/built", element: <Built /> },
       { path: "*", element: <NotFound /> },

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { AssetDot, complianceLabel, FundAvatar, headlineValue, HoldsChips, IssuerFlags, IssuerName, OracleNote } from "../components/fund-bits";
 import { ArrowLeft } from "../components/icons";
 import { InvestPanel } from "../components/InvestPanel";
@@ -157,9 +157,14 @@ export function FundPage() {
     f && address ? `${f.id}:${address}` : null,
     version,
   );
-  const [tab, setTab] = useState<"invest" | "redeem" | "manage">("invest");
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<"invest" | "redeem" | "manage">(() => {
+    const wanted = params.get("tab");
+    return wanted === "redeem" || wanted === "manage" ? wanted : "invest";
+  });
   const [section, setSection] = useState<Section>("holdings");
   const isManager = Boolean(f && address && f.manager === address);
+  const activeTab = tab === "manage" && !isManager ? "invest" : tab;
   const tabs = isManager ? (["invest", "redeem", "manage"] as const) : (["invest", "redeem"] as const);
   const refresh = () => setVersion((v) => v + 1);
 
@@ -321,9 +326,9 @@ export function FundPage() {
                   key={t}
                   role="tab"
                   type="button"
-                  aria-selected={tab === t}
+                  aria-selected={activeTab === t}
                   onClick={() => setTab(t)}
-                  className={`rounded-full py-2 text-label ${tab === t ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  className={`rounded-full py-2 text-label ${activeTab === t ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   {t === "invest" ? "Invest" : t === "redeem" ? "Redeem" : "Manage"}
                 </button>
@@ -332,9 +337,9 @@ export function FundPage() {
             <div className="p-5">
               {!f ? (
                 <div className="skeleton h-40 w-full" />
-              ) : tab === "manage" ? (
+              ) : activeTab === "manage" ? (
                 <ManagePanel fund={f} onChanged={refresh} />
-              ) : tab === "invest" ? (
+              ) : activeTab === "invest" ? (
                 <InvestPanel fund={f} position={position.data ?? null} onChanged={refresh} />
               ) : (
                 <RedeemPanel fund={f} position={position.data ?? null} onChanged={refresh} />
