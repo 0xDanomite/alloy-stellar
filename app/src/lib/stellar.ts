@@ -13,6 +13,10 @@ import { Networks as KitNetworks } from "@creit.tech/stellar-wallets-kit/types";
 import { FreighterModule } from "@creit.tech/stellar-wallets-kit/modules/freighter";
 import { xBullModule } from "@creit.tech/stellar-wallets-kit/modules/xbull";
 import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
+import {
+  WalletConnectModule,
+  WalletConnectTargetChain,
+} from "@creit.tech/stellar-wallets-kit/modules/wallet-connect";
 import { deployments, endpoints, expert, network } from "./config";
 import { addressVal, dataKey, instanceKey, instanceStorage, keyId, native, readEntries, variantKey } from "./ledger";
 import { SPECS } from "./specs";
@@ -893,10 +897,31 @@ export async function withdrawOwed(fund: Fund, address: string, token: string) {
 
 let kitReady = false;
 
+function walletConnectModule(): WalletConnectModule | null {
+  const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
+  if (!projectId) return null;
+  return new WalletConnectModule({
+    projectId,
+    metadata: {
+      name: "Alloy on Stellar",
+      description: "Onchain funds on Stellar",
+      url: "https://alloy-stellar.vercel.app",
+      icons: ["https://alloy-stellar.vercel.app/mark.svg"],
+    },
+    allowedChains: [isMainnet ? WalletConnectTargetChain.PUBLIC : WalletConnectTargetChain.TESTNET],
+  });
+}
+
 function initKit() {
   if (kitReady) return;
+  const walletConnect = walletConnectModule();
   StellarWalletsKit.init({
-    modules: [new FreighterModule(), new xBullModule(), new LobstrModule()],
+    modules: [
+      new FreighterModule(),
+      new xBullModule(),
+      new LobstrModule(),
+      ...(walletConnect ? [walletConnect] : []),
+    ],
     network: isMainnet ? KitNetworks.PUBLIC : KitNetworks.TESTNET,
     theme: {
       background: "var(--background)",
