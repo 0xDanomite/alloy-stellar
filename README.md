@@ -13,6 +13,8 @@ underneath at any time.
 
 **Tracks:** Scale, Stellar Composed (Soroban contracts + SDEX path payments + RedStone and Reflector oracles + Stellar Wallets Kit)
 
+**Parity:** the fund core (issue, redeem, oracle NAV, gated factory, bounded rebalance) is live; fees, timelocked admin, DEX trading, portfolio and history views from Alloy on EVM are being ported. See [docs/parity.md](docs/parity.md).
+
 ## At a glance
 
 | | In one line | Proof |
