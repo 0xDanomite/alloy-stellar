@@ -6,6 +6,7 @@ import {
   TransactionBuilder,
   contract,
   rpc,
+  type xdr,
 } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
 import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
@@ -26,7 +27,7 @@ import { CIRCLE_USDC_ISSUER, DEMO_ISSUER_LABEL, PINNED_MAINNET_ISSUERS, UNVERIFI
 const CIRCLE_USDC = new Asset("USDC", CIRCLE_USDC_ISSUER);
 
 /** The USD quote asset: Circle USDC on mainnet, the tUSDC stand-in on testnet. */
-const QUOTE_USDC: Asset | null = (() => {
+export const QUOTE_USDC: Asset | null = (() => {
   if (network === "mainnet") return CIRCLE_USDC;
   const stand = deployments?.assets.tUSDC?.asset;
   if (!stand) return null;
@@ -429,16 +430,25 @@ export interface Fund {
   hasOracle: boolean;
   awaitingIssuer: FundComponent[];
   manager: string;
+  /** Hex hash of the code this fund runs, from its contract instance. */
+  wasmHash: string | null;
 }
 
 interface FundState {
   id: string;
+  wasmHash: string | null;
   name: string;
   symbol: string;
   compliance: Compliance;
   manager: string;
   totalSupply: bigint;
   components: { token: string; initialUnits: bigint; held: bigint; reserved: bigint; shelf: ShelfStatus; fundAuthorized: boolean }[];
+}
+
+function wasmHashOf(instance: xdr.ScVal | undefined): string | null {
+  if (instance?.type !== "scvContractInstance") return null;
+  const executable = instance.instance.executable;
+  return executable.type === "contractExecutableWasm" ? Buffer.from(executable.wasmHash.toXDR()).toString("hex") : null;
 }
 
 const SHARE_SCALE = 10_000_000n;
@@ -458,7 +468,10 @@ async function readFundStates(ids: string[]): Promise<FundState[]> {
 
   const configs = ids
     .filter((id) => native(first.get(keyId(isFundKey(id)))) === true)
-    .map((id) => ({ id, storage: instanceStorage(first.get(keyId(instanceKey(id)))) }))
+    .map((id) => {
+      const instance = first.get(keyId(instanceKey(id)));
+      return { id, storage: instanceStorage(instance), wasmHash: wasmHashOf(instance) };
+    })
     .filter(({ storage }) => storage.size > 0);
 
   const balanceKey = (token: string, holder: string) => dataKey(token, variantKey("Balance", addressVal(holder)));
@@ -473,8 +486,9 @@ async function readFundStates(ids: string[]): Promise<FundState[]> {
     ),
   );
 
-  return configs.map(({ id, storage }) => ({
+  return configs.map(({ id, storage, wasmHash }) => ({
     id,
+    wasmHash,
     name: String(storage.get("Name") ?? ""),
     symbol: String(storage.get("Symbol") ?? ""),
     compliance: unitTag(storage.get("Compliance")) as Compliance,
@@ -537,6 +551,7 @@ async function toFund(state: FundState): Promise<Fund> {
     hasOracle: oracle !== null,
     awaitingIssuer: legs.filter((leg) => leg.fundAuthorized === false),
     manager: state.manager,
+    wasmHash: state.wasmHash,
   };
 }
 
