@@ -287,7 +287,7 @@ export function FundPage() {
                   )}
                   {f?.hidden && (
                     <span className="chip px-2 py-0.5 text-[0.75rem] text-muted-foreground" title="Left out of the public fund lists. It works as usual for anyone with the link.">
-                      Hidden by its manager
+                      Hidden from the fund lists
                     </span>
                   )}
                 </div>

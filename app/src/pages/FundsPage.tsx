@@ -194,7 +194,7 @@ export function FundsPage() {
       {funds.data && (
         <p className="mt-3 text-[0.8125rem] text-muted-foreground">
           {listed.length} {listed.length === 1 ? "fund" : "funds"}
-          {!showHidden && hiddenCount > 0 && `, ${hiddenCount} more hidden by ${hiddenCount === 1 ? "its manager" : "their managers"}`}. The 24h figure holds today's units fixed and values
+          {!showHidden && hiddenCount > 0 && `, ${hiddenCount} more hidden`}. The 24h figure holds today's units fixed and values
           them at oracle and Stellar DEX prices from a day ago.
         </p>
       )}

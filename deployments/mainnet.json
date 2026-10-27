@@ -307,5 +307,11 @@
     "aTRSY": true,
     "aRAIL": true
   },
-  "nav_routes_done": true
+  "nav_routes_done": true,
+  "hidden_funds": [
+    "aTRSY",
+    "aBENJI",
+    "aRAIL",
+    "aREBAL"
+  ]
 }

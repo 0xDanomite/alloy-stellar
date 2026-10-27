@@ -18,12 +18,31 @@ export interface Deployments {
   contracts: { platform: string; funds: Record<string, string>; nav?: string };
   assets: Record<string, DeploymentAsset>;
   txs: DeploymentTx[];
+  /** Symbols kept off the public fund lists on this network. */
+  hidden_funds?: string[];
 }
 
 const files = import.meta.glob<Deployments>("../../../deployments/*.json", {
   eager: true,
   import: "default",
 });
+
+/**
+ * Funds the team keeps off the public lists for this network, by symbol, from each
+ * deployment file's `hidden_funds`. Fund code older than v0.4 has no status
+ * metadata, so this is how those funds are hidden. They stay reachable by link.
+ */
+export function configHiddenFunds(network: string): Set<string> {
+  const ids = new Set<string>();
+  for (const [path, file] of Object.entries(files)) {
+    if (!path.endsWith(`/${network}.json`) && !path.includes(`/${network}-`)) continue;
+    for (const symbol of file.hidden_funds ?? []) {
+      const id = file.contracts.funds?.[symbol];
+      if (id) ids.add(id);
+    }
+  }
+  return ids;
+}
 
 const NETWORK_KEY = "alloy.network";
 
