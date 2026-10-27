@@ -65,6 +65,16 @@ pub struct DayLoss {
     pub ppb: i128,
 }
 
+/// A fund the platform admin has wound down: issuance is closed for good,
+/// the manager has no powers, and only `operator` (if any) may `trade`, and
+/// only into `usdc`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WindDown {
+    pub operator: Option<Address>,
+    pub usdc: Address,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct AllowanceKey {
@@ -114,6 +124,7 @@ enum DataKey {
     Router,
     DayLosses,
     FeeCarry,
+    WindDown,
 }
 
 pub(crate) fn bump_instance(env: &Env) {
@@ -400,6 +411,14 @@ pub(crate) fn day_losses(env: &Env) -> Vec<DayLoss> {
 
 pub(crate) fn set_day_losses(env: &Env, losses: &Vec<DayLoss>) {
     env.storage().instance().set(&DataKey::DayLosses, losses);
+}
+
+pub(crate) fn wind_down(env: &Env) -> Option<WindDown> {
+    env.storage().instance().get(&DataKey::WindDown)
+}
+
+pub(crate) fn set_wind_down(env: &Env, wind_down: &WindDown) {
+    env.storage().instance().set(&DataKey::WindDown, wind_down);
 }
 
 pub(crate) fn fee_carry(env: &Env) -> i128 {

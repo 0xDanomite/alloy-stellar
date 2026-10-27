@@ -107,6 +107,31 @@ and donations. A `Managed` fund may also
 only with the investor allowlist on), up to 12 components. An added asset
 starts at zero units and gains weight only through rebalances and trades.
 
+## Wind-down
+
+From v0.6 the platform admin (in practice its timelock) can take a fund
+out of a manager's hands:
+
+- `replace_manager(new_manager)` installs a new manager without the old
+  one's consent, for a lost or compromised key. The fee accrued so far
+  goes to the old recipient; from then on the manager's part goes to the
+  new manager until they set another recipient.
+- `wind_down(operator, usdc)` winds the fund down for good. Issuance
+  closes (`is_open` turns false, `issue` fails with `IssuanceClosed`),
+  the fee stops after accruing what was owed up to that moment, and every
+  manager power is revoked (`WoundDown`), `replace_manager` included. The
+  optional `operator` may then only `trade` into `usdc`
+  (`OnlyIntoUsdc` otherwise), with the same price checks, 99% floor, loss
+  budgets and cooldown as any trade; with no operator nobody trades.
+  `rebalance` stays closed because it pays assets out to the caller, so
+  assets leave the fund only through `redeem`, `withdraw_owed` and swaps
+  that land in the fund. Calling it again changes the operator or the
+  target. `wind_down_state()` reads it.
+
+Redemption is untouched: what a holder could redeem at the moment of the
+wind-down is what they redeem later, because the fee stops and only
+holder exits and bounded USDC trades change the basket.
+
 ## Metadata
 
 Managers describe a fund with `set_metadata(key, value)`: up to 8 entries
@@ -281,6 +306,8 @@ already exist:
 | `set_nav` | v0.3+ | Alone, none: only the manager trades. With a manager, it sets the prices that bound trades; v0.6 funds still require a fresh, confirmed price, but an admin who controls both NAV routes controls that too. Pointing it at a contract that always fails disables trading and never touches `redeem`. |
 | `set_router` | v0.4+ | Alone, none. With a manager, bounded: `trade` checks what it got and gave by balance against the oracle floor, and authorizes one exact transfer. |
 | `set_platform_fee` | v0.4+ | Redirects up to half of the manager's fee to any address that can hold shares, at any time. Never raises total dilution. |
+| `replace_manager` | v0.6 | Installs a manager of its choosing, who then has every manager power, bounded as for any manager. |
+| `wind_down` | v0.6 | Closes issuance and stops the fee for good, revokes the manager, and lets an operator of its choosing trade into one token within the trade bounds. Never touches `redeem`. |
 | `set_fund_wasm`, `set_shelf_asset`, `set_manager` | platform | Affect new funds only; delisting an asset never stops a redemption. |
 
 So the admin alone cannot touch holder assets; admin and manager together

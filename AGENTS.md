@@ -19,7 +19,7 @@ read [SKILL.md](SKILL.md). For the design and its guarantees, read
 
 | Path | What it holds |
 | --- | --- |
-| `contracts/fund` | Fund contract, one per fund: SEP-41 shares, `issue`, `redeem`, `withdraw_owed`, `rebalance`, `trade` (Soroswap), investor allowlist, streaming fee (`init_fee`, `accrue_fee`), mandate (`set_mandate`, `add_component`), `set_metadata` |
+| `contracts/fund` | Fund contract, one per fund: SEP-41 shares, `issue`, `redeem`, `withdraw_owed`, `rebalance`, `trade` (Soroswap), investor allowlist, streaming fee (`init_fee`, `accrue_fee`), mandate (`set_mandate`, `add_component`), `set_metadata`; from v0.6 the platform admin can `replace_manager` and `wind_down` |
 | `contracts/platform` | Platform contract, one per venue: manager allowlist, asset shelf, `create_fund`, fund registry |
 | `contracts/timelock` | Timelock meant to be the platform and NAV admin: `schedule`, `execute` after a delay, `cancel`; from v0.6 a construction-time minimum delay, a 14-day expiry, and role changes only through scheduled self-calls |
 | `contracts/nav` | Read-only NAV contract: per-asset RedStone and Reflector routes, staleness limits, fallback, divergence |

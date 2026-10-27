@@ -29,7 +29,7 @@ use soroban_sdk::{
     vec, Address, Env, IntoVal, Map, String, Symbol, Vec,
 };
 
-pub use storage::{Compliance, Component, FeeState, Mandate, PlatformFee};
+pub use storage::{Compliance, Component, FeeState, Mandate, PlatformFee, WindDown};
 use storage::{Config, DayLoss, Loss};
 
 pub const SHARE_DECIMALS: u32 = 7;
@@ -87,6 +87,8 @@ pub enum FundError {
     UnconfirmedPrice = 35,
     PriceDivergence = 36,
     FundAsHolder = 37,
+    WoundDown = 38,
+    OnlyIntoUsdc = 39,
 }
 
 /// Mirrors `alloy_platform::ShelfStatus`.
@@ -184,6 +186,23 @@ fn mul_div(env: &Env, a: i128, b: i128, denominator: i128, round_up: bool) -> i1
     } else {
         quotient
     }
+}
+
+/// The manager, authorized, while the fund is not wound down. Every
+/// manager power goes through here, so a wind-down revokes all of them.
+fn require_manager(env: &Env) -> Address {
+    if storage::wind_down(env).is_some() {
+        panic_with_error!(env, FundError::WoundDown);
+    }
+    let manager = storage::manager(env);
+    manager.require_auth();
+    manager
+}
+
+fn require_platform_admin(env: &Env) {
+    PlatformClient::new(env, &storage::platform(env))
+        .admin()
+        .require_auth();
 }
 
 fn require_positive(env: &Env, amount: i128) {
@@ -361,7 +380,11 @@ fn owed_fee(env: &Env, fee: &FeeState) -> Option<(i128, i128)> {
     Some((minted, carried % FEE_CARRY_SCALE))
 }
 
+/// A wound-down fund charges no fee from the moment it was wound down.
 fn pending_fee_shares(env: &Env) -> i128 {
+    if storage::wind_down(env).is_some() {
+        return 0;
+    }
     storage::fee(env)
         .and_then(|fee| owed_fee(env, &fee))
         .map_or(0, |(minted, _)| minted)
@@ -369,6 +392,9 @@ fn pending_fee_shares(env: &Env) -> i128 {
 
 /// Never fails, so accrual never blocks a redemption.
 fn accrue_fee(env: &Env) -> i128 {
+    if storage::wind_down(env).is_some() {
+        return 0;
+    }
     let Some(mut fee) = storage::fee(env) else {
         return 0;
     };
@@ -659,15 +685,16 @@ impl Fund {
     /// Ends the fund's setup: after this, anyone allowed may `issue`, and the
     /// fee and mandate can no longer be set. Manager only, once.
     pub fn open_for_issue(env: Env) {
-        storage::manager(&env).require_auth();
+        require_manager(&env);
         storage::bump_instance(&env);
         require_not_open(&env);
         storage::set_open(&env);
         events::IssuanceOpened {}.publish(&env);
     }
 
+    /// False before `open_for_issue` and, for good, after `wind_down`.
     pub fn is_open(env: Env) -> bool {
-        storage::is_open(&env)
+        storage::is_open(&env) && storage::wind_down(&env).is_none()
     }
 
     /// Deposit the basket for `shares` from `investor`, minting to `to`.
@@ -676,7 +703,7 @@ impl Fund {
     pub fn issue(env: Env, investor: Address, to: Address, shares: i128) -> Vec<i128> {
         investor.require_auth();
         storage::bump_instance(&env);
-        if !storage::is_open(&env) {
+        if !Self::is_open(env.clone()) {
             panic_with_error!(&env, FundError::IssuanceClosed);
         }
         require_positive(&env, shares);
@@ -860,7 +887,7 @@ impl Fund {
     }
 
     pub fn set_investor(env: Env, investor: Address, allowed: bool) {
-        storage::manager(&env).require_auth();
+        require_manager(&env);
         storage::bump_instance(&env);
         storage::set_investor(&env, &investor, allowed);
         events::InvestorSet { investor, allowed }.publish(&env);
@@ -870,7 +897,7 @@ impl Fund {
     /// `Open` on the platform shelf; permissioned or delisted legs keep the
     /// allowlist on.
     pub fn set_compliance(env: Env, compliance: Compliance) {
-        storage::manager(&env).require_auth();
+        require_manager(&env);
         storage::bump_instance(&env);
         if compliance == Compliance::Open {
             let platform = PlatformClient::new(&env, &storage::platform(&env));
@@ -887,9 +914,7 @@ impl Fund {
     /// The oracle that bounds rebalances. Only the platform admin sets it,
     /// so a manager can't point the fund at prices they control.
     pub fn set_nav(env: Env, nav: Address) {
-        PlatformClient::new(&env, &storage::platform(&env))
-            .admin()
-            .require_auth();
+        require_platform_admin(&env);
         storage::bump_instance(&env);
         storage::set_nav(&env, &nav);
         events::NavSet { nav }.publish(&env);
@@ -916,8 +941,7 @@ impl Fund {
     /// the manager sources the bought asset (SDEX, Soroswap, an RFQ desk) is
     /// up to them.
     pub fn rebalance(env: Env, sell: Address, sold: i128, buy: Address, bought: i128) {
-        let manager = storage::manager(&env);
-        manager.require_auth();
+        let manager = require_manager(&env);
         storage::bump_instance(&env);
         require_positive(&env, bought);
         let oracle = begin_trade(&env, &sell, sold, &buy);
@@ -965,8 +989,21 @@ impl Fund {
         min_bought: i128,
         path: Vec<Address>,
     ) -> i128 {
-        let manager = storage::manager(&env);
-        manager.require_auth();
+        // After a wind-down the operator trades in the manager's place, and
+        // only into USDC.
+        let manager = match storage::wind_down(&env) {
+            None => require_manager(&env),
+            Some(wind_down) => {
+                let operator = wind_down
+                    .operator
+                    .unwrap_or_else(|| panic_with_error!(&env, FundError::WoundDown));
+                operator.require_auth();
+                if buy != wind_down.usdc {
+                    panic_with_error!(&env, FundError::OnlyIntoUsdc);
+                }
+                operator
+            }
+        };
         storage::bump_instance(&env);
         if min_bought < 0 {
             panic_with_error!(&env, FundError::InvalidAmount);
@@ -1042,9 +1079,7 @@ impl Fund {
     /// oracle, so a manager can't route the fund's assets through a contract
     /// they control.
     pub fn set_router(env: Env, router: Address) {
-        PlatformClient::new(&env, &storage::platform(&env))
-            .admin()
-            .require_auth();
+        require_platform_admin(&env);
         storage::bump_instance(&env);
         storage::set_router(&env, &router);
         events::RouterSet { router }.publish(&env);
@@ -1080,7 +1115,7 @@ impl Fund {
     /// `open_for_issue`, so holders always know which one they bought.
     /// A fund that never chooses is `Locked`.
     pub fn set_mandate(env: Env, mandate: Mandate) {
-        storage::manager(&env).require_auth();
+        require_manager(&env);
         storage::bump_instance(&env);
         if storage::mandate(&env).is_some() {
             panic_with_error!(&env, FundError::MandateFixed);
@@ -1094,7 +1129,7 @@ impl Fund {
     /// gains weight only through rebalances. A permissioned asset needs the
     /// fund's investor allowlist on, as at creation.
     pub fn add_component(env: Env, token: Address) {
-        storage::manager(&env).require_auth();
+        require_manager(&env);
         storage::bump_instance(&env);
         match mandate(&env) {
             Mandate::Managed => {}
@@ -1126,7 +1161,7 @@ impl Fund {
     /// Sets the annual management fee, once, before `open_for_issue`.
     /// Zero is a valid, permanent choice. The fee streams from this moment.
     pub fn init_fee(env: Env, rate_bps: u32) {
-        storage::manager(&env).require_auth();
+        require_manager(&env);
         storage::bump_instance(&env);
         if storage::fee(&env).is_some() {
             panic_with_error!(&env, FundError::FeeAlreadySet);
@@ -1183,7 +1218,7 @@ impl Fund {
     }
 
     pub fn set_fee_recipient(env: Env, recipient: Address) {
-        storage::manager(&env).require_auth();
+        require_manager(&env);
         storage::bump_instance(&env);
         require_can_hold(&env, &recipient);
         accrue_fee(&env);
@@ -1198,9 +1233,7 @@ impl Fund {
     /// The platform's cut of this fund's management fee, set by the platform
     /// admin and capped at half. It splits the fee; it never raises it.
     pub fn set_platform_fee(env: Env, share_bps: u32, recipient: Address) {
-        PlatformClient::new(&env, &storage::platform(&env))
-            .admin()
-            .require_auth();
+        require_platform_admin(&env);
         storage::bump_instance(&env);
         if share_bps > MAX_PLATFORM_SHARE_BPS {
             panic_with_error!(&env, FundError::ShareTooHigh);
@@ -1224,7 +1257,7 @@ impl Fund {
     /// Manager-written descriptive fields (`description`, `strategy`,
     /// `website`, ...). An empty value removes the key.
     pub fn set_metadata(env: Env, key: Symbol, value: String) {
-        storage::manager(&env).require_auth();
+        require_manager(&env);
         storage::bump_instance(&env);
         if value.len() > MAX_METADATA_BYTES {
             panic_with_error!(&env, FundError::MetadataTooLarge);
@@ -1247,8 +1280,7 @@ impl Fund {
     }
 
     pub fn set_manager(env: Env, new_manager: Address) {
-        let manager = storage::manager(&env);
-        manager.require_auth();
+        let manager = require_manager(&env);
         new_manager.require_auth();
         storage::bump_instance(&env);
         storage::set_manager(&env, &new_manager);
@@ -1257,6 +1289,52 @@ impl Fund {
             manager: new_manager,
         }
         .publish(&env);
+    }
+
+    /// The platform admin (in practice its timelock) replaces the manager
+    /// without the old one's consent, say after a key compromise. The fee
+    /// accrued so far goes to the old recipient, and from here the manager's
+    /// part goes to the new manager until they set a recipient.
+    pub fn replace_manager(env: Env, new_manager: Address) {
+        require_platform_admin(&env);
+        storage::bump_instance(&env);
+        if storage::wind_down(&env).is_some() {
+            panic_with_error!(&env, FundError::WoundDown);
+        }
+        accrue_fee(&env);
+        let previous = storage::manager(&env);
+        storage::set_manager(&env, &new_manager);
+        storage::set_fee_recipient(&env, &new_manager);
+        events::ManagerReplaced {
+            previous,
+            manager: new_manager,
+        }
+        .publish(&env);
+    }
+
+    /// The platform admin winds the fund down: issuance closes for good,
+    /// the fee stops (after accruing what is owed so far), and every manager
+    /// power is revoked. `operator`, if any, may then only `trade` into
+    /// `usdc`, under the same price checks, floor, loss budgets and
+    /// cooldown. Assets never leave the fund except through `redeem`,
+    /// `withdraw_owed` and those swaps, and redemption is untouched. Calling
+    /// it again changes the operator or the target.
+    pub fn wind_down(env: Env, operator: Option<Address>, usdc: Address) {
+        require_platform_admin(&env);
+        storage::bump_instance(&env);
+        accrue_fee(&env);
+        storage::set_wind_down(
+            &env,
+            &WindDown {
+                operator: operator.clone(),
+                usdc: usdc.clone(),
+            },
+        );
+        events::WoundDown { operator, usdc }.publish(&env);
+    }
+
+    pub fn wind_down_state(env: Env) -> Option<WindDown> {
+        storage::wind_down(&env)
     }
 
     // SEP-41

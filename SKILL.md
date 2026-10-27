@@ -90,6 +90,8 @@ simulates and needs no fee.
 | `set_fee_recipient(recipient)` | manager | Where the manager's part of the fee is minted (default: the manager); must pass the allowlist |
 | `fee_escrow(recipient)`, `claim_fee(recipient)` | anyone | Fee shares held for a recipient that could not hold them when they accrued, and their release once it can |
 | `set_platform_fee(share_bps, recipient)` | platform admin | The platform's cut of the fee, at most 5000 bps of it; recipient must pass the allowlist |
+| `replace_manager(new_manager)` (v0.6) | platform admin | Installs a new manager without the old one's consent; the manager's fee goes to the new manager from then on |
+| `wind_down(operator, usdc)`, `wind_down_state()` (v0.6) | platform admin / anyone | Closes issuance and stops the fee for good, revokes every manager power (`WoundDown`); `operator`, if any, may only `trade` into `usdc` (`OnlyIntoUsdc`). Redemption is unchanged |
 | `set_metadata(key, value)`, `metadata()` | manager / anyone | Up to 8 entries such as `description`, `strategy`, `website`, 512 bytes each; an empty value removes one |
 | `trade(sell, sold, buy, min_bought, path)` | manager, not `Static` | Swap inside the fund through the Soroswap router; min out is the larger of `min_bought` and 99% at oracle prices; returns the amount bought |
 | `set_router(router)`, `router()` | platform admin / anyone | The DEX router `trade` uses; `mainnet` builds default to Soroswap's |

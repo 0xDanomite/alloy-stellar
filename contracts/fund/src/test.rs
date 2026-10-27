@@ -1809,3 +1809,193 @@ fn a_donation_inflation_attack_transfers_no_value() {
         assert!(paid - got <= 1);
     }
 }
+
+// Wind-down and manager replacement by the platform admin.
+
+#[test]
+fn only_the_platform_admin_winds_down_or_replaces_the_manager() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let usdc = s.assets[0].token.address.clone();
+    let new_manager = Address::generate(&s.env);
+
+    s.env.mock_auths(&[]);
+    assert!(s.fund.try_wind_down(&None, &usdc).is_err());
+    assert!(s.fund.try_replace_manager(&new_manager).is_err());
+    s.env.mock_all_auths();
+
+    s.fund.replace_manager(&new_manager);
+    assert_eq!(s.env.auths()[0].0, s.fund.platform());
+    assert_eq!(s.fund.manager(), new_manager);
+
+    s.fund.wind_down(&None, &usdc);
+    assert_eq!(s.env.auths()[0].0, s.fund.platform());
+    assert_eq!(
+        s.fund.wind_down_state(),
+        Some(crate::WindDown {
+            operator: None,
+            usdc
+        })
+    );
+}
+
+#[test]
+fn a_wound_down_fund_closes_issuance_and_revokes_the_manager() {
+    let s = trading_fund();
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.wind_down(&None, a);
+
+    assert!(!s.fund.is_open());
+    assert_eq!(
+        s.fund.try_issue(&investor, &investor, &SHARE_SCALE).err(),
+        Some(Ok(FundError::IssuanceClosed.into()))
+    );
+    let revoked = Some(Ok(FundError::WoundDown.into()));
+    let someone = Address::generate(&s.env);
+    assert_eq!(s.fund.try_set_investor(&someone, &true).err(), revoked);
+    assert_eq!(s.fund.try_set_fee_recipient(&someone).err(), revoked);
+    assert_eq!(s.fund.try_set_manager(&someone).err(), revoked);
+    assert_eq!(s.fund.try_replace_manager(&someone).err(), revoked);
+    assert_eq!(
+        s.fund
+            .try_set_metadata(
+                &Symbol::new(&s.env, "status"),
+                &String::from_str(&s.env, "x")
+            )
+            .err(),
+        revoked
+    );
+    assert_eq!(
+        s.fund
+            .try_add_component(&create_asset(&s.env, false).token.address)
+            .err(),
+        revoked
+    );
+    assert_eq!(
+        s.fund.try_rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE).err(),
+        revoked
+    );
+    // With no operator, nobody trades at all.
+    with_router(&s, 10_000);
+    assert_eq!(
+        s.fund
+            .try_trade(b, &SHARE_SCALE, a, &0, &route(&s, 1, 0))
+            .err(),
+        revoked
+    );
+}
+
+/// Winding down changes nothing a holder redeems: the quote at wind-down
+/// is what they get, however long after, because the fee stops too.
+#[test]
+fn wind_down_never_blocks_or_reduces_a_redemption() {
+    let s = with_fee(Compliance::Open, crate::MAX_FEE_BPS);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    at(&s, YEAR_SECONDS / 2);
+    let quoted = s.fund.quote_redeem(&(10 * SHARE_SCALE));
+    s.fund.wind_down(&None, &s.assets[0].token.address);
+    assert_eq!(s.fund.quote_redeem(&(10 * SHARE_SCALE)), quoted);
+
+    at(&s, 3 * YEAR_SECONDS);
+    assert_eq!(s.fund.pending_fee(), 0);
+    assert_eq!(s.fund.accrue_fee(), 0);
+    let skip = vec![&s.env, s.assets[2].token.address.clone()];
+    let got = s
+        .fund
+        .redeem(&investor, &investor, &(10 * SHARE_SCALE), &skip);
+    assert_eq!(got, quoted);
+    s.fund
+        .withdraw_owed(&investor, &investor, &s.assets[2].token.address);
+    assert_eq!(s.fund.balance(&investor), 0);
+}
+
+/// The operator can only swap a component into USDC inside the fund, under
+/// the oracle floor and loss budgets; nothing reaches the operator.
+#[test]
+fn the_operator_only_trades_into_usdc_and_assets_stay_in_the_fund() {
+    let s = trading_fund();
+    with_router(&s, 9_950);
+    let (usdc, b, c) = (
+        &s.assets[0].token.address,
+        &s.assets[1].token.address,
+        &s.assets[2].token.address,
+    );
+    let operator = Address::generate(&s.env);
+    s.fund.wind_down(&Some(operator.clone()), usdc);
+
+    assert_eq!(
+        s.fund
+            .try_trade(b, &SHARE_SCALE, c, &0, &route(&s, 1, 2))
+            .err(),
+        Some(Ok(FundError::OnlyIntoUsdc.into()))
+    );
+    assert_eq!(
+        s.fund
+            .try_rebalance(b, &SHARE_SCALE, usdc, &SHARE_SCALE)
+            .err(),
+        Some(Ok(FundError::WoundDown.into()))
+    );
+    // Worse than the 1% floor is still refused.
+    let router = MockRouterClient::new(&s.env, &s.fund.router().unwrap());
+    router.configure(&9_850, &false, &false);
+    assert!(s
+        .fund
+        .try_trade(b, &(5 * SHARE_SCALE), usdc, &0, &route(&s, 1, 0))
+        .is_err());
+    router.configure(&9_950, &false, &false);
+
+    let before = s.fund.holdings();
+    let bought = s
+        .fund
+        .trade(b, &(5 * SHARE_SCALE), usdc, &0, &route(&s, 1, 0));
+    assert_eq!(s.env.auths()[0].0, operator);
+    let after = s.fund.holdings();
+    assert_eq!(after.get_unchecked(0), before.get_unchecked(0) + bought);
+    assert_eq!(
+        after.get_unchecked(1),
+        before.get_unchecked(1) - 5 * SHARE_SCALE
+    );
+    assert_eq!(after.get_unchecked(2), before.get_unchecked(2));
+    assert!(bought >= 5 * SHARE_SCALE * 99 / 100);
+    assert!(s.fund.window_loss_ppb() > 0);
+    for asset in &s.assets {
+        assert_eq!(asset.token.balance(&operator), 0);
+    }
+}
+
+#[test]
+fn a_replaced_manager_loses_its_powers_and_its_fee() {
+    let s = with_fee(Compliance::Open, 100);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    let treasury = Address::generate(&s.env);
+    s.fund.set_fee_recipient(&treasury);
+
+    at(&s, YEAR_SECONDS);
+    let new_manager = Address::generate(&s.env);
+    s.fund.replace_manager(&new_manager);
+    let treasury_fee = s.fund.balance(&treasury);
+    assert!(treasury_fee > 0);
+    assert_eq!(s.fund.fee_recipient(), new_manager);
+
+    let old = s.manager.clone();
+    s.env.mock_auths(&[MockAuth {
+        address: &old,
+        invoke: &MockAuthInvoke {
+            contract: &s.fund.address,
+            fn_name: "set_investor",
+            args: (&investor, false).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(s.fund.try_set_investor(&investor, &false).is_err());
+    s.env.mock_all_auths();
+    s.fund.set_investor(&investor, &false);
+    assert_eq!(s.env.auths()[0].0, new_manager);
+
+    at(&s, 2 * YEAR_SECONDS);
+    s.fund.accrue_fee();
+    assert_eq!(s.fund.balance(&treasury), treasury_fee);
+    assert!(s.fund.balance(&new_manager) > 0);
+}
