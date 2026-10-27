@@ -30,16 +30,23 @@ export function TrustTag({ fund, byManager = false }: { fund: Pick<Fund, "offici
   );
 }
 
-/** Shown on a community fund whose symbol or name passes for an official one. */
-export function ImitationChip({ fund }: { fund: Pick<Fund, "imitates"> }) {
-  if (!fund.imitates) return null;
+const WARNING_CHIP = "chip shrink-0 border-destructive/50 px-1.5 py-0.5 text-[0.6875rem] font-medium text-destructive";
+
+/** Warnings on a community fund: a symbol or name that passes for an official fund, or one written with unusual characters. */
+export function TrustWarnings({ fund }: { fund: Pick<Fund, "imitates" | "unusualText"> }) {
   return (
-    <span
-      className="chip shrink-0 border-destructive/50 px-1.5 py-0.5 text-[0.6875rem] font-medium text-destructive"
-      title={`Its symbol or name looks like Alloy's official ${fund.imitates}, but this is a different fund run by a different manager.`}
-    >
-      Not the official {fund.imitates}
-    </span>
+    <>
+      {fund.imitates && (
+        <span className={WARNING_CHIP} title={`Its symbol or name looks like Alloy's official ${fund.imitates}, but this is a different fund run by a different manager.`}>
+          Not the official {fund.imitates}
+        </span>
+      )}
+      {fund.unusualText && (
+        <span className={WARNING_CHIP} title="Its name or symbol uses characters beyond plain letters, digits and punctuation, such as another alphabet or invisible joiners, which can make it look like a different fund.">
+          Contains unusual characters
+        </span>
+      )}
+    </>
   );
 }
 
@@ -235,7 +242,7 @@ export function FundCard({ fund, featured = false }: { fund: Fund; featured?: bo
           <div className="mt-0.5 flex flex-wrap items-center gap-2">
             <span className="text-filing text-muted-foreground">{fund.symbol}</span>
             <TrustTag fund={fund} />
-            <ImitationChip fund={fund} />
+            <TrustWarnings fund={fund} />
           </div>
         </div>
         <span className="chip shrink-0 px-2 py-0.5 text-[0.75rem] text-muted-foreground">{complianceLabel(fund)}</span>

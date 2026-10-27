@@ -40,6 +40,7 @@ function fund(components: FundComponent[], overrides: Partial<Fund> = {}): Fund 
     hidden: false,
     official: false,
     imitates: null,
+    unusualText: false,
     ...overrides,
   };
 }

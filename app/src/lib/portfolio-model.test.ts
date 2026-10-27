@@ -29,6 +29,7 @@ function fund(id: string, overrides: Partial<Fund> = {}): Fund {
     hidden: false,
     official: false,
     imitates: null,
+    unusualText: false,
     ...overrides,
   };
 }

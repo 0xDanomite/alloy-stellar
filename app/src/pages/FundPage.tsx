@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AssetDot, complianceLabel, FundAvatar, headlineValue, HoldsChips, ImitationChip, IssuerFlags, IssuerName, MANDATES, mandateOf, OracleNote, TrustTag } from "../components/fund-bits";
+import { AssetDot, complianceLabel, FundAvatar, headlineValue, HoldsChips, IssuerFlags, IssuerName, MANDATES, mandateOf, OracleNote, TrustTag, TrustWarnings } from "../components/fund-bits";
 import { ArrowLeft } from "../components/icons";
 import { InvestPanel } from "../components/InvestPanel";
 import { ManagePanel } from "../components/ManagePanel";
@@ -268,7 +268,7 @@ export function FundPage() {
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-filing text-muted-foreground">{f ? f.symbol : "fund"}</span>
                   {f && <TrustTag fund={f} byManager />}
-                  {f && <ImitationChip fund={f} />}
+                  {f && <TrustWarnings fund={f} />}
                   {f && <span className="chip px-2 py-0.5 text-[0.75rem] text-muted-foreground">{complianceLabel(f)}</span>}
                   {f?.setup && (
                     <span className="chip px-2 py-0.5 text-[0.75rem] text-muted-foreground" title={MANDATES[mandateOf(f) ?? "Locked"].detail}>
@@ -428,12 +428,14 @@ export function FundPage() {
 
         <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
           {f && handover && <HandoverCard fund={f} link={handover} onChanged={refresh} />}
-          {f?.imitates && (
+          {f && (f.imitates || f.unusualText) && (
             <div className="rounded-2xl border border-destructive/40 bg-card p-4" role="note">
-              <h2 className="font-medium text-destructive">Not the official {f.imitates}</h2>
+              <h2 className="font-medium text-destructive">{f.imitates ? `Not the official ${f.imitates}` : "Contains unusual characters"}</h2>
               <p className="mt-1 text-[0.875rem]">
-                This fund's symbol or name looks like Alloy's official {f.imitates}, but a different manager created it and runs it. Alloy
-                hasn't reviewed it. Check the manager before investing.
+                {f.imitates
+                  ? `This fund's symbol or name looks like Alloy's official ${f.imitates}, but a different manager created it and runs it.`
+                  : "This fund's name or symbol uses characters beyond plain letters and digits, such as another alphabet or invisible joiners, so it may not read the way it looks."}{" "}
+                Alloy hasn't reviewed it. Check the manager before investing.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2 text-[0.8125rem]">
                 <span className="text-muted-foreground">Manager</span>

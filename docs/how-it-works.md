@@ -120,9 +120,13 @@ and only official funds appear in the landing page's carousel and fund
 grid. Every other fund is tagged Community, with its manager's address on
 its page. When a community fund's symbol or name passes for an official
 one (case-insensitive, ignoring spacing and the `a` prefix, and folding
-look-alikes such as 0/O, 1/l/I and Cyrillic or Greek letters), its page
-and rows say "Not the official <SYMBOL>" and its symbol is shown with
-its manager's short address after it. Names, symbols and profile text
+the ASCII look-alikes 0/O, 1/l/I and 5/S), its page and rows say "Not
+the official <SYMBOL>". A community fund whose name or symbol uses any
+character beyond printable ASCII (another script such as a Cyrillic а,
+fullwidth letters, zero-width joiners) says "Contains unusual
+characters"; those characters are never folded or dropped to make a
+match. Either way its symbol is shown with its manager's short address
+after it. Names, symbols and profile text
 are cut to display limits and stripped of invisible and bidi-control
 characters before they are shown.
 

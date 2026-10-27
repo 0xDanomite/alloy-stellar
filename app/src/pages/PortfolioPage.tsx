@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { complianceLabel, FundAvatar, headlineValue, ImitationChip, strandColor, TrustTag } from "../components/fund-bits";
+import { complianceLabel, FundAvatar, headlineValue, strandColor, TrustTag, TrustWarnings } from "../components/fund-bits";
 import { Bell } from "../components/icons";
 import { Button, CopyId, Figure, Usd } from "../components/ui";
 import { deployments } from "../lib/config";
@@ -92,7 +92,7 @@ function HeldRow({ position, share }: { position: FundPosition; share: number | 
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-filing text-muted-foreground">{fund.symbol}</span>
             <TrustTag fund={fund} />
-            <ImitationChip fund={fund} />
+            <TrustWarnings fund={fund} />
           </div>
         </div>
       </div>
@@ -154,7 +154,7 @@ function Managed({ data }: { data: Portfolio }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-filing text-muted-foreground">{fund.symbol}</span>
                   <TrustTag fund={fund} />
-                  <ImitationChip fund={fund} />
+                  <TrustWarnings fund={fund} />
                   <span className="text-[0.75rem] text-muted-foreground">{complianceLabel(fund)}</span>
                   {fund.hidden && (
                     <span className="chip px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground" title="Left out of the public fund lists; still open by link">

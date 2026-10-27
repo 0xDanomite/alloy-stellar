@@ -506,6 +506,8 @@ export interface Fund {
   official: boolean;
   /** The official fund symbol this community fund's symbol or name passes for, or null. */
   imitates: string | null;
+  /** A community fund whose name or symbol uses characters beyond printable ASCII, such as another script or a zero-width joiner. */
+  unusualText: boolean;
 }
 
 export interface FundMetadata {
@@ -724,6 +726,7 @@ async function toFund(state: FundState): Promise<Fund> {
     hidden: state.hidden,
     official: false,
     imitates: null,
+    unusualText: false,
   };
 }
 
