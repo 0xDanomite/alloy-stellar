@@ -7,13 +7,7 @@
     <link rel="icon" type="image/svg+xml" href="/mark.svg" />
     <link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin />
     <title>Alloy on Stellar</title>
-    <script>
-      try {
-        var t = localStorage.getItem("alloy-theme");
-        var dark = t ? t === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-        if (dark) document.documentElement.classList.add("dark");
-      } catch (e) {}
-    </script>
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>
