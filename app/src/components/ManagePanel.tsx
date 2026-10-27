@@ -17,6 +17,7 @@ import {
 import { explain, rebalance, rebalanceOracle, setCompliance, setInvestor, type Compliance, type Fund, type FundMetadata, type Mandate } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
+import { parseWebsite } from "../lib/website";
 import { headlineValue, MANDATES, mandateOf } from "./fund-bits";
 import { RebalancePlanner } from "./RebalancePlanner";
 import { SetupChecklist } from "./SetupChecklist";
@@ -261,7 +262,7 @@ function ProfileEditor({ fund, onChanged }: { fund: Fund; onChanged: () => void 
   const [saving, setSaving] = useState<SetupStep[] | null>(null);
   const changed = PROFILE_FIELDS.filter(({ key }) => values[key].trim() !== (fund.metadata[key] ?? ""));
   const tooLong = PROFILE_FIELDS.some(({ key }) => new TextEncoder().encode(values[key].trim()).length > 512);
-  const badSite = values.website.trim() !== "" && !/^https:\/\/[^\s/]+\.[^\s]+$/.test(values.website.trim());
+  const badSite = values.website.trim() !== "" && parseWebsite(values.website) === null;
 
   function save() {
     setSaving(
