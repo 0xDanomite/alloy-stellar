@@ -38,6 +38,9 @@ function fund(components: FundComponent[], overrides: Partial<Fund> = {}): Fund 
     },
     metadata: { description: "Short treasuries.", strategy: "Quarterly." },
     hidden: false,
+    official: false,
+    imitates: null,
+    unusualText: false,
     ...overrides,
   };
 }
