@@ -659,3 +659,34 @@ fn divergence_is_reported_for_the_fund_to_enforce() {
     assert_eq!(quote.divergence_bps, Some(3_333));
     assert!(quote.secondary_timestamp.is_some_and(|at| at >= NOW - HOUR));
 }
+
+/// A USDC-quoted primary is only as first-choice as its USDC to USD leg:
+/// when the first USD-quoted USDC route is stale and the conversion falls
+/// back to the next, the quote is marked as not from the primary. USDC's
+/// own USDC-quoted route (Reflector on mainnet) cannot convert and is
+/// skipped, so `route_usdc`'s layout counts as first choice.
+#[test]
+fn a_usdc_quoted_primary_tracks_the_usdc_legs_fallback() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let xlm = new_token(&s.env);
+    s.reflector
+        .set(&stellar(&xlm), &30_000_000_000_000, &(NOW - 60));
+    s.nav.set_route(&xlm, &reflector_route(&s, &xlm), &None);
+    assert!(s.nav.price(&xlm).from_primary);
+
+    // Two USD-quoted USDC routes; the first goes stale.
+    let mut usd_reflector = reflector_route(&s, &s.usdc);
+    usd_reflector.quote = Quote::Usd;
+    s.redstone
+        .set(&stellar(&s.usdc), &100_000_000, &(NOW - 27 * HOUR));
+    s.nav
+        .set_route(&s.usdc, &redstone_route(&s, &s.usdc), &Some(usd_reflector));
+    let quote = s.nav.price(&xlm);
+    assert_eq!(quote.price, 30_000_000);
+    assert!(!quote.from_primary);
+
+    s.redstone
+        .set(&stellar(&s.usdc), &100_000_000, &(NOW - HOUR));
+    assert!(s.nav.price(&xlm).from_primary);
+}

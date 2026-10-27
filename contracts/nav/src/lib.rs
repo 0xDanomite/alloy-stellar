@@ -74,8 +74,10 @@ pub struct Route {
     pub source: Symbol,
 }
 
-/// `timestamp` is the quoted price's. `from_primary` is false when the
-/// primary was stale or failed and the price is the secondary's. When both
+/// `timestamp` is the quoted price's (for a USDC-quoted route, the older of
+/// the price and the USDC to USD reading). `from_primary` is false when the
+/// primary was stale or failed and the price is the secondary's, or when a
+/// USDC-quoted primary converted through a fallback USDC route. When both
 /// routes are fresh, `divergence_bps` is how far the secondary is from the
 /// primary and `secondary_timestamp` is when the secondary was read; both
 /// are `None` otherwise. "Fresh" means within each route's own
@@ -252,24 +254,51 @@ fn read_redstone_feed(env: &Env, oracle: &Address) -> Option<(i128, u32, u64)> {
     Some((price, decimals, data.package_timestamp))
 }
 
-/// USDC in USD from the first fresh USD-quoted route configured for USDC.
-fn usdc_in_usd(env: &Env) -> Option<(i128, u64)> {
+/// One fresh reading of a route, in USD: the price, its timestamp, and
+/// whether every source behind it was the first choice. For a USDC-quoted
+/// route that includes the USDC to USD conversion.
+struct Reading {
+    price: i128,
+    timestamp: u64,
+    first_choice: bool,
+}
+
+/// USDC in USD from the first fresh USD-quoted route configured for USDC,
+/// and whether it was the first such route. A USDC-quoted route for USDC
+/// itself (mainnet's Reflector primary) cannot convert anything and is
+/// skipped, so it never counts as a fallback.
+fn usdc_in_usd(env: &Env) -> Option<Reading> {
     let usdc: Address = env.storage().instance().get(&DataKey::Usdc).unwrap();
     [primary(env, &usdc), secondary(env, &usdc)]
         .into_iter()
         .flatten()
         .filter(|route| route.quote == Quote::Usd)
-        .find_map(|route| read_raw(env, &route))
+        .enumerate()
+        .find_map(|(rank, route)| {
+            read_raw(env, &route).map(|(price, timestamp)| Reading {
+                price,
+                timestamp,
+                first_choice: rank == 0,
+            })
+        })
 }
 
-fn read_route(env: &Env, route: &Route) -> Option<(i128, u64)> {
+fn read_route(env: &Env, route: &Route) -> Option<Reading> {
     let (price, timestamp) = read_raw(env, route)?;
     match route.quote {
-        Quote::Usd => Some((price, timestamp)),
+        Quote::Usd => Some(Reading {
+            price,
+            timestamp,
+            first_choice: true,
+        }),
         Quote::Usdc => {
-            let (usdc, usdc_timestamp) = usdc_in_usd(env)?;
-            let price = mul_div(price, usdc, PRICE_SCALE).ok()?;
-            (price > 0).then_some((price, timestamp.min(usdc_timestamp)))
+            let usdc = usdc_in_usd(env)?;
+            let price = mul_div(price, usdc.price, PRICE_SCALE).ok()?;
+            (price > 0).then_some(Reading {
+                price,
+                timestamp: timestamp.min(usdc.timestamp),
+                first_choice: usdc.first_choice,
+            })
         }
     }
 }
@@ -291,19 +320,19 @@ fn price(env: &Env, token: &Address) -> Result<PriceQuote, NavError> {
     let fresh_secondary = secondary(env, token)
         .and_then(|route| read_route(env, &route).map(|found| (found, route.source)));
     match (fresh_primary, fresh_secondary) {
-        (Some((price, timestamp)), secondary) => Ok(PriceQuote {
-            price,
-            timestamp,
+        (Some(primary), secondary) => Ok(PriceQuote {
+            price: primary.price,
+            timestamp: primary.timestamp,
             source: primary_route.source,
             divergence_bps: secondary
                 .as_ref()
-                .map(|((other, _), _)| divergence_bps(price, *other)),
-            secondary_timestamp: secondary.map(|((_, read_at), _)| read_at),
-            from_primary: true,
+                .map(|(other, _)| divergence_bps(primary.price, other.price)),
+            secondary_timestamp: secondary.map(|(other, _)| other.timestamp),
+            from_primary: primary.first_choice,
         }),
-        (None, Some(((price, timestamp), source))) => Ok(PriceQuote {
-            price,
-            timestamp,
+        (None, Some((reading, source))) => Ok(PriceQuote {
+            price: reading.price,
+            timestamp: reading.timestamp,
             source,
             divergence_bps: None,
             secondary_timestamp: None,
