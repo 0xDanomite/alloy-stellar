@@ -74,6 +74,12 @@ pub struct Route {
     pub source: Symbol,
 }
 
+/// `timestamp` is the quoted price's. When both routes are fresh,
+/// `divergence_bps` is how far the secondary is from it and
+/// `secondary_timestamp` is when the secondary was read; both are `None`
+/// for a single-source quote. "Fresh" means within each route's own
+/// `max_age_secs`, so a consumer with a tighter bound checks both
+/// timestamps (v0.6).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceQuote {
@@ -81,6 +87,7 @@ pub struct PriceQuote {
     pub timestamp: u64,
     pub source: Symbol,
     pub divergence_bps: Option<u32>,
+    pub secondary_timestamp: Option<u64>,
 }
 
 #[contracttype]
@@ -286,13 +293,17 @@ fn price(env: &Env, token: &Address) -> Result<PriceQuote, NavError> {
             price,
             timestamp,
             source: primary_route.source,
-            divergence_bps: secondary.map(|((other, _), _)| divergence_bps(price, other)),
+            divergence_bps: secondary
+                .as_ref()
+                .map(|((other, _), _)| divergence_bps(price, *other)),
+            secondary_timestamp: secondary.map(|((_, read_at), _)| read_at),
         }),
         (None, Some(((price, timestamp), source))) => Ok(PriceQuote {
             price,
             timestamp,
             source,
             divergence_bps: None,
+            secondary_timestamp: None,
         }),
         (None, None) => Err(NavError::NoFreshPrice),
     }

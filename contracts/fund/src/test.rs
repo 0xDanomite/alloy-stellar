@@ -505,8 +505,9 @@ fn approve_rejects_expiry_beyond_max_ttl() {
 }
 
 /// Every token is worth $1 unless `set` says otherwise, quoted fresh and
-/// confirmed by a second source at zero divergence unless `set_quality`
-/// says otherwise.
+/// confirmed by a fresh second source at zero divergence unless
+/// `set_quality` says otherwise. A quote with no divergence has no second
+/// reading, as NAV reports it.
 #[contract]
 struct MockNav;
 
@@ -517,22 +518,34 @@ impl MockNav {
     }
 
     pub fn set_quality(env: Env, token: Address, age_secs: u64, divergence_bps: Option<u32>) {
+        Self::set_readings(env, token, age_secs, divergence_bps, 0);
+    }
+
+    pub fn set_readings(
+        env: Env,
+        token: Address,
+        age_secs: u64,
+        divergence_bps: Option<u32>,
+        secondary_age_secs: u64,
+    ) {
         env.storage().instance().set(
             &(token, soroban_sdk::symbol_short!("q")),
-            &(age_secs, divergence_bps),
+            &(age_secs, divergence_bps, secondary_age_secs),
         );
     }
 
     pub fn price(env: Env, token: Address) -> PriceQuote {
         let instance = env.storage().instance();
-        let (age, divergence_bps): (u64, Option<u32>) = instance
+        let (age, divergence_bps, secondary_age): (u64, Option<u32>, u64) = instance
             .get(&(token.clone(), soroban_sdk::symbol_short!("q")))
-            .unwrap_or((0, Some(0)));
+            .unwrap_or((0, Some(0), 0));
+        let now = env.ledger().timestamp();
         PriceQuote {
             price: instance.get(&token).unwrap_or(100_000_000),
-            timestamp: env.ledger().timestamp() - age,
+            timestamp: now - age,
             source: soroban_sdk::symbol_short!("mock"),
             divergence_bps,
+            secondary_timestamp: divergence_bps.map(|_| now - secondary_age),
         }
     }
 }
@@ -1419,6 +1432,71 @@ fn trades_refuse_stale_unconfirmed_or_divergent_prices() {
     nav.set_quality(xlm, &0, &Some(crate::MAX_TRADE_DIVERGENCE_BPS));
     router.configure(&10_000, &false, &false);
     s.fund.trade(usdc, &sold, xlm, &0, &path);
+}
+
+/// A fresh primary with a divergence is not enough: NAV calls a RedStone
+/// secondary fresh for 26 hours, so a day-old reading could confirm it.
+/// Both readings must be within the trade age.
+#[test]
+fn a_confirmation_from_a_stale_secondary_is_refused() {
+    let s = trading_fund();
+    let nav = nav_of(&s);
+    at(&s, 2 * 24 * 60 * 60);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    s.assets[0].admin.mint(&s.manager, &(5 * SHARE_SCALE));
+    nav.set_readings(a, &0, &Some(0), &(25 * 60 * 60));
+    assert_eq!(
+        s.fund.try_rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE),
+        Err(Ok(FundError::StalePrice.into()))
+    );
+    nav.set_readings(a, &0, &Some(0), &(crate::MAX_TRADE_PRICE_AGE_SECONDS + 1));
+    assert_eq!(
+        s.fund.try_rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE),
+        Err(Ok(FundError::StalePrice.into()))
+    );
+    nav.set_readings(a, &0, &Some(0), &crate::MAX_TRADE_PRICE_AGE_SECONDS);
+    s.fund.rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE);
+}
+
+/// The fee used to be computed as `supply * accrued * 1e9` in one product,
+/// and an overflow minted nothing while the clock still moved on, so a
+/// large enough fund paid no fee at all. The split never forms that
+/// product: at 5% for a year the fee is exactly `supply / 19`.
+#[test]
+fn the_fee_is_exact_at_any_supply() {
+    for supply in [1, 10 * SHARE_SCALE, i128::MAX / 1_000_000, i128::MAX / 20] {
+        let (shares, fraction) = crate::fee_split(supply, 500, YEAR_SECONDS).unwrap();
+        assert_eq!(shares, supply / 19);
+        assert_eq!(fraction, supply % 19 * 1_000_000_000 / 19);
+    }
+    let (shares, _) = crate::fee_split(10 * SHARE_SCALE, 50, 86_400).unwrap();
+    assert_eq!(shares, 1_369);
+}
+
+/// When the fee cannot be minted because the supply would overflow,
+/// accrual mints nothing and leaves the clock alone, so the fee waits
+/// instead of being written off; it still never fails.
+#[test]
+fn an_unmintable_fee_waits_and_never_blocks() {
+    let s = with_fee(Compliance::Open, 500);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &SHARE_SCALE);
+    let set_supply = |supply: i128| {
+        s.env.as_contract(&s.fund.address, || {
+            crate::storage::set_supply(&s.env, supply)
+        })
+    };
+
+    set_supply(i128::MAX - 1);
+    at(&s, YEAR_SECONDS);
+    assert_eq!(s.fund.pending_fee(), 0);
+    assert_eq!(s.fund.accrue_fee(), 0);
+    assert_eq!(s.fund.fee().unwrap().last_accrual, 0);
+
+    let huge = 1_000_000_000_000_000_000_000_000_000_000i128;
+    set_supply(huge);
+    assert_eq!(s.fund.accrue_fee(), huge / 19);
+    assert_eq!(s.fund.fee().unwrap().last_accrual, YEAR_SECONDS);
 }
 
 /// AUD-04: a value-neutral rebalance used to log zero loss whatever the

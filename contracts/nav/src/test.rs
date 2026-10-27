@@ -611,6 +611,29 @@ fn a_reflector_gap_falls_back_to_a_day_old_unconfirmed_price() {
     assert_eq!(quote.price, 40_000_000);
     assert_eq!(quote.timestamp, NOW - 25 * HOUR);
     assert_eq!(quote.divergence_bps, None);
+    assert_eq!(quote.secondary_timestamp, None);
+}
+
+/// The reverse case: a fresh Reflector primary confirmed by a RedStone
+/// secondary from yesterday, which NAV still counts as fresh (26 hours).
+/// The quote carries the secondary's age so the fund can refuse it.
+#[test]
+fn a_confirmation_reports_how_old_the_secondary_is() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let xlm = new_token(&s.env);
+    s.reflector
+        .set(&stellar(&xlm), &30_000_000_000_000, &(NOW - 60));
+    s.redstone
+        .set(&stellar(&xlm), &30_000_000, &(NOW - 25 * HOUR));
+    s.nav.set_route(
+        &xlm,
+        &reflector_route(&s, &xlm),
+        &Some(redstone_route(&s, &xlm)),
+    );
+    let quote = s.nav.price(&xlm);
+    assert_eq!(quote.divergence_bps, Some(0));
+    assert_eq!(quote.secondary_timestamp, Some(NOW - 25 * HOUR));
 }
 
 /// Two fresh sources a third apart still give a quote, with the gap
@@ -632,4 +655,5 @@ fn divergence_is_reported_for_the_fund_to_enforce() {
     let quote = s.nav.price(&token);
     assert_eq!(quote.price, 150_000_000);
     assert_eq!(quote.divergence_bps, Some(3_333));
+    assert!(quote.secondary_timestamp.is_some_and(|at| at >= NOW - HOUR));
 }

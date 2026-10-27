@@ -104,7 +104,9 @@ pub trait PlatformInterface {
     fn admin(env: Env) -> Address;
 }
 
-/// Mirrors `alloy_nav::PriceQuote`: USD per whole token, 8 decimals.
+/// Mirrors `alloy_nav::PriceQuote` from v0.6: USD per whole token, 8
+/// decimals. A NAV older than v0.6 returns no `secondary_timestamp`, so the
+/// quote fails to decode and a v0.6 fund cannot trade against it.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceQuote {
@@ -112,6 +114,7 @@ pub struct PriceQuote {
     pub timestamp: u64,
     pub source: Symbol,
     pub divergence_bps: Option<u32>,
+    pub secondary_timestamp: Option<u64>,
 }
 
 #[contractclient(name = "NavClient")]
@@ -320,32 +323,46 @@ fn spend_allowance(env: &Env, from: &Address, spender: &Address, amount: i128) {
     );
 }
 
-/// The fee for `elapsed` seconds at `rate_bps` a year, in billionths of a
-/// share, sized so that after minting the shares own exactly that fraction
-/// of the fund: `supply * f / (1 - f)` with `f = rate * elapsed / year`.
-/// Elapsed time is capped at one year per accrual, which keeps `f` below
-/// one. An overflow mints nothing rather than fail, so accrual can never
-/// block a redemption.
-fn scaled_fee(supply: i128, rate_bps: u32, elapsed: u64) -> i128 {
+/// The fee for `elapsed` seconds at `rate_bps` a year, sized so that after
+/// minting the shares own exactly that fraction of the fund:
+/// `supply * f / (1 - f)` with `f = rate * elapsed / year`. Elapsed time is
+/// capped at one year per accrual, which keeps `f` below one. Returns the
+/// whole shares and the leftover fraction of a share in billionths, or
+/// `None` only if the shares themselves would not fit in an `i128`.
+pub(crate) fn fee_split(supply: i128, rate_bps: u32, elapsed: u64) -> Option<(i128, i128)> {
     let accrued = i128::from(rate_bps) * i128::from(elapsed.min(YEAR_SECONDS));
-    let whole = BPS * i128::from(YEAR_SECONDS);
-    supply
-        .checked_mul(accrued)
-        .and_then(|numerator| numerator.checked_mul(FEE_CARRY_SCALE))
-        .map_or(0, |numerator| numerator / (whole - accrued))
+    let denominator = BPS * i128::from(YEAR_SECONDS) - accrued;
+    // supply * accrued / denominator, without ever forming supply * accrued:
+    // the remainder term stays below denominator * accrued, about 5e21.
+    let rest = (supply % denominator) * accrued;
+    let shares = (supply / denominator)
+        .checked_mul(accrued)?
+        .checked_add(rest / denominator)?;
+    let fraction = (rest % denominator) * FEE_CARRY_SCALE / denominator;
+    Some((shares, fraction))
 }
 
-/// The fee since the last accrual plus the fraction of a share earlier
-/// accruals could not mint, in billionths of a share.
-fn owed_fee_carry(env: &Env, fee: &FeeState) -> i128 {
+/// Shares owed since the last accrual, counting the fraction earlier
+/// accruals could not mint, and the fraction left over after them. `None`
+/// when they cannot be minted (the supply would overflow); accrual then
+/// leaves the clock where it is, so the fee waits rather than vanish.
+fn owed_fee(env: &Env, fee: &FeeState) -> Option<(i128, i128)> {
     let elapsed = env.ledger().timestamp().saturating_sub(fee.last_accrual);
-    scaled_fee(storage::supply(env), fee.rate_bps, elapsed).saturating_add(storage::fee_carry(env))
+    let supply = storage::supply(env);
+    let (shares, fraction) = fee_split(supply, fee.rate_bps, elapsed)?;
+    let carried = storage::fee_carry(env) + fraction;
+    let minted = shares.checked_add(carried / FEE_CARRY_SCALE)?;
+    supply.checked_add(minted)?;
+    Some((minted, carried % FEE_CARRY_SCALE))
 }
 
 fn pending_fee_shares(env: &Env) -> i128 {
-    storage::fee(env).map_or(0, |fee| owed_fee_carry(env, &fee) / FEE_CARRY_SCALE)
+    storage::fee(env)
+        .and_then(|fee| owed_fee(env, &fee))
+        .map_or(0, |(minted, _)| minted)
 }
 
+/// Never fails, so accrual never blocks a redemption.
 fn accrue_fee(env: &Env) -> i128 {
     let Some(mut fee) = storage::fee(env) else {
         return 0;
@@ -354,9 +371,10 @@ fn accrue_fee(env: &Env) -> i128 {
     if now <= fee.last_accrual {
         return 0;
     }
-    let owed = owed_fee_carry(env, &fee);
-    let minted = owed / FEE_CARRY_SCALE;
-    storage::set_fee_carry(env, owed % FEE_CARRY_SCALE);
+    let Some((minted, carry)) = owed_fee(env, &fee) else {
+        return 0;
+    };
+    storage::set_fee_carry(env, carry);
     fee.last_accrual = now;
     storage::set_fee(env, &fee);
     if minted == 0 {
@@ -365,9 +383,8 @@ fn accrue_fee(env: &Env) -> i128 {
 
     let platform = storage::platform_fee(env);
     let platform_shares = platform.as_ref().map_or(0, |cut| {
-        minted
-            .checked_mul(i128::from(cut.share_bps))
-            .map_or(0, |product| product / BPS)
+        let share = i128::from(cut.share_bps);
+        minted / BPS * share + minted % BPS * share / BPS
     });
     let recipient = storage::fee_recipient(env);
     let manager_shares = minted - platform_shares;
@@ -434,27 +451,33 @@ fn oracle_price(env: &Env, oracle: &NavClient, token: &Address) -> i128 {
     price
 }
 
-/// A price fit to bound a trade: at most `MAX_TRADE_PRICE_AGE_SECONDS` old
-/// and confirmed by the NAV's second source within
-/// `MAX_TRADE_DIVERGENCE_BPS`. A quote with no divergence came from one
-/// source alone (a single route, or the fallback after a stale primary), so
-/// one feed would set the bound by itself. Returns the price and its
-/// divergence.
+/// A price fit to bound a trade: confirmed by the NAV's second source
+/// within `MAX_TRADE_DIVERGENCE_BPS`, with both readings at most
+/// `MAX_TRADE_PRICE_AGE_SECONDS` old. A quote with no second reading came
+/// from one source alone (a single route, or the fallback after a stale
+/// primary), so one feed would set the bound by itself. NAV's own freshness
+/// is per route (up to a day for RedStone), so the fund checks both ages
+/// itself. Returns the price and its divergence.
 fn trade_price(env: &Env, oracle: &NavClient, token: &Address) -> (i128, u32) {
     let quote = oracle.price(token);
     if quote.price <= 0 {
         panic_with_error!(env, FundError::BadPrice);
     }
-    if env.ledger().timestamp().saturating_sub(quote.timestamp) > MAX_TRADE_PRICE_AGE_SECONDS {
+    let too_old =
+        |at: u64| env.ledger().timestamp().saturating_sub(at) > MAX_TRADE_PRICE_AGE_SECONDS;
+    if too_old(quote.timestamp) {
         panic_with_error!(env, FundError::StalePrice);
     }
-    match quote.divergence_bps {
-        None => panic_with_error!(env, FundError::UnconfirmedPrice),
-        Some(bps) if bps > MAX_TRADE_DIVERGENCE_BPS => {
-            panic_with_error!(env, FundError::PriceDivergence)
-        }
-        Some(bps) => (quote.price, bps),
+    let (Some(bps), Some(secondary_at)) = (quote.divergence_bps, quote.secondary_timestamp) else {
+        panic_with_error!(env, FundError::UnconfirmedPrice);
+    };
+    if too_old(secondary_at) {
+        panic_with_error!(env, FundError::StalePrice);
     }
+    if bps > MAX_TRADE_DIVERGENCE_BPS {
+        panic_with_error!(env, FundError::PriceDivergence);
+    }
+    (quote.price, bps)
 }
 
 /// What a trade may have given up at worst: the gap at oracle prices plus
