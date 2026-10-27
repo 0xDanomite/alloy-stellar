@@ -585,3 +585,51 @@ fn absurd_divergence_saturates() {
     assert_eq!(quote.price, 1);
     assert_eq!(quote.divergence_bps, Some(u32::MAX));
 }
+
+// The NAV side of audit finding AUD-04, pinned. NAV still answers these
+// quotes (share value on screen needs them); since v0.6 the fund refuses to
+// trade on them: a fallback quote has no divergence and is too old, and a
+// quote whose sources disagree carries the gap for the fund to check.
+
+/// Sixteen minutes of Reflector silence hands back a RedStone print from
+/// yesterday, with no divergence: the fund reads that as unconfirmed.
+#[test]
+fn a_reflector_gap_falls_back_to_a_day_old_unconfirmed_price() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let xlm = new_token(&s.env);
+    s.reflector
+        .set(&stellar(&xlm), &30_000_000_000_000, &(NOW - 16 * 60));
+    s.redstone
+        .set(&stellar(&xlm), &40_000_000, &(NOW - 25 * HOUR));
+    s.nav.set_route(
+        &xlm,
+        &reflector_route(&s, &xlm),
+        &Some(redstone_route(&s, &xlm)),
+    );
+    let quote = s.nav.price(&xlm);
+    assert_eq!(quote.price, 40_000_000);
+    assert_eq!(quote.timestamp, NOW - 25 * HOUR);
+    assert_eq!(quote.divergence_bps, None);
+}
+
+/// Two fresh sources a third apart still give a quote, with the gap
+/// reported for the fund to refuse.
+#[test]
+fn divergence_is_reported_for_the_fund_to_enforce() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let token = new_token(&s.env);
+    s.redstone
+        .set(&stellar(&token), &150_000_000, &(NOW - HOUR));
+    s.reflector
+        .set(&stellar(&token), &100_000_000_000_000, &(NOW - 60));
+    s.nav.set_route(
+        &token,
+        &redstone_route(&s, &token),
+        &Some(reflector_route(&s, &token)),
+    );
+    let quote = s.nav.price(&token);
+    assert_eq!(quote.price, 150_000_000);
+    assert_eq!(quote.divergence_bps, Some(3_333));
+}

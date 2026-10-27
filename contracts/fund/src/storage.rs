@@ -56,6 +56,15 @@ pub struct Loss {
     pub ppb: i128,
 }
 
+/// All losses charged on one UTC day (`timestamp / 86_400`), in parts per
+/// billion of fund value at the time of each trade.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DayLoss {
+    pub day: u64,
+    pub ppb: i128,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct AllowanceKey {
@@ -103,6 +112,8 @@ enum DataKey {
     Opened,
     FeeEscrow(Address),
     Router,
+    DayLosses,
+    FeeCarry,
 }
 
 pub(crate) fn bump_instance(env: &Env) {
@@ -378,6 +389,28 @@ pub(crate) fn losses(env: &Env) -> Vec<Loss> {
 
 pub(crate) fn set_losses(env: &Env, losses: &Vec<Loss>) {
     env.storage().instance().set(&DataKey::Losses, losses);
+}
+
+pub(crate) fn day_losses(env: &Env) -> Vec<DayLoss> {
+    env.storage()
+        .instance()
+        .get(&DataKey::DayLosses)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub(crate) fn set_day_losses(env: &Env, losses: &Vec<DayLoss>) {
+    env.storage().instance().set(&DataKey::DayLosses, losses);
+}
+
+pub(crate) fn fee_carry(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::FeeCarry)
+        .unwrap_or(0)
+}
+
+pub(crate) fn set_fee_carry(env: &Env, carry: i128) {
+    env.storage().instance().set(&DataKey::FeeCarry, &carry);
 }
 
 pub(crate) fn last_rebalance(env: &Env) -> Option<u64> {

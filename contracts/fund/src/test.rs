@@ -504,7 +504,9 @@ fn approve_rejects_expiry_beyond_max_ttl() {
     );
 }
 
-/// Every token is worth $1 except the one stored under "px", at its stored price.
+/// Every token is worth $1 unless `set` says otherwise, quoted fresh and
+/// confirmed by a second source at zero divergence unless `set_quality`
+/// says otherwise.
 #[contract]
 struct MockNav;
 
@@ -514,12 +516,23 @@ impl MockNav {
         env.storage().instance().set(&token, &price);
     }
 
+    pub fn set_quality(env: Env, token: Address, age_secs: u64, divergence_bps: Option<u32>) {
+        env.storage().instance().set(
+            &(token, soroban_sdk::symbol_short!("q")),
+            &(age_secs, divergence_bps),
+        );
+    }
+
     pub fn price(env: Env, token: Address) -> PriceQuote {
+        let instance = env.storage().instance();
+        let (age, divergence_bps): (u64, Option<u32>) = instance
+            .get(&(token.clone(), soroban_sdk::symbol_short!("q")))
+            .unwrap_or((0, Some(0)));
         PriceQuote {
-            price: env.storage().instance().get(&token).unwrap_or(100_000_000),
-            timestamp: env.ledger().timestamp(),
+            price: instance.get(&token).unwrap_or(100_000_000),
+            timestamp: env.ledger().timestamp() - age,
             source: soroban_sdk::symbol_short!("mock"),
-            divergence_bps: None,
+            divergence_bps,
         }
     }
 }
@@ -1350,4 +1363,336 @@ fn static_is_chosen_once_before_opening() {
     );
     s.fund.open_for_issue();
     assert_eq!(s.fund.mandate(), Mandate::Static);
+}
+
+// Regressions for the v0.5 contract audit. Each test is the audit's proof,
+// turned around to assert the fix (or, where a finding is accepted, to pin
+// the documented behavior).
+
+fn nav_of<'a>(s: &Setup<'a>) -> MockNavClient<'a> {
+    MockNavClient::new(&s.env, &s.fund.nav().unwrap())
+}
+
+/// AUD-04: the audit's stale-oracle rebalance (oracle at $0.40, market at
+/// $0.30, a day-old fallback print) is refused, as is any leg priced by one
+/// source alone or by two sources more than 2% apart, on both trade paths.
+#[test]
+fn trades_refuse_stale_unconfirmed_or_divergent_prices() {
+    let s = trading_fund();
+    let router = with_router(&s, 10_000);
+    let nav = nav_of(&s);
+    at(&s, 2 * 24 * 60 * 60);
+    let (usdc, xlm) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    s.assets[1].admin.mint(&s.manager, &(1_000 * SHARE_SCALE));
+    let sold = 5 * SHARE_SCALE;
+    let path = route(&s, 0, 1);
+    let refusals = |error: FundError| {
+        assert_eq!(
+            s.fund.try_rebalance(usdc, &sold, xlm, &(sold * 5 / 2)),
+            Err(Ok(error.into()))
+        );
+        assert_eq!(
+            s.fund.try_trade(usdc, &sold, xlm, &0, &path),
+            Err(Ok(error.into()))
+        );
+    };
+
+    nav.set(xlm, &40_000_000);
+    nav.set_quality(xlm, &(25 * 60 * 60), &None);
+    refusals(FundError::StalePrice);
+    nav.set_quality(xlm, &(crate::MAX_TRADE_PRICE_AGE_SECONDS + 1), &Some(0));
+    refusals(FundError::StalePrice);
+    nav.set_quality(xlm, &60, &None);
+    refusals(FundError::UnconfirmedPrice);
+    nav.set_quality(xlm, &60, &Some(crate::MAX_TRADE_DIVERGENCE_BPS + 1));
+    refusals(FundError::PriceDivergence);
+    assert_eq!(s.fund.window_loss_ppb(), 0);
+    assert_eq!(s.assets[0].token.balance(&s.manager), 0);
+
+    // The sold leg is checked as strictly as the bought one.
+    nav.set(xlm, &100_000_000);
+    nav.set_quality(xlm, &0, &Some(0));
+    nav.set_quality(usdc, &0, &None);
+    refusals(FundError::UnconfirmedPrice);
+
+    nav.set_quality(usdc, &crate::MAX_TRADE_PRICE_AGE_SECONDS, &Some(0));
+    nav.set_quality(xlm, &0, &Some(crate::MAX_TRADE_DIVERGENCE_BPS));
+    router.configure(&10_000, &false, &false);
+    s.fund.trade(usdc, &sold, xlm, &0, &path);
+}
+
+/// AUD-04: a value-neutral rebalance used to log zero loss whatever the
+/// oracle's uncertainty. Each leg's divergence is now charged to both loss
+/// budgets: 50 bps on $5 out and $5 in is $0.05 of a $35 fund.
+#[test]
+fn oracle_divergence_is_charged_to_the_loss_budget() {
+    let s = trading_fund();
+    let nav = nav_of(&s);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    nav.set_quality(a, &0, &Some(50));
+    nav.set_quality(b, &0, &Some(50));
+    s.assets[0].admin.mint(&s.manager, &(5 * SHARE_SCALE));
+    s.fund
+        .rebalance(b, &(5 * SHARE_SCALE), a, &(5 * SHARE_SCALE));
+    assert_eq!(s.fund.window_loss_ppb(), 1_428_572);
+    assert_eq!(s.fund.month_loss_ppb(), 1_428_572);
+}
+
+/// AUD-03: the audit's manager took 38% of the fund in 30 days by using
+/// the 2% daily budget every day. Losses over any 30 days now stop at 5%,
+/// and the budget comes back only once they age out.
+#[test]
+fn losses_over_thirty_days_are_capped_at_five_percent() {
+    let s = managed(Compliance::Open);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(100 * SHARE_SCALE));
+    with_oracle(&s);
+    for asset in &s.assets {
+        asset.admin.mint(&s.manager, &(100_000 * SHARE_SCALE));
+    }
+    let value = |s: &Setup| -> i128 { s.fund.holdings().iter().sum() };
+    let start = value(&s);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    let bleed = |s: &Setup, now: u64| {
+        at(s, now);
+        let holdings = s.fund.holdings();
+        let (sell, buy, sold) = if holdings.get_unchecked(0) > holdings.get_unchecked(1) {
+            (a, b, holdings.get_unchecked(0))
+        } else {
+            (b, a, holdings.get_unchecked(1))
+        };
+        // The largest fill the per-trade floor and the daily window accept.
+        let budget = (200 * 100_000 - s.fund.window_loss_ppb()) * value(s) / 1_000_000_000;
+        let loss = (sold / 100).min(budget - 1).max(1);
+        s.fund.try_rebalance(sell, &sold, buy, &(sold - loss))
+    };
+    let (mut accepted, mut refused) = (0, 0);
+    for day in 0..30u64 {
+        for half in 0..2u64 {
+            match bleed(&s, day * 86_400 + half * 43_200 + 60) {
+                Ok(_) => accepted += 1,
+                Err(error) => {
+                    assert_eq!(error, Ok(FundError::LossBudgetExceeded.into()));
+                    refused += 1;
+                }
+            }
+        }
+    }
+    let end = value(&s);
+    assert!(
+        accepted > 0 && refused > 50,
+        "{accepted} accepted, {refused} refused"
+    );
+    assert!(s.fund.month_loss_ppb() <= crate::MAX_LONG_WINDOW_LOSS_BPS * 100_000);
+    assert!(end * 100 >= start * 95, "{start} -> {end}");
+
+    // 31 days after the first losing day, its losses no longer count.
+    assert!(bleed(&s, 31 * 86_400 + 60).is_ok());
+}
+
+/// AUD-05: 1,440 minutely `accrue_fee` calls used to mint nothing where one
+/// daily call mints 1,369 shares. The unminted fraction now carries over,
+/// so they mint the same within a share.
+#[test]
+fn frequent_accrual_mints_the_same_fee_as_one_accrual() {
+    let daily = with_fee(Compliance::Open, 50);
+    let minutely = with_fee(Compliance::Open, 50);
+    for s in [&daily, &minutely] {
+        let investor = funded_investor(s, 1_000 * SHARE_SCALE);
+        s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    }
+    for minute in 1..=1_440u64 {
+        at(&minutely, minute * 60);
+        minutely.fund.accrue_fee();
+        assert_eq!(minutely.fund.pending_fee(), 0);
+    }
+    at(&daily, 86_400);
+    assert_eq!(daily.fund.pending_fee(), 1_369);
+    assert_eq!(daily.fund.accrue_fee(), 1_369);
+    let paid = minutely.fund.balance(&minutely.manager);
+    assert!((paid - 1_369).abs() <= 1, "minutely accrual paid {paid}");
+}
+
+/// AUD-11: `burn` used to change supply without accruing first, cutting the
+/// year's fee from 28,862,589 to 5,263,157 shares. It now accrues first, so
+/// burning gives the same fee whether or not someone accrued just before.
+#[test]
+fn burn_accrues_the_fee_first() {
+    let accrued = with_fee(Compliance::Open, 500);
+    let direct = with_fee(Compliance::Open, 500);
+    for s in [&accrued, &direct] {
+        let investor = funded_investor(s, 1_000 * SHARE_SCALE);
+        s.fund.issue(&investor, &investor, &(100 * SHARE_SCALE));
+        at(s, YEAR_SECONDS / 2);
+        if core::ptr::eq(s, &accrued) {
+            s.fund.accrue_fee();
+        }
+        s.fund.burn(&investor, &(90 * SHARE_SCALE));
+        at(s, YEAR_SECONDS);
+        s.fund.accrue_fee();
+    }
+    assert_eq!(
+        direct.fund.balance(&direct.manager),
+        accrued.fund.balance(&accrued.manager)
+    );
+    assert!(direct.fund.balance(&direct.manager) > 28_000_000);
+}
+
+/// AUD-14: shares held by the fund's own address could never move again.
+/// Every path that names a holder now refuses the fund itself.
+#[test]
+fn the_fund_cannot_hold_its_own_shares() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    let fund = s.fund.address.clone();
+    let refused = Some(Ok(FundError::FundAsHolder.into()));
+    assert_eq!(
+        s.fund.try_issue(&investor, &fund, &SHARE_SCALE).err(),
+        refused
+    );
+    s.fund.issue(&investor, &investor, &SHARE_SCALE);
+    assert_eq!(s.fund.try_transfer(&investor, &fund, &1).err(), refused);
+    assert_eq!(s.fund.try_set_fee_recipient(&fund).err(), refused);
+    assert_eq!(s.fund.try_set_platform_fee(&1_000, &fund).err(), refused);
+}
+
+/// A SEP-41 token whose `balance` can be made to trap, as an upgradeable or
+/// pausable custom token could. Not a SAC.
+#[contract]
+struct TrapToken;
+
+#[contractimpl]
+impl TrapToken {
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let balance: i128 = env.storage().persistent().get(&to).unwrap_or(0);
+        env.storage().persistent().set(&to, &(balance + amount));
+    }
+
+    pub fn break_it(env: Env) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("broken"), &true);
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        if env
+            .storage()
+            .instance()
+            .has(&soroban_sdk::symbol_short!("broken"))
+        {
+            panic!("paused");
+        }
+        env.storage().persistent().get(&id).unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let from_balance = Self::balance(env.clone(), from.clone());
+        assert!(from_balance >= amount);
+        env.storage()
+            .persistent()
+            .set(&from, &(from_balance - amount));
+        let to_balance = Self::balance(env.clone(), to.clone());
+        env.storage().persistent().set(&to, &(to_balance + amount));
+    }
+}
+
+/// AUD-07, accepted: a component whose `balance` traps blocks every
+/// redemption, and `skip` cannot help. SAC `balance` never traps, which is
+/// why the shelf admits SACs only.
+#[test]
+fn a_trapping_non_sac_component_blocks_redemption() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let good = create_asset(&env, false);
+    let trap_id = env.register(TrapToken, ());
+    let trap = TrapTokenClient::new(&env, &trap_id);
+    let components = vec![
+        &env,
+        Component {
+            token: good.token.address.clone(),
+            initial_units: SHARE_SCALE,
+        },
+        Component {
+            token: trap_id.clone(),
+            initial_units: SHARE_SCALE,
+        },
+    ];
+    let id = env.register(
+        Fund,
+        (
+            env.register(MockPlatform, ()),
+            Address::generate(&env),
+            String::from_str(&env, "T"),
+            String::from_str(&env, "T"),
+            components,
+            Compliance::Open,
+        ),
+    );
+    let fund = FundClient::new(&env, &id);
+    fund.open_for_issue();
+    let investor = Address::generate(&env);
+    good.admin.mint(&investor, &(10 * SHARE_SCALE));
+    trap.mint(&investor, &(10 * SHARE_SCALE));
+    fund.issue(&investor, &investor, &SHARE_SCALE);
+
+    trap.break_it();
+    let skip = vec![&env, trap_id.clone()];
+    assert!(fund
+        .try_redeem(&investor, &investor, &SHARE_SCALE, &skip)
+        .is_err());
+    assert_eq!(good.token.balance(&id), SHARE_SCALE);
+}
+
+/// AUD-10, documented: after a clawback cuts below owed claims, settling
+/// every claim still leaves `reserved > held`, and issuance stays shut
+/// until someone (the manager) donates the gap back.
+#[test]
+fn issuance_reopens_once_a_clawback_gap_is_donated_back() {
+    let s = setup(Compliance::Open, [false, false, true]);
+    let a = funded_investor(&s, 1_000 * SHARE_SCALE);
+    let b = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&a, &a, &SHARE_SCALE);
+    s.fund.issue(&b, &b, &SHARE_SCALE);
+    let leg = s.assets[2].token.address.clone();
+    s.fund
+        .redeem(&a, &a, &SHARE_SCALE, &vec![&s.env, leg.clone()]);
+    let held = s.assets[2].token.balance(&s.fund.address);
+    s.assets[2]
+        .admin
+        .clawback(&s.fund.address, &(held - 1_000_000));
+    s.fund.withdraw_owed(&a, &a, &leg);
+    let gap = s.fund.owed(&a, &leg);
+    assert!(gap > 0);
+    assert_eq!(
+        s.fund.try_issue(&b, &b, &SHARE_SCALE),
+        Err(Ok(FundError::ReserveShortfall.into()))
+    );
+
+    s.assets[2].admin.mint(&s.fund.address, &gap);
+    s.fund.issue(&b, &b, &SHARE_SCALE);
+}
+
+/// The vault inflation attack does not apply to in-kind pro-rata issue: a
+/// 1-stroop first holder who donates a large balance makes shares dearer,
+/// but the next investor pays pro-rata and redeems what they paid, less at
+/// most a stroop per leg.
+#[test]
+fn a_donation_inflation_attack_transfers_no_value() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let attacker = funded_investor(&s, 1_000_000 * SHARE_SCALE);
+    let victim = funded_investor(&s, 1_000_000 * SHARE_SCALE);
+    s.fund.issue(&attacker, &attacker, &1);
+    for asset in &s.assets {
+        asset
+            .token
+            .transfer(&attacker, &s.fund.address, &(10_000 * SHARE_SCALE));
+    }
+    let before = balances(&s, &victim);
+    s.fund.issue(&victim, &victim, &1);
+    s.fund.redeem(&victim, &victim, &1, &Vec::new(&s.env));
+    let after = balances(&s, &victim);
+    for (paid, got) in before.iter().zip(after.iter()) {
+        assert!(paid - got <= 1);
+    }
 }

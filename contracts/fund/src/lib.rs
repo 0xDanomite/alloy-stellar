@@ -30,7 +30,7 @@ use soroban_sdk::{
 };
 
 pub use storage::{Compliance, Component, FeeState, Mandate, PlatformFee};
-use storage::{Config, Loss};
+use storage::{Config, DayLoss, Loss};
 
 pub const SHARE_DECIMALS: u32 = 7;
 pub const SHARE_SCALE: i128 = 10_000_000;
@@ -83,6 +83,10 @@ pub enum FundError {
     InvalidPath = 31,
     SwapShortfall = 32,
     MandateStatic = 33,
+    StalePrice = 34,
+    UnconfirmedPrice = 35,
+    PriceDivergence = 36,
+    FundAsHolder = 37,
 }
 
 /// Mirrors `alloy_platform::ShelfStatus`.
@@ -143,7 +147,21 @@ pub const LOSS_WINDOW_SECONDS: u64 = 24 * 60 * 60;
 /// live at once, so the log has a fixed size.
 pub const MAX_WINDOW_LOSSES: u32 = 32;
 pub const MIN_REBALANCE_INTERVAL_SECONDS: u64 = 60;
+/// The most value all trades together may give up within the last
+/// `LONG_WINDOW_DAYS` days, as a share of fund value: 5%.
+pub const MAX_LONG_WINDOW_LOSS_BPS: i128 = 500;
+pub const LONG_WINDOW_DAYS: u64 = 30;
+const DAY_SECONDS: u64 = 24 * 60 * 60;
+/// A trade refuses any price older than this, however long the NAV route
+/// itself would accept it.
+pub const MAX_TRADE_PRICE_AGE_SECONDS: u64 = 15 * 60;
+/// A trade needs each leg's price confirmed by a second fresh source no
+/// further than this from the first.
+pub const MAX_TRADE_DIVERGENCE_BPS: u32 = 200;
 const PPB: i128 = 1_000_000_000;
+/// Fee accrual keeps the unminted fraction of a share, in billionths, so
+/// frequent accruals add up to what one long accrual would mint.
+const FEE_CARRY_SCALE: i128 = 1_000_000_000;
 
 #[contract]
 pub struct Fund;
@@ -167,6 +185,11 @@ fn require_positive(env: &Env, amount: i128) {
 }
 
 fn require_can_hold(env: &Env, holder: &Address) {
+    // The fund can never authorize moving its own balance, so shares sent to
+    // it would back assets nobody could ever redeem.
+    if *holder == env.current_contract_address() {
+        panic_with_error!(env, FundError::FundAsHolder);
+    }
     if !can_hold(env, holder) {
         panic_with_error!(env, FundError::NotAllowlisted);
     }
@@ -297,28 +320,30 @@ fn spend_allowance(env: &Env, from: &Address, spender: &Address, amount: i128) {
     );
 }
 
-/// Shares that pay the fee for `elapsed` seconds at `rate_bps` a year, sized
-/// so that after minting they own exactly that fraction of the fund:
-/// `supply * f / (1 - f)` with `f = rate * elapsed / year`. Elapsed time is
-/// capped at one year per accrual, which keeps `f` below one. An overflow
-/// mints nothing rather than fail, so accrual can never block a redemption.
-fn fee_shares(supply: i128, rate_bps: u32, elapsed: u64) -> i128 {
+/// The fee for `elapsed` seconds at `rate_bps` a year, in billionths of a
+/// share, sized so that after minting the shares own exactly that fraction
+/// of the fund: `supply * f / (1 - f)` with `f = rate * elapsed / year`.
+/// Elapsed time is capped at one year per accrual, which keeps `f` below
+/// one. An overflow mints nothing rather than fail, so accrual can never
+/// block a redemption.
+fn scaled_fee(supply: i128, rate_bps: u32, elapsed: u64) -> i128 {
     let accrued = i128::from(rate_bps) * i128::from(elapsed.min(YEAR_SECONDS));
     let whole = BPS * i128::from(YEAR_SECONDS);
     supply
         .checked_mul(accrued)
+        .and_then(|numerator| numerator.checked_mul(FEE_CARRY_SCALE))
         .map_or(0, |numerator| numerator / (whole - accrued))
 }
 
+/// The fee since the last accrual plus the fraction of a share earlier
+/// accruals could not mint, in billionths of a share.
+fn owed_fee_carry(env: &Env, fee: &FeeState) -> i128 {
+    let elapsed = env.ledger().timestamp().saturating_sub(fee.last_accrual);
+    scaled_fee(storage::supply(env), fee.rate_bps, elapsed).saturating_add(storage::fee_carry(env))
+}
+
 fn pending_fee_shares(env: &Env) -> i128 {
-    match storage::fee(env) {
-        Some(fee) => fee_shares(
-            storage::supply(env),
-            fee.rate_bps,
-            env.ledger().timestamp().saturating_sub(fee.last_accrual),
-        ),
-        None => 0,
-    }
+    storage::fee(env).map_or(0, |fee| owed_fee_carry(env, &fee) / FEE_CARRY_SCALE)
 }
 
 fn accrue_fee(env: &Env) -> i128 {
@@ -329,7 +354,9 @@ fn accrue_fee(env: &Env) -> i128 {
     if now <= fee.last_accrual {
         return 0;
     }
-    let minted = fee_shares(storage::supply(env), fee.rate_bps, now - fee.last_accrual);
+    let owed = owed_fee_carry(env, &fee);
+    let minted = owed / FEE_CARRY_SCALE;
+    storage::set_fee_carry(env, owed % FEE_CARRY_SCALE);
     fee.last_accrual = now;
     storage::set_fee(env, &fee);
     if minted == 0 {
@@ -407,6 +434,38 @@ fn oracle_price(env: &Env, oracle: &NavClient, token: &Address) -> i128 {
     price
 }
 
+/// A price fit to bound a trade: at most `MAX_TRADE_PRICE_AGE_SECONDS` old
+/// and confirmed by the NAV's second source within
+/// `MAX_TRADE_DIVERGENCE_BPS`. A quote with no divergence came from one
+/// source alone (a single route, or the fallback after a stale primary), so
+/// one feed would set the bound by itself. Returns the price and its
+/// divergence.
+fn trade_price(env: &Env, oracle: &NavClient, token: &Address) -> (i128, u32) {
+    let quote = oracle.price(token);
+    if quote.price <= 0 {
+        panic_with_error!(env, FundError::BadPrice);
+    }
+    if env.ledger().timestamp().saturating_sub(quote.timestamp) > MAX_TRADE_PRICE_AGE_SECONDS {
+        panic_with_error!(env, FundError::StalePrice);
+    }
+    match quote.divergence_bps {
+        None => panic_with_error!(env, FundError::UnconfirmedPrice),
+        Some(bps) if bps > MAX_TRADE_DIVERGENCE_BPS => {
+            panic_with_error!(env, FundError::PriceDivergence)
+        }
+        Some(bps) => (quote.price, bps),
+    }
+}
+
+/// What a trade may have given up at worst: the gap at oracle prices plus
+/// each leg's divergence, so price uncertainty spends the loss budget just
+/// as a bad fill does.
+fn worst_case_loss(env: &Env, value_out: i128, out_bps: u32, value_in: i128, in_bps: u32) -> i128 {
+    let uncertainty = mul_div(env, value_out, i128::from(out_bps), BPS, true)
+        + mul_div(env, value_in, i128::from(in_bps), BPS, true);
+    value_out - value_in + uncertainty
+}
+
 fn usd_value(env: &Env, amount: i128, price: i128, round_up: bool) -> i128 {
     mul_div(env, amount, price, SHARE_SCALE, round_up)
 }
@@ -469,28 +528,58 @@ fn live_losses(env: &Env) -> (Vec<Loss>, i128) {
     (live, used)
 }
 
-/// Charges what a trade gave up against oracle prices to the rolling loss
-/// budget, refusing the trade if the window's total would pass
-/// `MAX_WINDOW_LOSS_BPS` of fund value, and starts the cooldown.
-fn settle_trade(env: &Env, fund_value: i128, value_out: i128, value_in: i128) {
+/// Losses per UTC day (`timestamp / 86_400`) for today and the
+/// `LONG_WINDOW_DAYS` days before it: at most 31 entries, and a loss stays
+/// counted for at least 30 full days.
+fn live_day_losses(env: &Env) -> (Vec<DayLoss>, i128) {
+    let today = env.ledger().timestamp() / DAY_SECONDS;
+    let mut live = Vec::new(env);
+    let mut used = 0;
+    for loss in storage::day_losses(env).iter() {
+        if loss.day.saturating_add(LONG_WINDOW_DAYS) >= today {
+            used += loss.ppb;
+            live.push_back(loss);
+        }
+    }
+    (live, used)
+}
+
+/// Charges what a trade may have given up against oracle prices to both
+/// loss budgets, refusing the trade if the last 24 hours would pass
+/// `MAX_WINDOW_LOSS_BPS` or the last 30 days `MAX_LONG_WINDOW_LOSS_BPS` of
+/// fund value, and starts the cooldown.
+fn settle_trade(env: &Env, fund_value: i128, lost: i128) {
     let (mut live, used) = live_losses(env);
-    let lost = value_out - value_in;
+    let (mut days, month_used) = live_day_losses(env);
+    let now = env.ledger().timestamp();
     if lost > 0 {
         let ppb = if fund_value > 0 {
             mul_div(env, lost, PPB, fund_value, true)
         } else {
             PPB
         };
-        if used + ppb > MAX_WINDOW_LOSS_BPS * (PPB / BPS) || live.len() >= MAX_WINDOW_LOSSES {
+        if used + ppb > MAX_WINDOW_LOSS_BPS * (PPB / BPS)
+            || month_used + ppb > MAX_LONG_WINDOW_LOSS_BPS * (PPB / BPS)
+            || live.len() >= MAX_WINDOW_LOSSES
+        {
             panic_with_error!(env, FundError::LossBudgetExceeded);
         }
-        live.push_back(Loss {
-            at: env.ledger().timestamp(),
-            ppb,
-        });
+        live.push_back(Loss { at: now, ppb });
+        let today = now / DAY_SECONDS;
+        match days.last() {
+            Some(last) if last.day == today => days.set(
+                days.len() - 1,
+                DayLoss {
+                    day: today,
+                    ppb: last.ppb + ppb,
+                },
+            ),
+            _ => days.push_back(DayLoss { day: today, ppb }),
+        }
     }
     storage::set_losses(env, &live);
-    storage::set_last_rebalance(env, env.ledger().timestamp());
+    storage::set_day_losses(env, &days);
+    storage::set_last_rebalance(env, now);
 }
 
 #[contractimpl]
@@ -781,13 +870,17 @@ impl Fund {
 
     /// The manager swaps `sold` of one component for `bought` of another:
     /// the fund pays out `sell` and takes in `buy` in the same transaction.
-    /// Shares re-weight through the balances. Each trade must be worth at
-    /// least 99% of what leaves the fund at oracle prices, everything given
-    /// up within a rolling day must stay under 2% of fund value, and trades
-    /// are at least a minute apart, so a manager or agent can't drain value
-    /// through bad fills, one at a time or in a burst. `Locked` and `Managed`
-    /// funds rebalance among existing components; `Static` funds never do. Where the manager sources the
-    /// bought asset (SDEX, Soroswap, an RFQ desk) is up to them.
+    /// Shares re-weight through the balances. Both legs need an oracle price
+    /// at most 15 minutes old and confirmed by a second source within 2%.
+    /// Each trade must be worth at least 99% of what leaves the fund at
+    /// those prices. Everything given up, with each leg's divergence counted
+    /// as given up, must stay under 2% of fund value in any 24 hours and 5%
+    /// in any 30 days, and trades are at least a minute apart. So a manager
+    /// or agent can't drain value through bad fills or a stale feed, one at
+    /// a time, in a burst or over a month. `Locked` and `Managed` funds
+    /// rebalance among existing components; `Static` funds never do. Where
+    /// the manager sources the bought asset (SDEX, Soroswap, an RFQ desk) is
+    /// up to them.
     pub fn rebalance(env: Env, sell: Address, sold: i128, buy: Address, bought: i128) {
         let manager = storage::manager(&env);
         manager.require_auth();
@@ -795,13 +888,19 @@ impl Fund {
         require_positive(&env, bought);
         let oracle = begin_trade(&env, &sell, sold, &buy);
 
-        let value_out = usd_value(&env, sold, oracle_price(&env, &oracle, &sell), true);
-        let value_in = usd_value(&env, bought, oracle_price(&env, &oracle, &buy), false);
+        let (sell_price, sell_bps) = trade_price(&env, &oracle, &sell);
+        let (buy_price, buy_bps) = trade_price(&env, &oracle, &buy);
+        let value_out = usd_value(&env, sold, sell_price, true);
+        let value_in = usd_value(&env, bought, buy_price, false);
         let floor = mul_div(&env, value_out, BPS - MAX_REBALANCE_LOSS_BPS, BPS, true);
         if value_in < floor {
             panic_with_error!(&env, FundError::PriceTooLow);
         }
-        settle_trade(&env, fund_value(&env, &oracle), value_out, value_in);
+        settle_trade(
+            &env,
+            fund_value(&env, &oracle),
+            worst_case_loss(&env, value_out, sell_bps, value_in, buy_bps),
+        );
 
         let fund = env.current_contract_address();
         TokenClient::new(&env, &buy).transfer(&manager, &fund, &bought);
@@ -821,8 +920,8 @@ impl Fund {
     /// itself as the trader: assets never pass through the manager. The fund
     /// authorizes exactly one transfer, `sold` of `sell` into the route's
     /// first pair, and demands at least the larger of `min_bought` and 99%
-    /// of `sold` at oracle prices. The result counts toward the same loss
-    /// budget and cooldown as `rebalance`, and a `Static` fund refuses it.
+    /// of `sold` at oracle prices. The price checks, loss budgets and
+    /// cooldown are those of `rebalance`, and a `Static` fund refuses it.
     /// Returns the amount bought.
     pub fn trade(
         env: Env,
@@ -849,8 +948,9 @@ impl Fund {
         let router =
             router_address(&env).unwrap_or_else(|| panic_with_error!(&env, FundError::NoRouter));
 
-        let buy_price = oracle_price(&env, &oracle, &buy);
-        let value_out = usd_value(&env, sold, oracle_price(&env, &oracle, &sell), true);
+        let (buy_price, buy_bps) = trade_price(&env, &oracle, &buy);
+        let (sell_price, sell_bps) = trade_price(&env, &oracle, &sell);
+        let value_out = usd_value(&env, sold, sell_price, true);
         let floor = mul_div(&env, value_out, BPS - MAX_REBALANCE_LOSS_BPS, BPS, true);
         let min_out = mul_div(&env, floor, SHARE_SCALE, buy_price, true).max(min_bought);
         let value_before = fund_value(&env, &oracle);
@@ -885,7 +985,11 @@ impl Fund {
             panic_with_error!(&env, FundError::SwapShortfall);
         }
         let value_in = usd_value(&env, bought, buy_price, false);
-        settle_trade(&env, value_before, value_out, value_in);
+        settle_trade(
+            &env,
+            value_before,
+            worst_case_loss(&env, value_out, sell_bps, value_in, buy_bps),
+        );
 
         events::Traded {
             manager,
@@ -922,6 +1026,12 @@ impl Fund {
     /// current window, in parts per billion of fund value (1 bps = 100_000).
     pub fn window_loss_ppb(env: Env) -> i128 {
         live_losses(&env).1
+    }
+
+    /// The same over the 30-day window: today and the previous
+    /// `LONG_WINDOW_DAYS` UTC days.
+    pub fn month_loss_ppb(env: Env) -> i128 {
+        live_day_losses(&env).1
     }
 
     pub fn last_rebalance(env: Env) -> Option<u64> {
@@ -1172,6 +1282,7 @@ impl Fund {
         from.require_auth();
         storage::bump_instance(&env);
         require_positive(&env, amount);
+        accrue_fee(&env);
         burn_shares(&env, &from, amount);
     }
 
@@ -1180,6 +1291,7 @@ impl Fund {
         storage::bump_instance(&env);
         require_positive(&env, amount);
         spend_allowance(&env, &from, &spender, amount);
+        accrue_fee(&env);
         burn_shares(&env, &from, amount);
     }
 
