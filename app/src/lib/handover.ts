@@ -82,13 +82,34 @@ export function verifyHandover(link: HandoverLink, expected: { fund: string; man
   if (expiry <= expected.latestLedger) return { error: "This handover link has expired. Ask the current manager for a new one." };
   if (expiry > expected.latestLedger + HANDOVER_LEDGERS + EXPIRY_SLACK) return { error: "This handover link stays valid for longer than a handover should." };
 
-  const invocation = entry.rootInvocation;
-  if (invocation.subInvocations.length !== 0) return { error: "This handover link authorizes more than the handover." };
+  const scope = handoverScopeError(entry.rootInvocation, expected);
+  return scope ? { error: `This handover link ${scope}.` } : { entry };
+}
+
+/**
+ * Why an invocation is not exactly `fund.set_manager(incoming)` with nothing
+ * nested, as a phrase; null when it is.
+ */
+function handoverScopeError(invocation: xdr.SorobanAuthorizedInvocation, expected: { fund: string; incoming: string }): string | null {
+  if (invocation.subInvocations.length !== 0) return "authorizes more than the handover";
   const fn = invocation.function;
-  if (fn.type !== "sorobanAuthorizedFunctionTypeContractFn") return { error: "This handover link doesn't authorize a contract call." };
+  if (fn.type !== "sorobanAuthorizedFunctionTypeContractFn") return "doesn't authorize a contract call";
   const call = fn.contractFn;
-  if (Address.fromScAddress(call.contractAddress).toString() !== expected.fund) return { error: "This handover link is for a different fund." };
-  if (call.functionName.toString() !== "set_manager") return { error: "This handover link authorizes something other than a handover." };
-  if (soleAddressArg(call.args) !== expected.incoming) return { error: "This handover link names a different new manager." };
-  return { entry };
+  if (Address.fromScAddress(call.contractAddress).toString() !== expected.fund) return "is for a different fund";
+  if (call.functionName.toString() !== "set_manager") return "authorizes something other than a handover";
+  if (soleAddressArg(call.args) !== expected.incoming) return "names a different new manager";
+  return null;
+}
+
+/**
+ * The outgoing manager's check before their wallet signs: the entry the
+ * network simulated for them must authorize this handover and nothing else.
+ */
+export function checkUnsignedHandover(
+  entry: xdr.SorobanAuthorizationEntry,
+  expected: { fund: string; manager: string; incoming: string },
+): string | null {
+  if (credentialsAddress(entry.credentials) !== expected.manager) return "The approval to sign isn't for the fund's current manager.";
+  const scope = handoverScopeError(entry.rootInvocation, expected);
+  return scope ? `The approval to sign ${scope}, so it was not signed.` : null;
 }

@@ -196,7 +196,7 @@ export function InvestPanel({ fund, position, onChanged }: { fund: Fund; positio
     quoteVersion,
   );
   const thin = zapQuote.data?.thin ?? [];
-  const tooThin = thinMessage(thin);
+  const tooThin = thinMessage(zapQuote.data);
   const mode: InvestMode = zappable ? (chosen ?? (tooThin || zapQuote.error != null ? "basket" : "usdc")) : "basket";
   const quote = useAsync(() => quoteIssue(fund, shares ?? 0n), valid && mode === "basket" ? `${fund.id}:${shares}` : null);
 
@@ -226,7 +226,7 @@ export function InvestPanel({ fund, position, onChanged }: { fund: Fund; positio
                 : null
             }
           />
-          <ZapRoutes plan={plan} direction="issue" thin={thin} />
+          <ZapRoutes plan={plan} direction="issue" thin={thin} unpriced={zapQuote.data?.unpriced} />
           {tooThin && <p className="text-[0.8125rem] text-destructive">{tooThin} Deposit the basket instead.</p>}
         </div>
       ) : (

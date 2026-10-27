@@ -40,18 +40,32 @@ function storedNetwork(): string | null {
   }
 }
 
-function pickNetwork(): Network {
-  const wanted = [
-    new URLSearchParams(window.location.search).get("network"),
-    storedNetwork(),
-    import.meta.env.VITE_NETWORK,
-  ];
-  const valid = wanted.find((n): n is Network => availableNetworks.includes(n as Network));
+function firstAvailable(candidates: (string | null | undefined)[]): Network {
+  const valid = candidates.find((n): n is Network => availableNetworks.includes(n as Network));
   return valid ?? availableNetworks[0] ?? "testnet";
 }
 
+const linkedNetwork = new URLSearchParams(window.location.search).get("network");
+
+/** The network this visitor would be on without the link's `?network=`. */
+export const usualNetwork: Network = firstAvailable([storedNetwork(), import.meta.env.VITE_NETWORK]);
+
 /** Chosen once per page load; switching reloads so no module mixes networks. */
-export const network: Network = pickNetwork();
+export const network: Network = firstAvailable([linkedNetwork, usualNetwork]);
+
+/** True when a link's `?network=` moved this visitor off their usual network, which they should confirm. */
+export const networkFromLink: boolean = network !== usualNetwork;
+
+export const NETWORK_NAME: Record<Network, string> = { mainnet: "Stellar Mainnet", testnet: "Testnet" };
+
+/** Keeps the network a link chose, as if picked by hand, without reloading. */
+export function keepLinkedNetwork() {
+  try {
+    localStorage.setItem(NETWORK_KEY, network);
+  } catch {
+    // Without storage the choice still rides on the URL.
+  }
+}
 
 export function switchNetwork(next: Network) {
   try {

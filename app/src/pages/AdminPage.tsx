@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { StrKey } from "@stellar/stellar-sdk";
 import { AssetDot, IssuerName } from "../components/fund-bits";
 import { Button, CopyId, TxNotice, type TxPhase } from "../components/ui";
@@ -13,6 +13,7 @@ import {
   loadFundAdmin,
   loadQueue,
   loadRoutes,
+  operationAddresses,
   roleOf,
   setManagerCall,
   setNavCall,
@@ -437,12 +438,23 @@ function Queue({ role }: { role: AdminRole }) {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-medium">{describeOperation(op, ASSET_NAMES)}</p>
-                  <p className="text-[0.8125rem] text-muted-foreground">
-                    on <a href={expert.contract(op.target)} target="_blank" rel="noreferrer" className="num hover:text-primary">{shortId(op.target, 4, 4)}</a>, proposed by{" "}
-                    <span className="num">{shortId(op.proposer, 4, 4)}</span>,{" "}
+                  <dl className="mt-1.5 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-[0.8125rem] text-muted-foreground">
+                    <dt>Target</dt>
+                    <dd className="min-w-0"><CopyId id={op.target} head={8} tail={8} /></dd>
+                    {operationAddresses(op).map((address, i) => (
+                      <Fragment key={`${address}:${i}`}>
+                        <dt>Argument</dt>
+                        <dd className="min-w-0"><CopyId id={address} kind={address.startsWith("C") ? "contract" : "account"} head={8} tail={8} /></dd>
+                      </Fragment>
+                    ))}
+                    <dt>Proposer</dt>
+                    <dd className="min-w-0"><CopyId id={op.proposer} kind={op.proposer.startsWith("C") ? "contract" : "account"} head={8} tail={8} /></dd>
+                  </dl>
+                  <p className="mt-1 text-[0.8125rem] text-muted-foreground">
                     <a href={expert.tx(op.txHash)} target="_blank" rel="noreferrer" className="hover:text-primary">
-                      scheduled
-                    </a>
+                      Scheduled
+                    </a>{" "}
+                    in ledger {op.ledger}
                   </p>
                 </div>
                 <span className={`chip shrink-0 px-2 py-0.5 text-[0.75rem] ${STATUS_STYLE[op.status]}`}>

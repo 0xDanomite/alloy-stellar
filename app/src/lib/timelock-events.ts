@@ -52,6 +52,18 @@ export function parseScheduled(raw: RawEvent): Omit<QueuedOperation, "status"> |
   }
 }
 
+/** Every account or contract address among a call's arguments, in full, for the executor to check before running it. */
+export function operationAddresses(op: Pick<QueuedOperation, "args">): string[] {
+  return op.args.flatMap((a) => {
+    if (a.type !== "scvAddress") return [];
+    try {
+      return [Address.fromScVal(a).toString()];
+    } catch {
+      return [];
+    }
+  });
+}
+
 /** A scheduled call in plain words, from its target and decoded arguments. */
 export function describeOperation(op: Pick<QueuedOperation, "fnName" | "args">, names: Record<string, string> = {}): string {
   const values = op.args.map((a) => {
@@ -59,7 +71,7 @@ export function describeOperation(op: Pick<QueuedOperation, "fnName" | "args">, 
       const v = scValToNative(a);
       if (Array.isArray(v)) return String(v[0]);
       if (typeof v === "string" && names[v]) return names[v];
-      return typeof v === "string" && v.length > 20 ? `${v.slice(0, 4)}…${v.slice(-4)}` : String(v);
+      return typeof v === "string" && v.length > 20 ? `${v.slice(0, 8)}…${v.slice(-8)}` : String(v);
     } catch {
       return "?";
     }

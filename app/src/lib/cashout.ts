@@ -51,7 +51,11 @@ export async function planCashOut(address: string, received: { leg: FundComponen
 
   const legs: (CashOutLeg & { asset: Asset; path: Asset[] })[] = [];
   for (const { leg, amount } of received) {
-    if (leg.asset.equals(usdc) || amount <= 0n) continue;
+    if (amount <= 0n || (leg.isSac && leg.asset.equals(usdc))) continue;
+    if (!leg.isSac) {
+      legs.push({ code: leg.code, amount, asset: leg.asset, path: [], expected: null, minimum: null, route: "", blocked: `${leg.code} here is not a Stellar asset contract, so it can't be sold on the DEX.` });
+      continue;
+    }
     const held = holdingFor(balances, leg).balance;
     const selling = sellable(amount, held, leg.asset.isNative());
     const base = { code: leg.code, amount: selling, asset: leg.asset, path: [] as Asset[], expected: null, minimum: null, route: "" };

@@ -1,6 +1,6 @@
 import { Account, Address, BASE_FEE, Contract, nativeToScVal, Operation, rpc, scValToNative, Transaction, TransactionBuilder, type xdr } from "@stellar/stellar-sdk";
 import { deployments, endpoints } from "./config";
-import { credentialsAddress, encodeHandover, HANDOVER_LEDGERS, verifyHandover, type HandoverLink } from "./handover";
+import { checkUnsignedHandover, credentialsAddress, encodeHandover, HANDOVER_LEDGERS, verifyHandover, type HandoverLink } from "./handover";
 import { STATUS_KEY, type FundStatus } from "./visibility";
 import {
   ChainError,
@@ -264,10 +264,20 @@ export async function prepareHandover(fund: Fund, outgoing: string, incoming: st
   const tx = await c.set_manager({ new_manager: incoming });
   const simulation = tx.simulation;
   if (simulation && rpc.Api.isSimulationError(simulation)) throw new ChainError(simulation.error);
+  const expected = { fund: fund.id, manager: outgoing, incoming };
+  const addressed = authOf(tx).filter((e) => credentialsAddress(e.credentials) !== null);
+  const [toSign] = addressed;
+  if (addressed.length !== 1 || !toSign) throw new Error("This handover needs approvals other than yours. Nothing was signed.");
+  const refused = checkUnsignedHandover(toSign, expected);
+  if (refused) throw new Error(refused);
+
   const latest = await server.getLatestLedger();
   await tx.signAuthEntries({ address: outgoing, signAuthEntry: signAuthEntryWithWallet, expiration: latest.sequence + HANDOVER_LEDGERS });
   const signed = authOf(tx).find((e) => credentialsAddress(e.credentials) === outgoing);
   if (!signed) throw new Error("The wallet didn't return a signed approval.");
+  const link = { entries: [signed.toXDR("base64")] };
+  const verified = verifyHandover(link, { ...expected, latestLedger: latest.sequence });
+  if ("error" in verified) throw new Error(verified.error);
   return encodeHandover(signed);
 }
 

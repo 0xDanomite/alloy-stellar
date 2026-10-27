@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Address, Keypair, nativeToScVal, StrKey, xdr } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
-import { describeOperation, parseScheduled, type RawEvent } from "./timelock-events";
+import { describeOperation, operationAddresses, parseScheduled, type RawEvent } from "./timelock-events";
 
 const PLATFORM = StrKey.encodeContract(Keypair.random().rawPublicKey());
 const MANAGER = Keypair.random().publicKey();
@@ -49,5 +49,12 @@ describe("timelock events", () => {
     expect(describe("set_manager", [new Address(MANAGER).toScVal(), xdr.ScVal.scvBool(false)])).toMatch(/^Remove manager G/);
     expect(describe("set_shelf_asset", [new Address(PLATFORM).toScVal(), xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Permissioned")])])).toMatch(/to Permissioned on the shelf$/);
     expect(describe("set_platform_fee", [nativeToScVal(2500, { type: "u32" }), new Address(MANAGER).toScVal()])).toMatch(/^Platform takes 25% of the fee/);
+  });
+
+  it("shows enough of an address to tell lookalikes apart, and lists every address in full", () => {
+    const args = [new Address(MANAGER).toScVal(), xdr.ScVal.scvBool(true)];
+    expect(describeOperation({ fnName: "set_manager", args })).toBe(`Approve manager ${MANAGER.slice(0, 8)}…${MANAGER.slice(-8)}`);
+    expect(operationAddresses({ args })).toEqual([MANAGER]);
+    expect(operationAddresses({ args: [nativeToScVal(2500, { type: "u32" })] })).toEqual([]);
   });
 });

@@ -24,7 +24,7 @@ import { addressVal, dataKey, instanceKey, instanceStorage, keyId, native, readE
 import { SPECS } from "./specs";
 import { STATUS_KEY, statusOf } from "./visibility";
 import { ONE, toDecimalString, unitsToNumber } from "./format";
-import { CIRCLE_USDC_ISSUER, DEMO_ISSUER_LABEL, PINNED_MAINNET_ISSUERS, UNVERIFIED_ISSUER_LABEL } from "./issuers";
+import { CIRCLE_USDC_ISSUER, DEMO_ISSUER_LABEL, isAssetContract, PINNED_MAINNET_ISSUERS, UNVERIFIED_CONTRACT_LABEL, UNVERIFIED_ISSUER_LABEL } from "./issuers";
 
 const CIRCLE_USDC = new Asset("USDC", CIRCLE_USDC_ISSUER);
 
@@ -320,9 +320,15 @@ export interface AssetInfo {
   code: string;
   issuer: string | null;
   asset: Asset;
-  /** Who stands behind the asset: a pinned domain, "demo issuer", "unverified issuer" or "native". */
+  /** Who stands behind the asset: a pinned domain, "demo issuer", "unverified issuer", "unverified contract" or "native". */
   issuerLabel: string;
   verified: boolean;
+  /**
+   * Whether `token` is the Stellar Asset Contract of `asset`. When false the
+   * contract only claims to be `asset`, so nothing classic (trustlines, DEX
+   * prices, path payments, wallet balances) may be read or built from it.
+   */
+  isSac: boolean;
   authRequired: boolean;
   revocable: boolean;
   clawback: boolean;
@@ -350,8 +356,21 @@ export function assetInfo(token: string): Promise<AssetInfo> {
 async function loadAssetInfo(token: string): Promise<AssetInfo> {
   const known = Object.values(deployments?.assets ?? {}).find((a) => a.contract === token);
   const asset = parseAsset(known?.asset ?? (await read((await sacClient(token)).name())));
+  const unflagged = { authRequired: false, revocable: false, clawback: false };
+  if (!isAssetContract(asset, token, endpoints.passphrase)) {
+    return {
+      token,
+      code: asset.isNative() ? "XLM" : asset.getCode(),
+      issuer: asset.isNative() ? null : (asset.getIssuer() ?? null),
+      asset,
+      issuerLabel: UNVERIFIED_CONTRACT_LABEL,
+      verified: false,
+      isSac: false,
+      ...unflagged,
+    };
+  }
   if (asset.isNative()) {
-    return { token, code: "XLM", issuer: null, asset, issuerLabel: "native", verified: true, authRequired: false, revocable: false, clawback: false };
+    return { token, code: "XLM", issuer: null, asset, issuerLabel: "native", verified: true, isSac: true, ...unflagged };
   }
   const issuer = asset.getIssuer() ?? "";
   const pinned = isMainnet ? PINNED_MAINNET_ISSUERS[issuer] : undefined;
@@ -364,6 +383,7 @@ async function loadAssetInfo(token: string): Promise<AssetInfo> {
     asset,
     issuerLabel: pinned ?? (ours ? DEMO_ISSUER_LABEL : UNVERIFIED_ISSUER_LABEL),
     verified: pinned !== undefined || ours,
+    isSac: true,
     authRequired: account?.flags.auth_required ?? false,
     revocable: account?.flags.auth_revocable ?? false,
     clawback: account?.flags.auth_clawback_enabled ?? false,
@@ -693,7 +713,7 @@ async function toFund(state: FundState): Promise<Fund> {
         shelfStatus: c.shelf,
         unitsPerShare: state.totalSupply === 0n ? c.initialUnits : (holding * SHARE_SCALE) / state.totalSupply,
         holding,
-        priceUsdc: await priceInUsdc(info.asset),
+        priceUsdc: info.isSac ? await priceInUsdc(info.asset) : null,
         oracle: null,
         fundAuthorized: c.shelf === "Permissioned" ? c.fundAuthorized : null,
       };
@@ -811,6 +831,8 @@ export async function accountBalances(address: string) {
 
 export function holdingFor(balances: Horizon.HorizonApi.BalanceLine[] | null, leg: AssetInfo): Holding {
   const base = { code: leg.code, token: leg.token };
+  // No classic balance line speaks for a contract that only claims an asset.
+  if (!leg.isSac) return { ...base, balance: 0n, hasTrustline: true, authorized: true };
   if (!balances) return { ...base, balance: 0n, hasTrustline: false, authorized: false };
   for (const line of balances) {
     if (line.asset_type === "native" && leg.asset.isNative()) {
@@ -883,6 +905,11 @@ export async function planBasket(fund: Fund, address: string, shares: bigint): P
 
   const legs: (BasketLeg & { asset: Asset; path: Asset[] })[] = [];
   for (const [i, leg] of fund.components.entries()) {
+    if (!leg.isSac) {
+      const base = { code: leg.code, shortfall: needed[i] ?? 0n, needsTrustline: false, asset: leg.asset, path: [] as Asset[] };
+      legs.push({ ...base, blocked: `${leg.code} here is not a Stellar asset contract, so it can't be bought on the DEX.`, sendMax: null, route: "" });
+      continue;
+    }
     if (leg.asset.isNative()) continue;
     const holding = holdingFor(balances, leg);
     const shortfall = (needed[i] ?? 0n) - holding.balance;
@@ -1049,7 +1076,7 @@ export async function loadShelf(platformId = requireCreationPlatform(), withUnli
       return {
         ...info,
         status: (status === undefined ? "Unlisted" : unitTag(status)) as ShelfStatus,
-        priceUsdc: await priceInUsdc(info.asset),
+        priceUsdc: info.isSac ? await priceInUsdc(info.asset) : null,
       };
     }),
   );

@@ -16,6 +16,7 @@ import { formatBps } from "../lib/fee-math";
 import { acceptHandover } from "../lib/manager";
 import { decodeHandover, handoverIncoming, type HandoverLink } from "../lib/handover";
 import { fundValueUsd } from "../lib/fund-math";
+import { parseWebsite } from "../lib/website";
 import { loadHistories, type AssetHistory } from "../lib/history";
 import { changeOver } from "../lib/series";
 import { explain, findFund, isMainnet, isManager, loadPosition, type Fund } from "../lib/stellar";
@@ -229,6 +230,7 @@ export function FundPage() {
     const param = params.get("handover");
     return param ? decodeHandover(param) : null;
   }, [params]);
+  const website = parseWebsite(f?.metadata.website);
   const manages = Boolean(f && address && f.manager === address);
   const managing = manages && !preview;
   const activeTab = tab === "manage" && !managing ? "invest" : tab;
@@ -291,7 +293,7 @@ export function FundPage() {
                 </div>
               </div>
             </div>
-            {f && (f.metadata.description || f.metadata.strategy || f.metadata.website) && (
+            {f && (f.metadata.description || f.metadata.strategy || website) && (
               <div className="mt-5 max-w-[44rem] space-y-2">
                 {f.metadata.description && <p className="text-[1.0625rem] leading-relaxed">{f.metadata.description}</p>}
                 {f.metadata.strategy && (
@@ -299,10 +301,13 @@ export function FundPage() {
                     <span className="text-foreground">Strategy.</span> {f.metadata.strategy}
                   </p>
                 )}
-                {f.metadata.website && /^https:\/\//.test(f.metadata.website) && (
-                  <a href={f.metadata.website} target="_blank" rel="noreferrer nofollow" className="inline-block text-[0.875rem] text-primary underline-offset-4 hover:underline">
-                    {f.metadata.website.replace(/^https:\/\//, "").replace(/\/$/, "")}
-                  </a>
+                {website && (
+                  <p className="text-[0.875rem]">
+                    <a href={website.href} target="_blank" rel="noreferrer nofollow" className="text-primary underline-offset-4 hover:underline" title={website.href}>
+                      {website.host}
+                    </a>
+                    <span className="text-muted-foreground"> · the manager's site, not checked by Alloy</span>
+                  </p>
                 )}
               </div>
             )}

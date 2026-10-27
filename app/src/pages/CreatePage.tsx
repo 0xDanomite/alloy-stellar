@@ -25,9 +25,9 @@ import {
 import { useAsync } from "../lib/use-async";
 import { evenPercents, percentTotal, unitsForWeights } from "../lib/weights";
 import { useWallet } from "../lib/wallet";
+import { parseWebsite } from "../lib/website";
 
 const SYMBOL_PATTERN = /^[A-Za-z0-9]{1,12}$/;
-const WEBSITE_PATTERN = /^https:\/\/[^\s/]+\.[^\s]+$/;
 const MAX_METADATA_BYTES = 512;
 const MAX_COMPONENTS = 12;
 const NAV_PRESETS = [1, 10, 100];
@@ -266,7 +266,7 @@ export function CreatePage() {
       draft.name.trim().length > 0 &&
       SYMBOL_PATTERN.test(draft.symbol) &&
       Object.values(draft.metadata).every((v) => bytes(v.trim()) <= MAX_METADATA_BYTES) &&
-      (draft.metadata.website.trim() === "" || WEBSITE_PATTERN.test(draft.metadata.website.trim())),
+      (draft.metadata.website.trim() === "" || parseWebsite(draft.metadata.website) !== null),
     Mandate: true,
     Basket: legs.length > 0 && legs.length <= MAX_COMPONENTS,
     Weights: navValid && total === 100 && legs.every((l) => l.percent > 0 && l.units !== null),
@@ -420,7 +420,7 @@ export function CreatePage() {
                         onChange={(e) => setMeta("website", e.target.value.trim())}
                         placeholder="https://"
                         inputMode="url"
-                        aria-invalid={draft.metadata.website !== "" && !WEBSITE_PATTERN.test(draft.metadata.website)}
+                        aria-invalid={draft.metadata.website !== "" && parseWebsite(draft.metadata.website) === null}
                         className={field}
                       />
                     </Labeled>
@@ -684,7 +684,7 @@ export function CreatePage() {
                     <ReviewRow term="Profile" onEdit={() => go(0)}>
                       {plan.metadata.description && <span className="block">{plan.metadata.description}</span>}
                       {plan.metadata.strategy && <span className="block text-[0.875rem] text-muted-foreground">{plan.metadata.strategy}</span>}
-                      {plan.metadata.website && <span className="block text-[0.875rem] text-primary">{plan.metadata.website}</span>}
+                      {plan.metadata.website && <span className="block text-[0.875rem] text-primary">{parseWebsite(plan.metadata.website)?.host ?? plan.metadata.website}</span>}
                     </ReviewRow>
                   )}
                   <ReviewRow term="Mandate" onEdit={() => go(1)}>

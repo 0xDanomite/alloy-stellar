@@ -196,7 +196,7 @@ function UsdcRedeem({
   const [phase, setPhase] = useState<TxPhase>({ state: "idle" });
   const valid = shares !== null && shares > 0n;
   const { wallet, quote, holds, ready } = state;
-  const tooThin = thinMessage(quote.data?.thin ?? []);
+  const tooThin = thinMessage(quote.data);
 
   async function run() {
     if (!address || !shares || !quote.data) return;
@@ -229,7 +229,7 @@ function UsdcRedeem({
               : null
           }
         />
-        <ZapRoutes plan={plan} direction="redeem" thin={quote.data?.thin} />
+        <ZapRoutes plan={plan} direction="redeem" thin={quote.data?.thin} unpriced={quote.data?.unpriced} />
         {tooThin && <p className="text-[0.8125rem] text-destructive">{tooThin} Receive the assets instead.</p>}
         <p className="text-[0.8125rem] text-muted-foreground">
           The fund pays out its assets and Soroswap sells them for USDC, in one transaction. If the pools are thin,
@@ -272,7 +272,7 @@ export function RedeemPanel({ fund, position, onChanged }: { fund: Fund; positio
   const plan = zap.data ?? null;
   const zappable = plan !== null && plan.blocked === null;
   const zapState = useZapRedeem(fund, zappable ? plan : null, shares, position);
-  const tooThin = thinMessage(zapState.quote.data?.thin ?? []);
+  const tooThin = thinMessage(zapState.quote.data);
   const mode: RedeemMode = zappable ? (chosen ?? (tooThin || zapState.quote.error != null ? "assets" : "usdc")) : "assets";
 
   const quote = useAsync(

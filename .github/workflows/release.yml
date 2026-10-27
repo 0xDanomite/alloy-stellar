@@ -41,14 +41,19 @@ jobs:
         with:
           version: 25.2.0
       - name: Build
+        env:
+          PACKAGE: ${{ matrix.package }}
+          ASSET: ${{ matrix.asset }}
+          FEATURES: ${{ matrix.features }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          stellar contract build --optimize --package "${{ matrix.package }}" \
-            ${{ matrix.features && format('--features {0}', matrix.features) || '' }} \
-            --out-dir out --meta "source_repo=github:${{ github.repository }}"
+          stellar contract build --optimize --package "$PACKAGE" \
+            ${FEATURES:+--features "$FEATURES"} \
+            --out-dir out --meta "source_repo=github:$REPOSITORY"
           VERSION=$(cargo metadata --format-version 1 --no-deps \
-            | jq -r '.packages[] | select(.name == "${{ matrix.package }}") | .version')
-          WASM="${{ matrix.asset }}_v${VERSION}.wasm"
-          cp "out/$(echo '${{ matrix.package }}' | tr - _).wasm" "out/$WASM"
+            | jq -r --arg pkg "$PACKAGE" '.packages[] | select(.name == $pkg) | .version')
+          WASM="${ASSET}_v${VERSION}.wasm"
+          cp "out/$(echo "$PACKAGE" | tr - _).wasm" "out/$WASM"
           echo "WASM=$WASM" >> "$GITHUB_ENV"
           echo "WASM_HASH=$(sha256sum "out/$WASM" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
           stellar contract info meta --wasm "out/$WASM"
@@ -59,15 +64,18 @@ jobs:
       - name: Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 \
-            || gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes "Verified build (SEP-0055)."
-          gh release upload "${{ github.ref_name }}" "out/${{ env.WASM }}" --clobber
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "$TAG" --notes "Verified build (SEP-0055)."
+          gh release upload "$TAG" "out/$WASM" --clobber
       - name: Register with stellar.expert
+        env:
+          PACKAGE: ${{ matrix.package }}
         run: |
-          jq -n --arg repo "${{ github.server_url }}/${{ github.repository }}" --arg sha "${{ github.sha }}" \
-            --arg job "${{ github.job }}" --arg run "${{ github.run_id }}" --arg hash "${{ env.WASM_HASH }}" \
-            --arg pkg "${{ matrix.package }}" \
+          jq -n --arg repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" \
+            --arg job "$GITHUB_JOB" --arg run "$GITHUB_RUN_ID" --arg hash "$WASM_HASH" \
+            --arg pkg "$PACKAGE" \
             '{repository: $repo, commitHash: $sha, jobId: $job, runId: $run, contractHash: $hash, packageName: $pkg}' \
           | curl -sS -X POST "https://api.stellar.expert/explorer/public/contract-validation/match" \
               -H "Content-Type: application/json" -d @- --max-time 15 || true
