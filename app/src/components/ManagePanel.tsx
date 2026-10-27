@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { StrKey } from "@stellar/stellar-sdk";
+import { Link } from "react-router-dom";
 import { annualFeeUsd, formatBps, percentToBps, sharesUsd, splitFee } from "../lib/fee-math";
 import { formatAmount, formatUsd, toUnits, unitsToNumber } from "../lib/format";
 import { fundValueUsd } from "../lib/fund-math";
@@ -9,6 +10,7 @@ import {
   loadEarnings,
   loadSetupDraft,
   prepareHandover,
+  setFundStatus,
   setMetadata,
   setupSteps,
   type SetupPlan,
@@ -45,9 +47,14 @@ export function ManagePanel({ fund, onChanged, onPreview }: { fund: Fund; onChan
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-3">
         <p className="text-[0.875rem] text-muted-foreground">You manage this fund. Redemptions can't be paused, by you or anyone.</p>
-        <button type="button" onClick={onPreview} className="shrink-0 text-label text-primary hover:underline">
-          View as investor
-        </button>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <button type="button" onClick={onPreview} className="text-label text-primary hover:underline">
+            View as investor
+          </button>
+          <Link to={`/create?from=${fund.id}`} className="text-label text-primary hover:underline">
+            Duplicate fund
+          </Link>
+        </div>
       </div>
 
       {fund.setup && !fund.setup.open && <FinishSetup fund={fund} onChanged={onChanged} />}
@@ -83,7 +90,14 @@ export function ManagePanel({ fund, onChanged, onPreview }: { fund: Fund; onChan
           <RebalanceForm fund={fund} onChanged={onChanged} />
         ))}
       {section === "earnings" && v4 && <Earnings fund={fund} onChanged={onChanged} />}
-      {section === "profile" && v4 && <ProfileEditor key={JSON.stringify(fund.metadata)} fund={fund} onChanged={onChanged} />}
+      {section === "profile" && v4 && (
+        <>
+          <ProfileEditor key={JSON.stringify(fund.metadata)} fund={fund} onChanged={onChanged} />
+          <div className="border-t pt-5">
+            <Visibility fund={fund} onChanged={onChanged} />
+          </div>
+        </>
+      )}
       {section === "access" && (
         <>
           <AccessControls fund={fund} onChanged={onChanged} />
@@ -310,6 +324,49 @@ function ProfileEditor({ fund, onChanged }: { fund: Fund; onChanged: () => void 
       </Button>
       <p className="text-[0.8125rem] text-muted-foreground">Stored on the fund contract and shown on the fund page and the funds list.</p>
     </div>
+  );
+}
+
+/** Lists or hides the fund through its `status` metadata entry. Display only: the contract treats both the same. */
+function Visibility({ fund, onChanged }: { fund: Fund; onChanged: () => void }) {
+  const { address } = useWallet();
+  const [phase, setPhase] = useState<TxPhase>({ state: "idle" });
+
+  async function choose(hidden: boolean) {
+    if (!address || hidden === fund.hidden) return;
+    setPhase({ state: "working", message: "Confirm in your wallet…" });
+    try {
+      const result = await setFundStatus(fund, address, hidden ? "hidden" : "active");
+      setPhase({ state: "done", message: hidden ? "Hidden from the fund lists." : "Listed again.", url: result.url });
+      onChanged();
+    } catch (err) {
+      setPhase({ state: "failed", message: explain(err) });
+    }
+  }
+
+  return (
+    <Block title="Show in fund lists">
+      <div className="grid grid-cols-2 gap-2 rounded-full border p-1">
+        {[false, true].map((hidden) => (
+          <button
+            key={String(hidden)}
+            type="button"
+            disabled={phase.state === "working"}
+            onClick={() => choose(hidden)}
+            aria-pressed={fund.hidden === hidden}
+            className={`rounded-full py-2 text-label disabled:opacity-40 ${fund.hidden === hidden ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            {hidden ? "Hidden" : "Listed"}
+          </button>
+        ))}
+      </div>
+      <TxNotice phase={phase} />
+      <p className="text-[0.8125rem] text-muted-foreground">
+        {fund.hidden
+          ? "Left out of the funds page and the home page. Anyone with the link can still open it, invest and redeem, and it stays in your portfolio."
+          : "Shown on the funds page and the home page. Hiding only takes it off those lists: the fund keeps working and stays reachable by link."}
+      </p>
+    </Block>
   );
 }
 

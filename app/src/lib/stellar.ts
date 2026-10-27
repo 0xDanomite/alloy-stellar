@@ -21,6 +21,7 @@ import {
 import { creationCandidates, creationPlatform, deployments, endpoints, expert, isLegacyFundCode, network, platforms, platformSlot } from "./config";
 import { addressVal, dataKey, instanceKey, instanceStorage, keyId, native, readEntries, variantKey } from "./ledger";
 import { SPECS } from "./specs";
+import { STATUS_KEY, statusOf } from "./visibility";
 import { ONE, toDecimalString, unitsToNumber } from "./format";
 import { CIRCLE_USDC_ISSUER, DEMO_ISSUER_LABEL, PINNED_MAINNET_ISSUERS, UNVERIFIED_ISSUER_LABEL } from "./issuers";
 
@@ -498,6 +499,8 @@ export interface Fund {
   setup: FundSetup | null;
   /** Manager-written profile fields (description, strategy, website); empty when none. */
   metadata: FundMetadata;
+  /** The manager set metadata `status` to `hidden`: left out of public lists, still reachable by link. */
+  hidden: boolean;
 }
 
 export interface FundMetadata {
@@ -527,6 +530,7 @@ interface FundState {
   totalSupply: bigint;
   storage: Map<string, unknown>;
   metadata: FundMetadata;
+  hidden: boolean;
   components: { token: string; initialUnits: bigint; held: bigint; reserved: bigint; shelf: ShelfStatus; fundAuthorized: boolean }[];
 }
 
@@ -584,32 +588,36 @@ async function readFundStates(ids: string[]): Promise<FundState[]> {
     ]),
   );
 
-  return configs.map(({ id, platform, storage, wasmHash }) => ({
-    id,
-    wasmHash,
-    platform,
-    storage,
-    name: String(storage.get("Name") ?? ""),
-    symbol: String(storage.get("Symbol") ?? ""),
-    compliance: unitTag(storage.get("Compliance")) as Compliance,
-    manager: String(storage.get("Manager") ?? ""),
-    totalSupply: asBigInt(storage.get("Supply")),
-    metadata: toMetadata(native(second.get(keyId(metadataKey(id))))),
-    components: componentsOf(storage).map((c) => {
-      const balance = native(second.get(keyId(balanceKey(c.token, id)))) as
-        | { amount: bigint; authorized: boolean }
-        | undefined;
-      const shelf = native(second.get(keyId(shelfKey(platform, c.token))));
-      return {
-        token: c.token,
-        initialUnits: c.initial_units,
-        held: balance?.amount ?? 0n,
-        reserved: asBigInt(native(second.get(keyId(reservedKey(id, c.token))))),
-        shelf: (shelf === undefined ? "Unlisted" : unitTag(shelf)) as ShelfStatus,
-        fundAuthorized: balance?.authorized ?? false,
-      };
-    }),
-  }));
+  return configs.map(({ id, platform, storage, wasmHash }) => {
+    const metadata = native(second.get(keyId(metadataKey(id))));
+    return {
+      id,
+      wasmHash,
+      platform,
+      storage,
+      name: String(storage.get("Name") ?? ""),
+      symbol: String(storage.get("Symbol") ?? ""),
+      compliance: unitTag(storage.get("Compliance")) as Compliance,
+      manager: String(storage.get("Manager") ?? ""),
+      totalSupply: asBigInt(storage.get("Supply")),
+      metadata: toMetadata(metadata),
+      hidden: statusOf(typeof metadata === "object" && metadata !== null ? Reflect.get(metadata, STATUS_KEY) : undefined) === "hidden",
+      components: componentsOf(storage).map((c) => {
+        const balance = native(second.get(keyId(balanceKey(c.token, id)))) as
+          | { amount: bigint; authorized: boolean }
+          | undefined;
+        const shelf = native(second.get(keyId(shelfKey(platform, c.token))));
+        return {
+          token: c.token,
+          initialUnits: c.initial_units,
+          held: balance?.amount ?? 0n,
+          reserved: asBigInt(native(second.get(keyId(reservedKey(id, c.token))))),
+          shelf: (shelf === undefined ? "Unlisted" : unitTag(shelf)) as ShelfStatus,
+          fundAuthorized: balance?.authorized ?? false,
+        };
+      }),
+    };
+  });
 }
 
 /** Instance keys only v0.4 fund code writes. */
@@ -708,6 +716,7 @@ async function toFund(state: FundState): Promise<Fund> {
     navContract,
     setup: (await v4) ? toSetup(state) : null,
     metadata: state.metadata,
+    hidden: state.hidden,
   };
 }
 

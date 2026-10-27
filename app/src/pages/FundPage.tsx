@@ -18,7 +18,7 @@ import { decodeHandover, handoverIncoming, type HandoverLink } from "../lib/hand
 import { fundValueUsd } from "../lib/fund-math";
 import { loadHistories, type AssetHistory } from "../lib/history";
 import { changeOver } from "../lib/series";
-import { explain, findFund, isMainnet, loadPosition, type Fund } from "../lib/stellar";
+import { explain, findFund, isMainnet, isManager, loadPosition, type Fund } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
 import { NotFound } from "./NotFound";
@@ -230,10 +230,11 @@ export function FundPage() {
     return param ? decodeHandover(param) : null;
   }, [params]);
   const manages = Boolean(f && address && f.manager === address);
-  const isManager = manages && !preview;
-  const activeTab = tab === "manage" && !isManager ? "invest" : tab;
-  const tabs = isManager ? (["invest", "redeem", "manage"] as const) : (["invest", "redeem"] as const);
+  const managing = manages && !preview;
+  const activeTab = tab === "manage" && !managing ? "invest" : tab;
+  const tabs = managing ? (["invest", "redeem", "manage"] as const) : (["invest", "redeem"] as const);
   const refresh = () => setVersion((v) => v + 1);
+  const canCreate = useAsync(() => isManager(address ?? ""), address ? `manager:${address}` : null);
 
   if (fund.data === null) return <NotFound message="The Alloy platform has no fund at this address." />;
   if (fund.error != null && !f) {
@@ -279,6 +280,11 @@ export function FundPage() {
                   )}
                   {f?.setup && !f.setup.open && (
                     <span className="chip border-warning/50 px-2 py-0.5 text-[0.75rem] text-warning">Not open yet</span>
+                  )}
+                  {f?.hidden && (
+                    <span className="chip px-2 py-0.5 text-[0.75rem] text-muted-foreground" title="Left out of the public fund lists. It works as usual for anyone with the link.">
+                      Hidden by its manager
+                    </span>
                   )}
                 </div>
               </div>
@@ -360,6 +366,11 @@ export function FundPage() {
               <div className="mt-5 flex flex-wrap items-center gap-3 text-[0.875rem]">
                 <span className="text-muted-foreground">Fund contract</span>
                 <CopyId id={f.id} />
+                {canCreate.data && (
+                  <Link to={`/create?from=${f.id}`} className="ml-auto text-label text-primary underline-offset-4 hover:underline">
+                    Create a fund like this
+                  </Link>
+                )}
               </div>
             )}
           </header>
@@ -424,7 +435,7 @@ export function FundPage() {
             </div>
           )}
           <div className="panel rounded-2xl shadow-overlay">
-            <div className={`grid border-b p-1.5 ${isManager ? "grid-cols-3" : "grid-cols-2"}`} role="tablist">
+            <div className={`grid border-b p-1.5 ${managing ? "grid-cols-3" : "grid-cols-2"}`} role="tablist">
               {tabs.map((t) => (
                 <button
                   key={t}

@@ -10,6 +10,7 @@ import { fundSeries, hasHistory, loadHistories, type AssetHistory } from "../lib
 import { rangeReturn } from "../lib/series";
 import { explain, listFunds, type Fund, type FundComponent } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
+import { listedFunds } from "../lib/visibility";
 
 function uniqueLegs(funds: Fund[]): FundComponent[] {
   const byToken = new Map<string, FundComponent>();
@@ -53,6 +54,7 @@ function FundRow({ fund, histories }: { fund: Fund; histories: Map<string, Asset
             <span className="text-filing text-muted-foreground">{fund.symbol}</span>
             <span className="text-[0.75rem] text-muted-foreground">{complianceLabel(fund)}</span>
             {fund.setup && !fund.setup.open && <span className="text-[0.75rem] text-warning">not open yet</span>}
+            {fund.hidden && <span className="chip px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground">hidden</span>}
           </div>
           <FundBlurb fund={fund} className="mt-1 line-clamp-2 text-[0.8125rem] leading-snug" />
         </div>
@@ -91,7 +93,10 @@ export function FundsPage() {
     legs ? `day:${legs.map((l) => l.token).join(",")}` : null,
   );
   const [query, setQuery] = useState("");
-  const shown = funds.data?.filter((f) => matches(f, query)) ?? [];
+  const [showHidden, setShowHidden] = useState(false);
+  const listed = funds.data ? listedFunds(funds.data, showHidden) : [];
+  const hiddenCount = funds.data?.filter((f) => f.hidden).length ?? 0;
+  const shown = listed.filter((f) => matches(f, query));
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:py-14">
@@ -102,16 +107,31 @@ export function FundsPage() {
             Every fund the Alloy platform contract has registered, read live from the ledger.
           </p>
         </div>
-        <label className="w-full sm:w-72">
-          <span className="sr-only">Search funds</span>
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name, symbol or asset"
-            className="w-full rounded-full border bg-card px-4 py-2.5 text-[0.9375rem] outline-none placeholder:text-muted-foreground focus:border-ring"
-          />
-        </label>
+        <div className="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto sm:flex-nowrap">
+          <label className="w-full sm:w-72">
+            <span className="sr-only">Search funds</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by name, symbol or asset"
+              className="w-full rounded-full border bg-card px-4 py-2.5 text-[0.9375rem] outline-none placeholder:text-muted-foreground focus:border-ring"
+            />
+          </label>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showHidden}
+            onClick={() => setShowHidden((v) => !v)}
+            title="Funds their managers have hidden from this list"
+            className="inline-flex shrink-0 items-center gap-2 text-label text-muted-foreground hover:text-foreground"
+          >
+            <span className={`relative h-5 w-9 rounded-full border transition-colors ${showHidden ? "border-primary bg-primary" : "border-transparent bg-muted-foreground/30"}`} aria-hidden>
+              <span className={`absolute top-1/2 size-3.5 -translate-y-1/2 rounded-full bg-card shadow-sm transition-[left] ${showHidden ? "left-[1.125rem]" : "left-0.5"}`} />
+            </span>
+            Show hidden{hiddenCount > 0 && <span className="num">({hiddenCount})</span>}
+          </button>
+        </div>
       </div>
 
       <div className="panel mt-8 overflow-hidden rounded-2xl">
@@ -147,11 +167,19 @@ export function FundsPage() {
         ) : (
           <div className="px-5 py-10 text-center">
             <p className="text-muted-foreground">
-              {funds.data.length ? `No fund matches "${query.trim()}".` : "No funds on this platform yet."}
+              {listed.length
+                ? `No fund matches "${query.trim()}".`
+                : funds.data.length
+                  ? "Every fund on this platform is hidden by its manager."
+                  : "No funds on this platform yet."}
             </p>
-            {funds.data.length ? (
+            {listed.length ? (
               <button type="button" onClick={() => setQuery("")} className="mt-2 text-primary underline-offset-4 hover:underline">
                 Clear search
+              </button>
+            ) : funds.data.length ? (
+              <button type="button" onClick={() => setShowHidden(true)} className="mt-2 text-primary underline-offset-4 hover:underline">
+                Show hidden funds
               </button>
             ) : (
               <Link to="/create" className="mt-2 inline-block text-primary underline-offset-4 hover:underline">
@@ -163,7 +191,8 @@ export function FundsPage() {
       </div>
       {funds.data && (
         <p className="mt-3 text-[0.8125rem] text-muted-foreground">
-          {funds.data.length} {funds.data.length === 1 ? "fund" : "funds"}. The 24h figure holds today's units fixed and values
+          {listed.length} {listed.length === 1 ? "fund" : "funds"}
+          {!showHidden && hiddenCount > 0 && `, ${hiddenCount} more hidden by ${hiddenCount === 1 ? "its manager" : "their managers"}`}. The 24h figure holds today's units fixed and values
           them at oracle and Stellar DEX prices from a day ago.
         </p>
       )}

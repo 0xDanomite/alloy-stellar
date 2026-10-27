@@ -102,6 +102,14 @@ Managers describe a fund with `set_metadata(key, value)`: up to 8 entries
 (`description`, `strategy`, `website`, ...), 512 bytes each, read with
 `metadata()`. It is display data and changes nothing on chain.
 
+One key has a meaning in the app: `status`. A manager sets it to `hidden`
+to take the fund off the public lists (the funds page and the home page);
+any other value, or no entry, means active, and the app writes `active` to
+list it again. A hidden fund still issues and redeems as usual, its page
+stays reachable by link with a "Hidden by its manager" note, and it still
+shows in its manager's and holders' portfolios. The contract ignores the
+key, and only v0.4+ funds have metadata.
+
 ## Rebalance bounds
 
 Every rebalance is checked against the NAV oracle three ways:

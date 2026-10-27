@@ -150,6 +150,11 @@ function Managed({ data }: { data: Portfolio }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-filing text-muted-foreground">{fund.symbol}</span>
                   <span className="text-[0.75rem] text-muted-foreground">{complianceLabel(fund)}</span>
+                  {fund.hidden && (
+                    <span className="chip px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground" title="Left out of the public fund lists; still open by link">
+                      hidden
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
