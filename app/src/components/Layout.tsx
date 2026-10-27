@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { deployments, links, oracles } from "../lib/config";
+import { deployments, keepLinkedNetwork, links, network, NETWORK_NAME, networkFromLink, oracles, switchNetwork, usualNetwork } from "../lib/config";
 import { shortId } from "../lib/format";
 import { accountRole, adminRoles, type AccountRole } from "../lib/admin";
 import { portfolio } from "../lib/portfolio";
@@ -82,6 +83,44 @@ function AdminLink({ placement }: { placement: "header" | "footer" }) {
   );
 }
 
+/** Off mainnet, every page says so, so a shared link can't pass testnet off as the real thing. */
+function NetworkBadge() {
+  if (network === "mainnet") return null;
+  return (
+    <span className="chip border-warning/50 px-2 py-0.5 text-[0.75rem] text-warning" title={`You are on ${NETWORK_NAME[network]}. Nothing here is real money.`}>
+      {NETWORK_NAME[network]}
+    </span>
+  );
+}
+
+/** Asks before a link's `?network=` silently moves the visitor to another network. */
+function LinkedNetworkBanner() {
+  const [open, setOpen] = useState(networkFromLink);
+  if (!open) return null;
+  return (
+    <div className="border-b border-warning/40 bg-warning-surface" role="alert">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 text-[0.875rem] sm:px-6">
+        <p className="min-w-0 flex-1">
+          This link opened {NETWORK_NAME[network]}, not {NETWORK_NAME[usualNetwork]}. Funds and balances here are separate.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            keepLinkedNetwork();
+            setOpen(false);
+          }}
+          className="text-label hover:underline"
+        >
+          Stay on {NETWORK_NAME[network]}
+        </button>
+        <button type="button" onClick={() => switchNetwork(usualNetwork)} className="text-label text-primary hover:underline">
+          Go to {NETWORK_NAME[usualNetwork]}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AttentionBell() {
   const { address } = useWallet();
   const { pathname } = useLocation();
@@ -117,6 +156,7 @@ export function Layout() {
             <AlloyMark className="h-[18px] w-auto" />
             <span className="hidden text-[0.9375rem] font-semibold tracking-[0.18em] min-[420px]:inline">ALLOY</span>
           </Link>
+          <NetworkBadge />
           <nav className="ml-auto flex items-center gap-0.5 sm:gap-1">
             <NavLink
               to="/funds"
@@ -170,6 +210,7 @@ export function Layout() {
             {error}
           </p>
         )}
+        <LinkedNetworkBanner />
       </header>
 
       <main className="flex-1">
