@@ -239,8 +239,8 @@ export function Landing() {
               Explore funds
               <ArrowRight className="size-4" />
             </a>
-            <Link to="/built" className="inline-flex min-h-11 items-center rounded-full border px-5 text-label hover:bg-secondary">
-              What we built
+            <Link to="/demo" className="inline-flex min-h-11 items-center rounded-full border px-5 text-label hover:bg-secondary">
+              Watch the demo
             </Link>
           </div>
           <div className="mt-10">

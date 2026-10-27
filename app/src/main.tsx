@@ -9,6 +9,7 @@ import { FundPage } from "./pages/FundPage";
 import { FundsPage } from "./pages/FundsPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { Built } from "./pages/Built";
+import { DemoPage } from "./pages/DemoPage";
 import { HowPage } from "./pages/HowPage";
 import { CreatePage } from "./pages/CreatePage";
 import { AdminPage } from "./pages/AdminPage";
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
       { path: "/create", element: <CreatePage /> },
       { path: "/admin", element: <AdminPage /> },
       { path: "/how", element: <HowPage /> },
+      { path: "/demo", element: <DemoPage /> },
       { path: "/built", element: <Built /> },
       { path: "*", element: <NotFound /> },
     ],

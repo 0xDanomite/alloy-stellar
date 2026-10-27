@@ -224,6 +224,7 @@ export function Layout() {
             Alloy on Stellar, built at HackMeridian 2026
           </span>
           <Link to="/how" className="hover:text-foreground">How it works</Link>
+          <Link to="/demo" className="hover:text-foreground">Demo video</Link>
           <Link to="/built" className="hover:text-foreground">What we built</Link>
           <AdminLink placement="footer" />
           <a href={links.repo} target="_blank" rel="noreferrer" className="hover:text-foreground">Source on GitHub</a>
