@@ -7,9 +7,11 @@
 //! own. Anyone watching the `scheduled` events has the full delay to react
 //! before an admin change lands.
 //!
-//! Roles are fixed at construction. The delay can only change through a
-//! scheduled call to the timelock itself, so it is subject to the delay it
-//! replaces.
+//! The delay and both role lists change only through scheduled calls to the
+//! timelock itself, so each change waits out the delay it may replace. The
+//! delay never drops below the minimum fixed at construction (itself at
+//! least `MIN_DELAY_FLOOR_SECONDS`), and an operation not executed within
+//! `GRACE_PERIOD_SECONDS` of becoming ready expires.
 #![no_std]
 
 use soroban_sdk::{
@@ -25,6 +27,10 @@ const ENTRY_THRESHOLD: u32 = ENTRY_BUMP - DAY_IN_LEDGERS;
 
 /// Longest allowed delay: 30 days, so a bad update can't freeze the admin.
 pub const MAX_DELAY_SECONDS: u64 = 30 * 24 * 60 * 60;
+/// The lowest minimum delay a timelock can be built with: 5 minutes.
+pub const MIN_DELAY_FLOOR_SECONDS: u64 = 5 * 60;
+/// How long a ready operation stays executable: 14 days.
+pub const GRACE_PERIOD_SECONDS: u64 = 14 * 24 * 60 * 60;
 pub const MAX_ROLE_MEMBERS: u32 = 10;
 
 #[contracterror]
@@ -40,6 +46,7 @@ pub enum TimelockError {
     InvalidDelay = 7,
     UnsupportedSelfCall = 8,
     InvalidRoles = 9,
+    Expired = 10,
 }
 
 #[contracttype]
@@ -56,6 +63,7 @@ enum DataKey {
     Executors,
     Delay,
     Operation(BytesN<32>),
+    MinDelay,
 }
 
 #[contractevent(topics = ["scheduled"], data_format = "map")]
@@ -90,6 +98,16 @@ pub struct DelaySet {
     pub delay: u64,
 }
 
+#[contractevent(topics = ["proposers_set"], data_format = "single-value")]
+pub struct ProposersSet {
+    pub proposers: Vec<Address>,
+}
+
+#[contractevent(topics = ["executors_set"], data_format = "single-value")]
+pub struct ExecutorsSet {
+    pub executors: Vec<Address>,
+}
+
 #[contract]
 pub struct Timelock;
 
@@ -117,14 +135,26 @@ fn check_roles(env: &Env, list: &Vec<Address>) {
     }
 }
 
-fn check_delay(env: &Env, delay: u64) {
-    if delay > MAX_DELAY_SECONDS {
+fn check_delay(env: &Env, delay: u64, min_delay: u64) {
+    if delay < min_delay || delay > MAX_DELAY_SECONDS {
         panic_with_error!(env, TimelockError::InvalidDelay);
     }
 }
 
 fn delay(env: &Env) -> u64 {
     env.storage().instance().get(&DataKey::Delay).unwrap()
+}
+
+fn min_delay(env: &Env) -> u64 {
+    env.storage().instance().get(&DataKey::MinDelay).unwrap()
+}
+
+fn self_call_arg<T: TryFromVal<Env, Val>>(env: &Env, args: &Vec<Val>) -> T {
+    if args.len() != 1 {
+        panic_with_error!(env, TimelockError::UnsupportedSelfCall);
+    }
+    T::try_from_val(env, &args.get_unchecked(0))
+        .unwrap_or_else(|_| panic_with_error!(env, TimelockError::UnsupportedSelfCall))
 }
 
 fn operation(env: &Env, id: &BytesN<32>) -> Option<Operation> {
@@ -161,27 +191,51 @@ fn hash_operation(
 
 /// A contract cannot call itself, so calls aimed at the timelock run here.
 fn call_self(env: &Env, fn_name: &Symbol, args: &Vec<Val>) -> Val {
-    if *fn_name == Symbol::new(env, "set_delay") && args.len() == 1 {
-        let new_delay = u64::try_from_val(env, &args.get_unchecked(0))
-            .unwrap_or_else(|_| panic_with_error!(env, TimelockError::UnsupportedSelfCall));
-        check_delay(env, new_delay);
-        env.storage().instance().set(&DataKey::Delay, &new_delay);
-        DelaySet { delay: new_delay }.publish(env);
-        return Val::VOID.into();
+    let instance = env.storage().instance();
+    if *fn_name == Symbol::new(env, "set_delay") {
+        let delay: u64 = self_call_arg(env, args);
+        check_delay(env, delay, min_delay(env));
+        instance.set(&DataKey::Delay, &delay);
+        DelaySet { delay }.publish(env);
+    } else if *fn_name == Symbol::new(env, "set_proposers") {
+        let proposers: Vec<Address> = self_call_arg(env, args);
+        check_roles(env, &proposers);
+        instance.set(&DataKey::Proposers, &proposers);
+        ProposersSet { proposers }.publish(env);
+    } else if *fn_name == Symbol::new(env, "set_executors") {
+        let executors: Vec<Address> = self_call_arg(env, args);
+        check_roles(env, &executors);
+        instance.set(&DataKey::Executors, &executors);
+        ExecutorsSet { executors }.publish(env);
+    } else {
+        panic_with_error!(env, TimelockError::UnsupportedSelfCall);
     }
-    panic_with_error!(env, TimelockError::UnsupportedSelfCall)
+    Val::VOID.into()
 }
 
 #[contractimpl]
 impl Timelock {
-    pub fn __constructor(env: Env, proposers: Vec<Address>, executors: Vec<Address>, delay: u64) {
+    /// `min_delay` is the lowest the delay may ever be set, at least
+    /// `MIN_DELAY_FLOOR_SECONDS`; `delay` starts between it and
+    /// `MAX_DELAY_SECONDS`.
+    pub fn __constructor(
+        env: Env,
+        proposers: Vec<Address>,
+        executors: Vec<Address>,
+        delay: u64,
+        min_delay: u64,
+    ) {
         check_roles(&env, &proposers);
         check_roles(&env, &executors);
-        check_delay(&env, delay);
+        if min_delay < MIN_DELAY_FLOOR_SECONDS {
+            panic_with_error!(&env, TimelockError::InvalidDelay);
+        }
+        check_delay(&env, delay, min_delay);
         let instance = env.storage().instance();
         instance.set(&DataKey::Proposers, &proposers);
         instance.set(&DataKey::Executors, &executors);
         instance.set(&DataKey::Delay, &delay);
+        instance.set(&DataKey::MinDelay, &min_delay);
         bump_instance(&env);
     }
 
@@ -229,7 +283,8 @@ impl Timelock {
     }
 
     /// Runs a scheduled call whose delay has passed, with the timelock as the
-    /// caller. Each operation runs once. Returns what the target returned.
+    /// caller, at most `GRACE_PERIOD_SECONDS` after it became ready. Each
+    /// operation runs once. Returns what the target returned.
     pub fn execute(
         env: Env,
         executor: Address,
@@ -250,8 +305,12 @@ impl Timelock {
         if op.done {
             panic_with_error!(&env, TimelockError::AlreadyDone);
         }
-        if env.ledger().timestamp() < op.ready_at {
+        let now = env.ledger().timestamp();
+        if now < op.ready_at {
             panic_with_error!(&env, TimelockError::NotReady);
+        }
+        if now > op.ready_at.saturating_add(GRACE_PERIOD_SECONDS) {
+            panic_with_error!(&env, TimelockError::Expired);
         }
         op.done = true;
         write_operation(&env, &id, &op);
@@ -301,6 +360,10 @@ impl Timelock {
 
     pub fn delay(env: Env) -> u64 {
         delay(&env)
+    }
+
+    pub fn min_delay(env: Env) -> u64 {
+        min_delay(&env)
     }
 
     pub fn proposers(env: Env) -> Vec<Address> {

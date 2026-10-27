@@ -8,7 +8,10 @@ use soroban_sdk::{
     vec, Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
 
-use crate::{Timelock, TimelockClient, TimelockError, MAX_DELAY_SECONDS};
+use crate::{
+    Timelock, TimelockClient, TimelockError, GRACE_PERIOD_SECONDS, MAX_DELAY_SECONDS,
+    MIN_DELAY_FLOOR_SECONDS,
+};
 
 const DELAY: u64 = 2 * 24 * 60 * 60;
 
@@ -37,6 +40,7 @@ fn setup<'a>() -> Setup<'a> {
             vec![&env, proposer.clone()],
             vec![&env, executor.clone()],
             DELAY,
+            MIN_DELAY_FLOOR_SECONDS,
         ),
     );
     Setup {
@@ -354,6 +358,212 @@ fn construction_needs_both_roles() {
             Vec::<Address>::new(&env),
             vec![&env, Address::generate(&env)],
             DELAY,
+            MIN_DELAY_FLOOR_SECONDS,
         ),
+    );
+}
+
+fn register_with_delays(delay: u64, min_delay: u64) -> u64 {
+    let env = Env::default();
+    let roles = vec![&env, Address::generate(&env)];
+    let id = env.register(Timelock, (roles.clone(), roles, delay, min_delay));
+    TimelockClient::new(&env, &id).min_delay()
+}
+
+#[test]
+fn construction_takes_a_minimum_delay_of_at_least_five_minutes() {
+    assert_eq!(
+        register_with_delays(MIN_DELAY_FLOOR_SECONDS, MIN_DELAY_FLOOR_SECONDS),
+        MIN_DELAY_FLOOR_SECONDS
+    );
+    assert_eq!(register_with_delays(DELAY, DELAY), DELAY);
+}
+
+#[test]
+#[should_panic]
+fn construction_refuses_a_minimum_under_the_floor() {
+    register_with_delays(DELAY, MIN_DELAY_FLOOR_SECONDS - 1);
+}
+
+#[test]
+#[should_panic]
+fn construction_refuses_a_delay_under_the_minimum() {
+    register_with_delays(DELAY - 1, DELAY);
+}
+
+// Regressions for the v0.5 contract audit (AUD-08): the audit's proofs,
+// turned around to assert the fix.
+
+/// The audit scheduled `set_delay(0)` and then ran every later operation
+/// immediately. The delay now never drops below the construction minimum.
+#[test]
+fn delay_never_drops_below_the_minimum() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let target = s.timelock.address.clone();
+    let fn_name = Symbol::new(&s.env, "set_delay");
+    for (n, delay) in [(1u8, 0u64), (2, MIN_DELAY_FLOOR_SECONDS - 1)] {
+        let args: Vec<Val> = vec![&s.env, delay.into_val(&s.env)];
+        s.timelock
+            .schedule(&s.proposer, &target, &fn_name, &args, &salt(&s.env, n));
+        later(&s, DELAY);
+        assert_eq!(
+            failure(s.timelock.try_execute(
+                &s.executor,
+                &target,
+                &fn_name,
+                &args,
+                &salt(&s.env, n)
+            )),
+            Some(TimelockError::InvalidDelay.into())
+        );
+    }
+    run(
+        &s,
+        &target,
+        "set_delay",
+        vec![&s.env, MIN_DELAY_FLOOR_SECONDS.into_val(&s.env)],
+        3,
+    );
+    assert_eq!(s.timelock.delay(), MIN_DELAY_FLOOR_SECONDS);
+}
+
+/// The audit executed an operation five years after scheduling it. A ready
+/// operation now expires after the grace period.
+#[test]
+fn operations_expire_after_the_grace_period() {
+    let s = setup();
+    hand_platform_to_timelock(&s);
+    s.env.mock_all_auths();
+    let fn_name = Symbol::new(&s.env, "set_manager");
+    let args: Vec<Val> = vec![
+        &s.env,
+        Address::generate(&s.env).to_val(),
+        true.into_val(&s.env),
+    ];
+    for n in [7u8, 8] {
+        s.timelock.schedule(
+            &s.proposer,
+            &s.platform.address,
+            &fn_name,
+            &args,
+            &salt(&s.env, n),
+        );
+    }
+    later(&s, DELAY + GRACE_PERIOD_SECONDS);
+    s.timelock.execute(
+        &s.executor,
+        &s.platform.address,
+        &fn_name,
+        &args,
+        &salt(&s.env, 7),
+    );
+    later(&s, 1);
+    assert_eq!(
+        failure(s.timelock.try_execute(
+            &s.executor,
+            &s.platform.address,
+            &fn_name,
+            &args,
+            &salt(&s.env, 8)
+        )),
+        Some(TimelockError::Expired.into())
+    );
+    let id = s
+        .timelock
+        .hash_operation(&s.platform.address, &fn_name, &args, &salt(&s.env, 8));
+    s.timelock.cancel(&s.proposer, &id);
+    assert_eq!(s.timelock.operation(&id), None);
+}
+
+/// Roles were fixed for life, so a lost or stolen key could never be
+/// rotated out. They now change through scheduled self-calls.
+#[test]
+fn roles_rotate_only_through_scheduled_self_calls() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let target = s.timelock.address.clone();
+    let (proposer, executor) = (Address::generate(&s.env), Address::generate(&s.env));
+    let rotations = [
+        ("set_proposers", proposer.clone()),
+        ("set_executors", executor.clone()),
+    ];
+    for (n, (fn_name, member)) in rotations.iter().enumerate() {
+        let args: Vec<Val> = vec![&s.env, vec![&s.env, member.clone()].to_val()];
+        s.timelock.schedule(
+            &s.proposer,
+            &target,
+            &Symbol::new(&s.env, fn_name),
+            &args,
+            &salt(&s.env, n as u8),
+        );
+    }
+    later(&s, DELAY);
+    for (n, (fn_name, member)) in rotations.iter().enumerate() {
+        let args: Vec<Val> = vec![&s.env, vec![&s.env, member.clone()].to_val()];
+        s.timelock.execute(
+            &s.executor,
+            &target,
+            &Symbol::new(&s.env, fn_name),
+            &args,
+            &salt(&s.env, n as u8),
+        );
+    }
+    assert_eq!(s.timelock.proposers(), vec![&s.env, proposer.clone()]);
+    assert_eq!(s.timelock.executors(), vec![&s.env, executor.clone()]);
+
+    let fn_name = symbol_short!("admin");
+    let args: Vec<Val> = Vec::new(&s.env);
+    assert_eq!(
+        s.timelock.try_schedule(
+            &s.proposer,
+            &s.platform.address,
+            &fn_name,
+            &args,
+            &salt(&s.env, 3)
+        ),
+        Err(Ok(TimelockError::NotProposer.into()))
+    );
+    s.timelock.schedule(
+        &proposer,
+        &s.platform.address,
+        &fn_name,
+        &args,
+        &salt(&s.env, 3),
+    );
+    later(&s, DELAY);
+    assert_eq!(
+        failure(s.timelock.try_execute(
+            &s.executor,
+            &s.platform.address,
+            &fn_name,
+            &args,
+            &salt(&s.env, 3)
+        )),
+        Some(TimelockError::NotExecutor.into())
+    );
+    s.timelock.execute(
+        &executor,
+        &s.platform.address,
+        &fn_name,
+        &args,
+        &salt(&s.env, 3),
+    );
+
+    // An empty list would lock the timelock for good.
+    let set_proposers = Symbol::new(&s.env, "set_proposers");
+    let empty: Vec<Val> = vec![&s.env, Vec::<Address>::new(&s.env).to_val()];
+    s.timelock
+        .schedule(&proposer, &target, &set_proposers, &empty, &salt(&s.env, 4));
+    later(&s, DELAY);
+    assert_eq!(
+        failure(s.timelock.try_execute(
+            &executor,
+            &target,
+            &set_proposers,
+            &empty,
+            &salt(&s.env, 4)
+        )),
+        Some(TimelockError::InvalidRoles.into())
     );
 }
