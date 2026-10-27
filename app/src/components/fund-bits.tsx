@@ -1,14 +1,52 @@
 import { Link } from "react-router-dom";
 import { oracleFor } from "../lib/config";
-import { formatAge, formatAmount, formatUsd, ONE } from "../lib/format";
+import { formatAge, formatAmount, formatUsd, ONE, shortId } from "../lib/format";
 import { fundValueUsd, legWeights } from "../lib/fund-math";
 import { DEMO_ISSUER_LABEL } from "../lib/issuers";
 import type { Fund, FundComponent, Mandate } from "../lib/stellar";
+import { Shield } from "./icons";
 import { Usd } from "./ui";
 
 export function IssuerName({ leg }: { leg: Pick<FundComponent, "issuerLabel" | "verified"> }) {
   return (
     <span className={`text-[0.8125rem] ${leg.verified ? "text-muted-foreground" : "text-warning"}`}>{leg.issuerLabel}</span>
+  );
+}
+
+/** Official for funds Alloy launched; a neutral community tag, or the manager's address, for the rest. */
+export function TrustTag({ fund, byManager = false }: { fund: Pick<Fund, "official" | "manager">; byManager?: boolean }) {
+  if (fund.official) {
+    return (
+      <span className="chip shrink-0 px-1.5 py-0.5 text-[0.6875rem] text-primary" title="Launched by Alloy and listed in its published deployments">
+        <Shield className="size-3" />
+        Official
+      </span>
+    );
+  }
+  return (
+    <span className="chip shrink-0 px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground" title={`Created by ${fund.manager}, a manager the platform approved. Alloy hasn't reviewed it.`}>
+      {byManager ? `Community · by ${shortId(fund.manager, 4, 4)}` : "Community"}
+    </span>
+  );
+}
+
+const WARNING_CHIP = "chip shrink-0 border-destructive/50 px-1.5 py-0.5 text-[0.6875rem] font-medium text-destructive";
+
+/** Warnings on a community fund: a symbol or name that passes for an official fund, or one written with unusual characters. */
+export function TrustWarnings({ fund }: { fund: Pick<Fund, "imitates" | "unusualText"> }) {
+  return (
+    <>
+      {fund.imitates && (
+        <span className={WARNING_CHIP} title={`Its symbol or name looks like Alloy's official ${fund.imitates}, but this is a different fund run by a different manager.`}>
+          Not the official {fund.imitates}
+        </span>
+      )}
+      {fund.unusualText && (
+        <span className={WARNING_CHIP} title="Its name or symbol uses characters beyond plain letters, digits and punctuation, such as another alphabet or invisible joiners, which can make it look like a different fund.">
+          Contains unusual characters
+        </span>
+      )}
+    </>
   );
 }
 
@@ -201,7 +239,11 @@ export function FundCard({ fund, featured = false }: { fund: Fund; featured?: bo
           <Link to={`/fund/${fund.id}`} className="line-clamp-2 block font-medium leading-snug tracking-tight after:absolute after:inset-0 after:rounded-2xl hover:text-primary">
             {fund.name}
           </Link>
-          <p className="text-filing mt-0.5 text-muted-foreground">{fund.symbol}</p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-2">
+            <span className="text-filing text-muted-foreground">{fund.symbol}</span>
+            <TrustTag fund={fund} />
+            <TrustWarnings fund={fund} />
+          </div>
         </div>
         <span className="chip shrink-0 px-2 py-0.5 text-[0.75rem] text-muted-foreground">{complianceLabel(fund)}</span>
       </div>

@@ -26,5 +26,6 @@ describe("parseWebsite", () => {
     expect(parseWebsite("  ")).toBeNull();
     expect(parseWebsite("not a url")).toBeNull();
     expect(parseWebsite("https://localhost")).toBeNull();
+    expect(parseWebsite(`https://example.com/${"a".repeat(120)}`)).toBeNull();
   });
 });

@@ -26,6 +26,10 @@ function fund(id: string, overrides: Partial<Fund> = {}): Fund {
     navContract: null,
     setup: null,
     metadata: {},
+    hidden: false,
+    official: false,
+    imitates: null,
+    unusualText: false,
     ...overrides,
   };
 }

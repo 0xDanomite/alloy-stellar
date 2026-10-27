@@ -8,6 +8,7 @@ import { legPrice, platformTotals } from "../lib/fund-math";
 import { DEMO_ISSUER_LABEL } from "../lib/issuers";
 import { explain, listFunds, type Fund } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
+import { listedFunds } from "../lib/visibility";
 
 const BUILT_ON_STELLAR = [
   {
@@ -215,7 +216,7 @@ function PriceExample({ fund }: { fund: Fund | undefined }) {
 }
 
 export function Landing() {
-  const funds = useAsync(() => listFunds(), deployments ? network : null);
+  const funds = useAsync(() => listFunds().then((all) => listedFunds(all).filter((f) => f.official)), deployments ? network : null);
   const flagship = funds.data?.find((f) => f.navPerShare !== null) ?? funds.data?.[0];
   const codes = funds.data ? [...new Set(funds.data.flatMap((f) => f.components.filter((c) => c.verified && c.issuerLabel !== DEMO_ISSUER_LABEL).map((c) => c.code)))] : [];
 
@@ -272,7 +273,11 @@ export function Landing() {
       <section id="funds" className="mx-auto max-w-6xl scroll-mt-20 px-4 pt-20 sm:px-6">
         <SectionHead filing="Live funds" title="Pick a portfolio." />
         <p className="mx-auto mt-3 max-w-prose text-center text-muted-foreground">
-          Read live from the Alloy platform contract. Only funds the platform created appear here.
+          Alloy's official funds, read live from the ledger. Funds other approved managers create are on the{" "}
+          <Link to="/funds" className="text-primary underline-offset-4 hover:underline">
+            funds page
+          </Link>
+          .
         </p>
         {!deployments && (
           <p className="panel mt-8 rounded-xl px-4 py-3">This build has no deployment for {network} yet.</p>

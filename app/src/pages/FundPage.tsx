@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AssetDot, complianceLabel, FundAvatar, headlineValue, HoldsChips, IssuerFlags, IssuerName, MANDATES, mandateOf, OracleNote } from "../components/fund-bits";
+import { AssetDot, complianceLabel, FundAvatar, headlineValue, HoldsChips, IssuerFlags, IssuerName, MANDATES, mandateOf, OracleNote, TrustTag, TrustWarnings } from "../components/fund-bits";
 import { ArrowLeft } from "../components/icons";
 import { InvestPanel } from "../components/InvestPanel";
 import { ManagePanel } from "../components/ManagePanel";
@@ -19,7 +19,7 @@ import { fundValueUsd } from "../lib/fund-math";
 import { parseWebsite } from "../lib/website";
 import { loadHistories, type AssetHistory } from "../lib/history";
 import { changeOver } from "../lib/series";
-import { explain, findFund, isMainnet, loadPosition, type Fund } from "../lib/stellar";
+import { explain, findFund, isMainnet, isManager, loadPosition, type Fund } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
 import { useWallet } from "../lib/wallet";
 import { NotFound } from "./NotFound";
@@ -232,10 +232,11 @@ export function FundPage() {
   }, [params]);
   const website = parseWebsite(f?.metadata.website);
   const manages = Boolean(f && address && f.manager === address);
-  const isManager = manages && !preview;
-  const activeTab = tab === "manage" && !isManager ? "invest" : tab;
-  const tabs = isManager ? (["invest", "redeem", "manage"] as const) : (["invest", "redeem"] as const);
+  const managing = manages && !preview;
+  const activeTab = tab === "manage" && !managing ? "invest" : tab;
+  const tabs = managing ? (["invest", "redeem", "manage"] as const) : (["invest", "redeem"] as const);
   const refresh = () => setVersion((v) => v + 1);
+  const canCreate = useAsync(() => isManager(address ?? ""), address ? `manager:${address}` : null);
 
   if (fund.data === null) return <NotFound message="The Alloy platform has no fund at this address." />;
   if (fund.error != null && !f) {
@@ -268,6 +269,8 @@ export function FundPage() {
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-filing text-muted-foreground">{f ? f.symbol : "fund"}</span>
+                  {f && <TrustTag fund={f} byManager />}
+                  {f && <TrustWarnings fund={f} />}
                   {f && <span className="chip px-2 py-0.5 text-[0.75rem] text-muted-foreground">{complianceLabel(f)}</span>}
                   {f?.setup && (
                     <span className="chip px-2 py-0.5 text-[0.75rem] text-muted-foreground" title={MANDATES[mandateOf(f) ?? "Locked"].detail}>
@@ -281,6 +284,11 @@ export function FundPage() {
                   )}
                   {f?.setup && !f.setup.open && (
                     <span className="chip border-warning/50 px-2 py-0.5 text-[0.75rem] text-warning">Not open yet</span>
+                  )}
+                  {f?.hidden && (
+                    <span className="chip px-2 py-0.5 text-[0.75rem] text-muted-foreground" title="Left out of the public fund lists. It works as usual for anyone with the link.">
+                      Hidden by its manager
+                    </span>
                   )}
                 </div>
               </div>
@@ -365,6 +373,11 @@ export function FundPage() {
               <div className="mt-5 flex flex-wrap items-center gap-3 text-[0.875rem]">
                 <span className="text-muted-foreground">Fund contract</span>
                 <CopyId id={f.id} />
+                {canCreate.data && (
+                  <Link to={`/create?from=${f.id}`} className="ml-auto text-label text-primary underline-offset-4 hover:underline">
+                    Create a fund like this
+                  </Link>
+                )}
               </div>
             )}
           </header>
@@ -420,6 +433,21 @@ export function FundPage() {
 
         <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
           {f && handover && <HandoverCard fund={f} link={handover} onChanged={refresh} />}
+          {f && (f.imitates || f.unusualText) && (
+            <div className="rounded-2xl border border-destructive/40 bg-card p-4" role="note">
+              <h2 className="font-medium text-destructive">{f.imitates ? `Not the official ${f.imitates}` : "Contains unusual characters"}</h2>
+              <p className="mt-1 text-[0.875rem]">
+                {f.imitates
+                  ? `This fund's symbol or name looks like Alloy's official ${f.imitates}, but a different manager created it and runs it.`
+                  : "This fund's name or symbol uses characters beyond plain letters and digits, such as another alphabet or invisible joiners, so it may not read the way it looks."}{" "}
+                Alloy hasn't reviewed it. Check the manager before investing.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[0.8125rem]">
+                <span className="text-muted-foreground">Manager</span>
+                <CopyId id={f.manager} kind="account" head={4} tail={4} />
+              </div>
+            </div>
+          )}
           {manages && preview && (
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-primary/40 bg-accent/50 px-4 py-3 text-[0.875rem]">
               <span>You're seeing what an investor sees.</span>
@@ -429,7 +457,7 @@ export function FundPage() {
             </div>
           )}
           <div className="panel rounded-2xl shadow-overlay">
-            <div className={`grid border-b p-1.5 ${isManager ? "grid-cols-3" : "grid-cols-2"}`} role="tablist">
+            <div className={`grid border-b p-1.5 ${managing ? "grid-cols-3" : "grid-cols-2"}`} role="tablist">
               {tabs.map((t) => (
                 <button
                   key={t}

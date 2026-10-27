@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AssetDot, IssuerName, MANDATES, strandColor } from "../components/fund-bits";
 import { ArrowLeft } from "../components/icons";
 import { SetupChecklist } from "../components/SetupChecklist";
 import { Button, TxNotice, Usd, type TxPhase } from "../components/ui";
+import { templateFrom, type FundTemplate } from "../lib/duplicate";
 import { formatBps, percentToBps, stakeAfter } from "../lib/fee-math";
 import { formatAmount, formatUsd, shortId } from "../lib/format";
 import { clearSetupDraft, draftFundIds, saveSetupDraft, setupCallCount, setupSteps, type SetupPlan } from "../lib/manager";
@@ -24,9 +25,9 @@ import {
 import { useAsync } from "../lib/use-async";
 import { evenPercents, percentTotal, unitsForWeights } from "../lib/weights";
 import { useWallet } from "../lib/wallet";
+import { parseWebsite } from "../lib/website";
 
 const SYMBOL_PATTERN = /^[A-Za-z0-9]{1,12}$/;
-const WEBSITE_PATTERN = /^https:\/\/[^\s/]+\.[^\s]+$/;
 const MAX_METADATA_BYTES = 512;
 const MAX_COMPONENTS = 12;
 const NAV_PRESETS = [1, 10, 100];
@@ -130,6 +131,42 @@ function V3Note({ children }: { children: ReactNode }) {
   return <p className="rounded-md bg-warning-surface px-3 py-2.5 text-[0.875rem]">{children}</p>;
 }
 
+const WEIGHT_BASIS: Record<FundTemplate["weightedBy"], string> = {
+  oracle: "by what each asset is worth in one share at oracle prices",
+  market: "by what each asset is worth in one share, at market prices where an oracle has none",
+  even: "evenly, because an asset has no price right now",
+};
+
+/** The note atop a create ceremony that started from an existing fund. */
+function CopiedFrom({ template, missing, loading }: { template: { fund: Fund; copied: FundTemplate } | null; missing: boolean; loading: boolean }) {
+  if (missing) {
+    return <p className="mt-8 rounded-2xl border bg-secondary px-5 py-4 text-[0.875rem]">That fund isn't registered on this platform, so this starts blank.</p>;
+  }
+  if (!template) {
+    return loading ? <div className="skeleton mt-8 h-16 w-full rounded-2xl" /> : null;
+  }
+  const { fund, copied } = template;
+  return (
+    <div className="mt-8 rounded-2xl border border-primary/40 bg-accent/50 px-5 py-4">
+      <p className="font-medium">
+        Starting from{" "}
+        <Link to={`/fund/${fund.id}`} className="text-primary underline-offset-4 hover:underline">
+          {fund.name}
+        </Link>
+      </p>
+      <p className="mt-1 max-w-[46rem] text-[0.875rem] text-muted-foreground">
+        Same assets, access, mandate, fee and profile, weighted {WEIGHT_BASIS[copied.weightedBy]}. The symbol is only a suggestion. Check
+        each step; nothing is sent until you sign.
+      </p>
+      {copied.dropped.length > 0 && (
+        <p className="mt-2 text-[0.875rem] text-warning">
+          Left out: {copied.dropped.join(", ")}, not on this platform's shelf.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Funds this browser started creating whose setup never finished. */
 function UnfinishedFunds({ address }: { address: string }) {
   const ids = draftFundIds();
@@ -170,7 +207,18 @@ export function CreatePage() {
   const tokens = shelf.data?.map((a) => a.token) ?? [];
   const oracle = useAsync(() => oraclePrices(tokens), tokens.length ? `oracle:${tokens.join(",")}` : null);
 
+  const [params] = useSearchParams();
+  const fromId = params.get("from");
+  const source = useAsync(() => findFund(fromId ?? ""), fromId ? `from:${fromId}` : null);
+
   const [draft, setDraft] = useState<Draft>(EMPTY);
+  const [template, setTemplate] = useState<{ fund: Fund; copied: FundTemplate } | null>(null);
+  if (source.data && shelf.data && template?.fund.id !== source.data.id) {
+    const copied = templateFrom(source.data, new Set(shelf.data.map((a) => a.token)));
+    const { weightedBy: _weightedBy, dropped: _dropped, ...fields } = copied;
+    setTemplate({ fund: source.data, copied });
+    setDraft({ ...EMPTY, ...fields });
+  }
   const [step, setStep] = useState(0);
   const [reached, setReached] = useState(0);
   const [create, setCreate] = useState<TxPhase>({ state: "idle" });
@@ -218,7 +266,7 @@ export function CreatePage() {
       draft.name.trim().length > 0 &&
       SYMBOL_PATTERN.test(draft.symbol) &&
       Object.values(draft.metadata).every((v) => bytes(v.trim()) <= MAX_METADATA_BYTES) &&
-      (draft.metadata.website.trim() === "" || WEBSITE_PATTERN.test(draft.metadata.website.trim())),
+      (draft.metadata.website.trim() === "" || parseWebsite(draft.metadata.website) !== null),
     Mandate: true,
     Basket: legs.length > 0 && legs.length <= MAX_COMPONENTS,
     Weights: navValid && total === 100 && legs.every((l) => l.percent > 0 && l.units !== null),
@@ -309,6 +357,7 @@ export function CreatePage() {
       </p>
 
       {address && <UnfinishedFunds address={address} />}
+      {fromId && <CopiedFrom template={template} missing={source.data === null} loading={source.loading || !shelf.data} />}
       <StepRail current={step} reached={Math.min(reached, firstInvalid === -1 ? STEPS.length - 1 : firstInvalid)} onPick={go} />
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_380px]">
@@ -371,7 +420,7 @@ export function CreatePage() {
                         onChange={(e) => setMeta("website", e.target.value.trim())}
                         placeholder="https://"
                         inputMode="url"
-                        aria-invalid={draft.metadata.website !== "" && !WEBSITE_PATTERN.test(draft.metadata.website)}
+                        aria-invalid={draft.metadata.website !== "" && parseWebsite(draft.metadata.website) === null}
                         className={field}
                       />
                     </Labeled>
@@ -635,7 +684,7 @@ export function CreatePage() {
                     <ReviewRow term="Profile" onEdit={() => go(0)}>
                       {plan.metadata.description && <span className="block">{plan.metadata.description}</span>}
                       {plan.metadata.strategy && <span className="block text-[0.875rem] text-muted-foreground">{plan.metadata.strategy}</span>}
-                      {plan.metadata.website && <span className="block text-[0.875rem] text-primary">{plan.metadata.website}</span>}
+                      {plan.metadata.website && <span className="block text-[0.875rem] text-primary">{parseWebsite(plan.metadata.website)?.host ?? plan.metadata.website}</span>}
                     </ReviewRow>
                   )}
                   <ReviewRow term="Mandate" onEdit={() => go(1)}>

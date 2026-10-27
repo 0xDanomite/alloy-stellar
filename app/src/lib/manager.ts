@@ -1,6 +1,7 @@
 import { Account, Address, BASE_FEE, Contract, nativeToScVal, Operation, rpc, scValToNative, Transaction, TransactionBuilder, type xdr } from "@stellar/stellar-sdk";
 import { deployments, endpoints } from "./config";
 import { checkUnsignedHandover, credentialsAddress, encodeHandover, HANDOVER_LEDGERS, verifyHandover, type HandoverLink } from "./handover";
+import { STATUS_KEY, type FundStatus } from "./visibility";
 import {
   ChainError,
   fundClient,
@@ -155,6 +156,10 @@ export function draftFundIds(): string[] {
 
 export const setMetadata = (fund: Fund, address: string, key: keyof FundMetadata, value: string) =>
   fundCall(fund, address, (c) => send(c.set_metadata({ key, value })));
+
+/** Hides the fund from public lists or lists it again. The fund keeps working either way. */
+export const setFundStatus = (fund: Fund, address: string, status: FundStatus) =>
+  fundCall(fund, address, (c) => send(c.set_metadata({ key: STATUS_KEY, value: status })));
 
 export const openForIssue = (fund: Fund, address: string) => fundCall(fund, address, (c) => send(c.open_for_issue()));
 

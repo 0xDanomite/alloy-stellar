@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { complianceLabel, FundAvatar, headlineValue, strandColor } from "../components/fund-bits";
+import { complianceLabel, FundAvatar, headlineValue, strandColor, TrustTag, TrustWarnings } from "../components/fund-bits";
 import { Bell } from "../components/icons";
 import { Button, CopyId, Figure, Usd } from "../components/ui";
 import { deployments } from "../lib/config";
@@ -89,7 +89,11 @@ function HeldRow({ position, share }: { position: FundPosition; share: number | 
           <Link to={`/fund/${fund.id}`} className="block truncate font-medium after:absolute after:inset-0 hover:text-primary">
             {fund.name}
           </Link>
-          <div className="text-filing text-muted-foreground">{fund.symbol}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-filing text-muted-foreground">{fund.symbol}</span>
+            <TrustTag fund={fund} />
+            <TrustWarnings fund={fund} />
+          </div>
         </div>
       </div>
       <div className="num text-[0.875rem] text-muted-foreground sm:text-right">
@@ -149,7 +153,14 @@ function Managed({ data }: { data: Portfolio }) {
                 <div className="truncate font-medium">{fund.name}</div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-filing text-muted-foreground">{fund.symbol}</span>
+                  <TrustTag fund={fund} />
+                  <TrustWarnings fund={fund} />
                   <span className="text-[0.75rem] text-muted-foreground">{complianceLabel(fund)}</span>
+                  {fund.hidden && (
+                    <span className="chip px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground" title="Left out of the public fund lists; still open by link">
+                      hidden
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

@@ -124,7 +124,8 @@ function DesktopMap() {
             <path d="M0,0 L8,4 L0,8 Z" className="fill-warning" />
           </marker>
         </defs>
-        <line x1="20" y1="226" x2="980" y2="226" strokeDasharray="10 8" strokeWidth="2" className="stroke-foreground/45" />
+        <line x1="20" y1="226" x2="536" y2="226" strokeDasharray="10 8" strokeWidth="2" className="stroke-foreground/45" />
+        <line x1="730" y1="226" x2="980" y2="226" strokeDasharray="10 8" strokeWidth="2" className="stroke-foreground/45" />
         <line x1="500" y1="156" x2="500" y2="298" {...signal} />
         <line x1="150" y1="164" x2="335" y2="300" {...signal} />
         <line x1="850" y1="164" x2="665" y2="300" {...signal} />
@@ -138,7 +139,7 @@ function DesktopMap() {
       </svg>
 
       <p className="text-filing absolute top-5 left-6 text-muted-foreground">Offchain · people and apps</p>
-      <p className="num absolute top-[200px] right-6 text-[0.6875rem] text-muted-foreground">
+      <p className="num absolute top-[226px] left-[53.6%] w-[19.4%] -translate-y-1/2 text-center text-[0.6875rem] leading-tight text-balance text-muted-foreground">
         the line: everything below keeps working without us
       </p>
       <p className="text-filing absolute top-[240px] left-6 text-muted-foreground">Onchain · Stellar</p>

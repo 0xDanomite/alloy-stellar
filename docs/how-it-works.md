@@ -102,6 +102,34 @@ Managers describe a fund with `set_metadata(key, value)`: up to 8 entries
 (`description`, `strategy`, `website`, ...), 512 bytes each, read with
 `metadata()`. It is display data and changes nothing on chain.
 
+One key has a meaning in the app: `status`. A manager sets it to `hidden`
+to take the fund off the public lists (the funds page and the home page);
+any other value, or no entry, means active, and the app writes `active` to
+list it again. A hidden fund still issues and redeems as usual, its page
+stays reachable by link with a "Hidden by its manager" note, and it still
+shows in its manager's and holders' portfolios. The contract ignores the
+key, and only v0.4+ funds have metadata.
+
+## Official and community funds
+
+Any manager a platform allowlists can create a fund with any name, symbol
+and profile, so the app does not take those at their word. A fund is
+official only if its contract ID is listed under `contracts.funds` in one
+of this network's `deployments/*.json` files; it gets an Official badge,
+and only official funds appear in the landing page's carousel and fund
+grid. Every other fund is tagged Community, with its manager's address on
+its page. When a community fund's symbol or name passes for an official
+one (case-insensitive, ignoring spacing and the `a` prefix, and folding
+the ASCII look-alikes 0/O, 1/l/I and 5/S), its page and rows say "Not
+the official <SYMBOL>". A community fund whose name or symbol uses any
+character beyond printable ASCII (another script such as a Cyrillic а,
+fullwidth letters, zero-width joiners) says "Contains unusual
+characters"; those characters are never folded or dropped to make a
+match. Either way its symbol is shown with its manager's short address
+after it. Names, symbols and profile text
+are cut to display limits and stripped of invisible and bidi-control
+characters before they are shown.
+
 ## Rebalance bounds
 
 Every rebalance is checked against the NAV oracle three ways:
