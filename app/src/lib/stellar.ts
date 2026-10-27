@@ -19,7 +19,7 @@ import {
   WalletConnectModule,
   WalletConnectTargetChain,
 } from "@creit.tech/stellar-wallets-kit/modules/wallet-connect";
-import { creationCandidates, creationPlatform, deployments, endpoints, expert, isLegacyFundCode, network, platforms, platformSlot } from "./config";
+import { configHiddenFunds, creationCandidates, creationPlatform, deployments, endpoints, expert, isLegacyFundCode, network, platforms, platformSlot } from "./config";
 import { addressVal, dataKey, instanceKey, instanceStorage, keyId, native, readEntries, variantKey } from "./ledger";
 import { SPECS } from "./specs";
 import { STATUS_KEY, statusOf } from "./visibility";
@@ -567,6 +567,7 @@ function wasmHashOf(instance: xdr.ScVal | undefined): string | null {
   return executable.type === "contractExecutableWasm" ? Buffer.from(executable.wasmHash.toXDR()).toString("hex") : null;
 }
 
+const HIDDEN_BY_CONFIG = configHiddenFunds(network);
 const SHARE_SCALE = 10_000_000n;
 const unitTag = (value: unknown): string => (Array.isArray(value) ? String(value[0]) : String(value));
 const asBigInt = (value: unknown): bigint => (typeof value === "bigint" ? value : 0n);
@@ -628,7 +629,9 @@ async function readFundStates(ids: string[]): Promise<FundState[]> {
       manager: String(storage.get("Manager") ?? ""),
       totalSupply: asBigInt(storage.get("Supply")),
       metadata: toMetadata(metadata),
-      hidden: statusOf(typeof metadata === "object" && metadata !== null ? Reflect.get(metadata, STATUS_KEY) : undefined) === "hidden",
+      hidden:
+        HIDDEN_BY_CONFIG.has(id) ||
+        statusOf(typeof metadata === "object" && metadata !== null ? Reflect.get(metadata, STATUS_KEY) : undefined) === "hidden",
       components: componentsOf(storage).map((c) => {
         const balance = native(second.get(keyId(balanceKey(c.token, id)))) as
           | { amount: bigint; authorized: boolean }
