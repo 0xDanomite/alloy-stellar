@@ -5,7 +5,7 @@ import { addressVal, dataKey, instanceKey, instanceStorage, keyId, native, readE
 import { SPECS } from "./specs";
 import { parseScheduled, type OperationStatus, type QueuedOperation, type RawEvent } from "./timelock-events";
 
-export { describeOperation, type QueuedOperation } from "./timelock-events";
+export { describeOperation, operationAddresses, type QueuedOperation } from "./timelock-events";
 import {
   ChainError,
   fundClient,
