@@ -110,6 +110,22 @@ stays reachable by link with a "Hidden by its manager" note, and it still
 shows in its manager's and holders' portfolios. The contract ignores the
 key, and only v0.4+ funds have metadata.
 
+## Official and community funds
+
+Any manager a platform allowlists can create a fund with any name, symbol
+and profile, so the app does not take those at their word. A fund is
+official only if its contract ID is listed under `contracts.funds` in one
+of this network's `deployments/*.json` files; it gets an Official badge,
+and only official funds appear in the landing page's carousel and fund
+grid. Every other fund is tagged Community, with its manager's address on
+its page. When a community fund's symbol or name passes for an official
+one (case-insensitive, ignoring spacing and the `a` prefix, and folding
+look-alikes such as 0/O, 1/l/I and Cyrillic or Greek letters), its page
+and rows say "Not the official <SYMBOL>" and its symbol is shown with
+its manager's short address after it. Names, symbols and profile text
+are cut to display limits and stripped of invisible and bidi-control
+characters before they are shown.
+
 ## Rebalance bounds
 
 Every rebalance is checked against the NAV oracle three ways:

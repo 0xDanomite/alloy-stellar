@@ -9,6 +9,7 @@ import {
   type xdr,
 } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
+import { withTrust } from "./trust";
 import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
 import { Networks as KitNetworks } from "@creit.tech/stellar-wallets-kit/types";
 import { FreighterModule } from "@creit.tech/stellar-wallets-kit/modules/freighter";
@@ -501,6 +502,10 @@ export interface Fund {
   metadata: FundMetadata;
   /** The manager set metadata `status` to `hidden`: left out of public lists, still reachable by link. */
   hidden: boolean;
+  /** Listed in this build's deployment files: launched by Alloy, not by a platform-approved manager. */
+  official: boolean;
+  /** The official fund symbol this community fund's symbol or name passes for, or null. */
+  imitates: string | null;
 }
 
 export interface FundMetadata {
@@ -717,12 +722,15 @@ async function toFund(state: FundState): Promise<Fund> {
     setup: (await v4) ? toSetup(state) : null,
     metadata: state.metadata,
     hidden: state.hidden,
+    official: false,
+    imitates: null,
   };
 }
 
 async function loadFunds(ids: string[]): Promise<Fund[]> {
   const states = await withRetry(() => readFundStates(ids));
-  return Promise.all(states.map(toFund));
+  const officialIds = new Set(platforms.flatMap((p) => Object.values(p.launched)));
+  return withTrust(await Promise.all(states.map(toFund)), officialIds);
 }
 
 const FUNDS_PAGE = 50;
