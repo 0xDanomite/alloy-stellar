@@ -7,11 +7,14 @@
 //! `redeem_to_usdc` redeems the owner's shares to the zap, sells every leg
 //! for USDC and pays the owner, or reverts under `min_usdc`.
 //!
-//! The zap is stateless and permissionless. It keeps only its router and
-//! USDC addresses, measures every swap by balance change, and ends each call
-//! holding what it held before. The investor's or owner's signature is the
-//! only one either call needs: the zap authorizes its own token movements
-//! one exact transfer at a time.
+//! The zap is stateless and permissionless. It keeps only its router, USDC
+//! and trusted platform addresses, serves only funds one of those platforms
+//! created (`is_fund`), measures every leg by balance change, and refuses
+//! any call that would end with the zap holding anything other than what it
+//! held before. Tokens sent to the zap by mistake stay there; no call can
+//! spend them. The investor's or owner's signature is the only one either
+//! call needs: the zap authorizes its own token movements one exact
+//! transfer at a time.
 #![no_std]
 
 use soroban_sdk::{
@@ -24,6 +27,7 @@ use soroban_sdk::{
 
 /// Longest swap route: USDC, the leg token and up to two hops between them.
 pub const MAX_PATH: u32 = 4;
+pub const MAX_PLATFORMS: u32 = 8;
 
 const DAY_LEDGERS: u32 = 17_280;
 const INSTANCE_BUMP_THRESHOLD: u32 = 30 * DAY_LEDGERS;
@@ -38,6 +42,10 @@ pub enum ZapError {
     InvalidAmount = 3,
     MissingPath = 4,
     Overflow = 5,
+    UnknownFund = 6,
+    DuplicateComponent = 7,
+    InvalidPlatforms = 8,
+    HoldingsChanged = 9,
 }
 
 /// Mirrors `alloy_fund::Component`.
@@ -54,6 +62,11 @@ pub trait FundInterface {
     fn quote_issue(env: Env, shares: i128) -> Vec<i128>;
     fn issue(env: Env, investor: Address, to: Address, shares: i128) -> Vec<i128>;
     fn redeem(env: Env, from: Address, to: Address, shares: i128, skip: Vec<Address>) -> Vec<i128>;
+}
+
+#[contractclient(name = "PlatformClient")]
+pub trait PlatformInterface {
+    fn is_fund(env: Env, fund: Address) -> bool;
 }
 
 /// The Soroswap router calls the zap makes. Both swaps require `to`'s auth
@@ -86,6 +99,7 @@ pub trait RouterInterface {
 enum DataKey {
     Router,
     Usdc,
+    Platforms,
 }
 
 #[contractevent(topics = ["zap_issue"])]
@@ -203,13 +217,61 @@ fn deadline(env: &Env) -> u64 {
     env.ledger().timestamp() + 1
 }
 
+/// The components of a fund one of the trusted platforms created. A genuine
+/// fund never lists a token twice; the check stays so that `quote_issue`
+/// needs line up one to one with the pulls the zap authorizes.
+fn genuine_components(env: &Env, fund: &FundClient) -> Vec<Component> {
+    let platforms: Vec<Address> = env.storage().instance().get(&DataKey::Platforms).unwrap();
+    if !platforms
+        .iter()
+        .any(|platform| PlatformClient::new(env, &platform).is_fund(&fund.address))
+    {
+        panic_with_error!(env, ZapError::UnknownFund);
+    }
+    let components = fund.components();
+    for (i, component) in components.iter().enumerate() {
+        if components
+            .iter()
+            .skip(i + 1)
+            .any(|other| other.token == component.token)
+        {
+            panic_with_error!(env, ZapError::DuplicateComponent);
+        }
+    }
+    components
+}
+
+fn holdings(env: &Env, venue: &Venue, components: &Vec<Component>) -> Vec<i128> {
+    let mut held = Vec::new(env);
+    for component in components.iter() {
+        held.push_back(TokenClient::new(env, &component.token).balance(&venue.zap));
+    }
+    held
+}
+
+fn require_unchanged(env: &Env, venue: &Venue, components: &Vec<Component>, before: &Vec<i128>) {
+    if holdings(env, venue, components) != *before {
+        panic_with_error!(env, ZapError::HoldingsChanged);
+    }
+}
+
 #[contractimpl]
 impl Zap {
-    pub fn __constructor(env: Env, router: Address, usdc: Address) {
+    /// `platforms` are the platforms whose funds the zap serves, fixed for
+    /// the zap's life: one to `MAX_PLATFORMS`.
+    pub fn __constructor(env: Env, router: Address, usdc: Address, platforms: Vec<Address>) {
+        if platforms.is_empty() || platforms.len() > MAX_PLATFORMS {
+            panic_with_error!(&env, ZapError::InvalidPlatforms);
+        }
         let storage = env.storage().instance();
         storage.set(&DataKey::Router, &router);
         storage.set(&DataKey::Usdc, &usdc);
+        storage.set(&DataKey::Platforms, &platforms);
         storage.extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_TO);
+    }
+
+    pub fn platforms(env: Env) -> Vec<Address> {
+        env.storage().instance().get(&DataKey::Platforms).unwrap()
     }
 
     pub fn router(env: Env) -> Address {
@@ -221,7 +283,7 @@ impl Zap {
     }
 
     /// Buys `shares` of `fund` for `investor` with at most `max_usdc`.
-    /// `paths` holds one Soroswap route per non-USDC component, in
+    /// `fund` must come from one of `platforms()`. `paths` holds one Soroswap route per non-USDC component, in
     /// `components()` order, from USDC to that component. Each leg is bought
     /// exact-out for what `quote_issue` asks, the zap deposits the basket and
     /// the shares are minted to `investor`. Unspent USDC goes back to the
@@ -241,10 +303,11 @@ impl Zap {
         let venue = venue(&env);
         let usdc = venue.usdc.address.clone();
         let fund_client = FundClient::new(&env, &fund);
-        let components = fund_client.components();
+        let components = genuine_components(&env, &fund_client);
         let legs = legs_with_paths(&env, &components, &paths, &usdc, true);
         let needs = fund_client.quote_issue(&shares);
 
+        let before = holdings(&env, &venue, &components);
         let usdc_before = venue.usdc.balance(&venue.zap);
         venue.usdc.transfer(&investor, &venue.zap, &max_usdc);
         let usdc_leg = components
@@ -308,9 +371,13 @@ impl Zap {
         fund_client.issue(&venue.zap, &investor, &shares);
 
         let unspent = sub(&env, venue.usdc.balance(&venue.zap), usdc_before);
+        if unspent < 0 {
+            panic_with_error!(&env, ZapError::SlippageExceeded);
+        }
         if unspent > 0 {
             venue.usdc.transfer(&venue.zap, &investor, &unspent);
         }
+        require_unchanged(&env, &venue, &components, &before);
         let usdc_spent = sub(&env, max_usdc, unspent);
         ZapIssue {
             investor,
@@ -323,7 +390,8 @@ impl Zap {
     }
 
     /// Redeems `shares` of `fund` from `owner` and pays the owner the whole
-    /// basket in USDC, at least `min_usdc`. `paths` holds one Soroswap route
+    /// basket in USDC, at least `min_usdc`. `fund` must come from one of
+    /// `platforms()`. `paths` holds one Soroswap route
     /// per non-USDC component, in `components()` order, from that component
     /// to USDC. A leg too small to swap to a single unit of USDC is sent to
     /// the owner as is. Returns the USDC paid.
@@ -342,14 +410,17 @@ impl Zap {
         let venue = venue(&env);
         let usdc = venue.usdc.address.clone();
         let fund_client = FundClient::new(&env, &fund);
-        let components = fund_client.components();
+        let components = genuine_components(&env, &fund_client);
         let legs = legs_with_paths(&env, &components, &paths, &usdc, false);
 
+        let before = holdings(&env, &venue, &components);
         let usdc_before = venue.usdc.balance(&venue.zap);
-        let amounts = fund_client.redeem(&owner, &venue.zap, &shares, &Vec::new(&env));
+        fund_client.redeem(&owner, &venue.zap, &shares, &Vec::new(&env));
 
+        // What the redeem delivered, by balance: never the fund's report.
         for (index, path) in legs.iter() {
-            let amount = amounts.get_unchecked(index);
+            let leg = TokenClient::new(&env, &components.get_unchecked(index).token);
+            let amount = sub(&env, leg.balance(&venue.zap), before.get_unchecked(index));
             if amount <= 0 {
                 continue;
             }
@@ -358,8 +429,7 @@ impl Zap {
                 .router_get_amounts_out(&amount, &path)
                 .last_unchecked();
             if quoted <= 0 {
-                TokenClient::new(&env, &components.get_unchecked(index).token)
-                    .transfer(&venue.zap, &owner, &amount);
+                leg.transfer(&venue.zap, &owner, &amount);
                 continue;
             }
             authorize_swap_input(&env, &venue, &path, amount);
@@ -379,6 +449,7 @@ impl Zap {
         if usdc_out > 0 {
             venue.usdc.transfer(&venue.zap, &owner, &usdc_out);
         }
+        require_unchanged(&env, &venue, &components, &before);
         ZapRedeem {
             owner,
             fund,
