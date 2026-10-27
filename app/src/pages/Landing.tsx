@@ -8,6 +8,7 @@ import { legPrice, platformTotals } from "../lib/fund-math";
 import { DEMO_ISSUER_LABEL } from "../lib/issuers";
 import { explain, listFunds, type Fund } from "../lib/stellar";
 import { useAsync } from "../lib/use-async";
+import { listedFunds } from "../lib/visibility";
 
 const BUILT_ON_STELLAR = [
   {
@@ -215,7 +216,7 @@ function PriceExample({ fund }: { fund: Fund | undefined }) {
 }
 
 export function Landing() {
-  const funds = useAsync(() => listFunds(), deployments ? network : null);
+  const funds = useAsync(() => listFunds().then((all) => listedFunds(all)), deployments ? network : null);
   const flagship = funds.data?.find((f) => f.navPerShare !== null) ?? funds.data?.[0];
   const codes = funds.data ? [...new Set(funds.data.flatMap((f) => f.components.filter((c) => c.verified && c.issuerLabel !== DEMO_ISSUER_LABEL).map((c) => c.code)))] : [];
 
