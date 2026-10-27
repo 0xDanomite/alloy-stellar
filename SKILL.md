@@ -85,7 +85,7 @@ simulates and needs no fee.
 | `set_mandate(Locked \| Managed \| Static)`, `mandate()` | manager, once, before `open_for_issue` | `Locked` (the default) freezes the set of components but can rebalance and trade; `Managed` also allows `add_component`; `Static` never rebalances, trades or adds (`MandateStatic`) |
 | `add_component(token)` | manager, `Managed` only | Adds a shelf asset at zero units; a permissioned one needs `Allowlist` |
 | `init_fee(rate_bps)` | manager, once, before `open_for_issue` | Annual management fee, at most 500 bps, streamed as newly minted shares |
-| `accrue_fee()` | anyone | Mints the fee accrued so far; `issue` and `redeem` call it first |
+| `accrue_fee()` | anyone | Mints the fee accrued so far; `issue`, `redeem` and (v0.6) `burn` and `burn_from` call it first. From v0.6 the unminted fraction of a share carries to the next accrual |
 | `pending_fee()`, `fee()`, `fee_recipient()`, `platform_fee()` | anyone | Fee views |
 | `set_fee_recipient(recipient)` | manager | Where the manager's part of the fee is minted (default: the manager); must pass the allowlist |
 | `fee_escrow(recipient)`, `claim_fee(recipient)` | anyone | Fee shares held for a recipient that could not hold them when they accrued, and their release once it can |
@@ -93,7 +93,7 @@ simulates and needs no fee.
 | `set_metadata(key, value)`, `metadata()` | manager / anyone | Up to 8 entries such as `description`, `strategy`, `website`, 512 bytes each; an empty value removes one |
 | `trade(sell, sold, buy, min_bought, path)` | manager, not `Static` | Swap inside the fund through the Soroswap router; min out is the larger of `min_bought` and 99% at oracle prices; returns the amount bought |
 | `set_router(router)`, `router()` | platform admin / anyone | The DEX router `trade` uses; `mainnet` builds default to Soroswap's |
-| `window_loss_ppb()`, `last_rebalance()` | anyone | Rebalance loss used in the rolling 24 hour window, and the last rebalance time |
+| `window_loss_ppb()`, `month_loss_ppb()`, `last_rebalance()` | anyone | Trade loss used in the rolling 24 hour window and (v0.6) the 30-day window, in parts per billion of fund value, and the last rebalance time |
 | SEP-41: `balance`, `transfer`, `transfer_from`, `approve`, `allowance`, `burn`, `burn_from`, `decimals`, `name`, `symbol` | | Standard token interface |
 
 **Platform**
@@ -105,15 +105,17 @@ simulates and needs no fee.
 | `set_shelf_asset(token, Unlisted \| Open \| Permissioned)` | admin | Asset shelf |
 | `shelf()`, `shelf_status(token)`, `is_manager(manager)`, `is_fund(fund)`, `fund_count()`, `funds(start, limit)` | anyone | Views; `funds` pages at most 50 |
 
-**Timelock** (not yet deployed; meant to become the platform and NAV admin)
+**Timelock** (admin of the v4 and demo platforms; constructor from v0.6:
+`proposers, executors, delay, min_delay`, with `min_delay` at least 300 s)
 
 | Function | Who | What |
 | --- | --- | --- |
 | `schedule(proposer, target, fn_name, args, salt)` | proposer | Queues `target.fn_name(args)`; returns the operation id |
-| `execute(executor, target, fn_name, args, salt)` | executor | Runs it once the delay has passed, with the timelock as caller |
-| `cancel(proposer, id)` | proposer | Drops a pending operation |
-| `hash_operation(target, fn_name, args, salt)`, `operation(id)`, `delay()`, `proposers()`, `executors()` | anyone | Views |
-| `set_delay(delay)` | the timelock itself, through `schedule` and `execute` | Changes the delay, at most 30 days |
+| `execute(executor, target, fn_name, args, salt)` | executor | Runs it once the delay has passed, with the timelock as caller; from v0.6 it expires 14 days after it became ready (`Expired`) |
+| `cancel(proposer, id)` | proposer | Drops a pending or expired operation |
+| `hash_operation(target, fn_name, args, salt)`, `operation(id)`, `delay()`, `min_delay()` (v0.6), `proposers()`, `executors()` | anyone | Views |
+| `set_delay(delay)` | the timelock itself, through `schedule` and `execute` | Changes the delay, between `min_delay()` (v0.6) and 30 days |
+| `set_proposers(list)`, `set_executors(list)` (v0.6) | the timelock itself, through `schedule` and `execute` | Replaces a role list, one to ten members |
 
 **NAV** (read-only, holds nothing)
 
@@ -122,18 +124,23 @@ simulates and needs no fee.
 | `price(token)` | USD price, timestamp, source, and divergence in bps when both oracles are fresh |
 | `nav(fund)` | Per-share value, each leg's units, price, value, source and age, and the fund total. Errors if any leg is unpriced |
 
-**Zap** (stateless, holds nothing; not yet deployed)
+**Zap** (stateless, holds nothing; constructor from v0.6: `router, usdc,
+platforms`)
 
 | Function | Who | What |
 | --- | --- | --- |
 | `issue_with_usdc(investor, fund, shares, max_usdc, paths)` | investor | Takes up to `max_usdc`, buys each leg exact-out on Soroswap, issues `shares` to the investor, refunds the rest; returns USDC spent |
-| `redeem_to_usdc(owner, fund, shares, min_usdc, paths)` | owner | Redeems `shares` to the zap, sells each leg for USDC, pays the owner at least `min_usdc`; returns USDC paid |
-| `router()`, `usdc()` | anyone | The Soroswap router and USDC contract set at deploy |
+| `redeem_to_usdc(owner, fund, shares, min_usdc, paths)` | owner | Redeems `shares` to the zap, sells what each leg delivered for USDC, pays the owner at least `min_usdc`; returns USDC paid |
+| `router()`, `usdc()`, `platforms()` (v0.6) | anyone | The Soroswap router, USDC contract and trusted platforms set at deploy |
 
 `paths` is one Soroswap route per non-USDC component, in `components()`
 order: USDC to the leg for issue, the leg to USDC for redeem, 2 to 4
 addresses. Errors: `InvalidPath` (1), `SlippageExceeded` (2),
-`InvalidAmount` (3), `MissingPath` (4), `Overflow` (5).
+`InvalidAmount` (3), `MissingPath` (4), `Overflow` (5), and from v0.6
+`UnknownFund` (6: no trusted platform created `fund`), `DuplicateComponent`
+(7), `InvalidPlatforms` (8), `HoldingsChanged` (9: the call would change
+what the zap holds). The v0.5 zap on mainnet serves any contract named as
+`fund`; check `platform.is_fund(fund)` before calling it.
 
 ## Read NAV
 
@@ -190,8 +197,9 @@ stellar contract invoke --id CCBONNERPF2UQGMRTOJELOSA574VDY6XFRNKLLVBZNLLEULZ65U
   --token CCDKWOUML7ZBLXBWCLLX2BAWW5OCSU3BYCASK7KHSGAZVJYYDMSXG347
 ```
 
-`redeem` takes no minimum-out. Per-share value can only fall between quote
-and execution through an issuer clawback or freeze.
+`redeem` takes no minimum-out. Per-share value can fall between quote and
+execution through an issuer clawback or freeze, a manager `rebalance` or
+`trade` landing first (within the trade bounds), or fee accrual.
 
 ## Invest or cash out with USDC
 
@@ -267,6 +275,14 @@ the previous one (else `RebalanceCooldown`), and fails with
 `LossBudgetExceeded` once everything given up against the oracle inside a
 rolling 24 hours would pass 2% of fund value. A fund with no `set_nav`
 falls back to the NAV contract compiled into a `mainnet` build.
+
+From fund code v0.6.0 both legs of a `rebalance` or `trade` need a NAV
+price at most 15 minutes old (`StalePrice`), confirmed by a second source
+(`UnconfirmedPrice` when `price` returns no `divergence_bps`) within 2%
+(`PriceDivergence`). Each leg's divergence counts as value given up, and a
+second budget caps losses at 5% of fund value over 30 days. Check `price`
+for both tokens first: today XLM and USDC qualify when Reflector is fresh,
+USTRY and CETES only right after a RedStone update, USDY and BENJI never.
 
 ```
 stellar contract invoke --id CAZ7FRP7M5RMLGGOPQZNZMIEN7ACNLVBG7AOVEBGBCBYH6JVUCLTDCTD \

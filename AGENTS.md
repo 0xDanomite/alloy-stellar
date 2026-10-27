@@ -21,9 +21,9 @@ read [SKILL.md](SKILL.md). For the design and its guarantees, read
 | --- | --- |
 | `contracts/fund` | Fund contract, one per fund: SEP-41 shares, `issue`, `redeem`, `withdraw_owed`, `rebalance`, `trade` (Soroswap), investor allowlist, streaming fee (`init_fee`, `accrue_fee`), mandate (`set_mandate`, `add_component`), `set_metadata` |
 | `contracts/platform` | Platform contract, one per venue: manager allowlist, asset shelf, `create_fund`, fund registry |
-| `contracts/timelock` | Timelock meant to be the platform and NAV admin: `schedule`, `execute` after a delay, `cancel`, fixed proposer and executor roles |
+| `contracts/timelock` | Timelock meant to be the platform and NAV admin: `schedule`, `execute` after a delay, `cancel`; from v0.6 a construction-time minimum delay, a 14-day expiry, and role changes only through scheduled self-calls |
 | `contracts/nav` | Read-only NAV contract: per-asset RedStone and Reflector routes, staleness limits, fallback, divergence |
-| `contracts/zap` | Stateless USDC zap: `issue_with_usdc` and `redeem_to_usdc` buy or sell every leg through the Soroswap router in one transaction |
+| `contracts/zap` | Stateless USDC zap: `issue_with_usdc` and `redeem_to_usdc` buy or sell every leg through the Soroswap router in one transaction; from v0.6 it serves only funds its constructor's platforms created |
 | `app` | Vite + React app: fund pages, oracle NAV, USDC in and out through the zap, buy the basket via SDEX path payments, deposit, redeem, create and manage funds |
 | `scripts/alloy.sh` | CLI, one command per journey step, testnet and mainnet |
 | `scripts/lib.sh` | Shared network config, identities, `invoke` and `view` helpers |
@@ -37,7 +37,9 @@ Prerequisites: Rust with the `wasm32v1-none` target, stellar-cli 25.2+,
 Node 22, jq.
 
 ```
+stellar contract build --package alloy-fund  # the zap tests import the fund wasm
 cargo test --workspace            # contract tests, including the property test
+cargo test -p alloy-fund --features mainnet  # and --features testnet
 stellar contract build            # wasm to target/wasm32v1-none/release
 cd app && npm ci && npm run build # typecheck + production build
 cd app && npm run dev             # local app
@@ -55,7 +57,12 @@ Copy `.env.example` to `.env` before running scripts or the app.
   that way; it is what makes clawbacks survivable.
 - Rounding always favors the fund: issue rounds up, redeem rounds down.
 - `redeem` must stay ungated. Never add a pause, a manager check, or a
-  platform hook that can stop it.
+  platform hook that can stop it. It reads every component's `balance`,
+  so the shelf must list SACs only: a custom token that traps would block
+  it.
+- Prices bound every `rebalance` and `trade`, so the NAV admin key moves
+  value, not just labels. Treat NAV route changes like platform admin
+  changes.
 - Contracts are not upgradeable. A behavior change ships as new fund code
   set on the platform with `set_fund_wasm`; existing funds keep their code.
 - Every contract change comes with a test in the same crate.
