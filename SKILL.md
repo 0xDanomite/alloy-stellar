@@ -112,7 +112,7 @@ simulates and needs no fee.
 | --- | --- | --- |
 | `schedule(proposer, target, fn_name, args, salt)` | proposer | Queues `target.fn_name(args)`; returns the operation id |
 | `execute(executor, target, fn_name, args, salt)` | executor | Runs it once the delay has passed, with the timelock as caller; from v0.6 it expires 14 days after it became ready (`Expired`) |
-| `cancel(proposer, id)` | proposer | Drops a pending or expired operation |
+| `cancel(proposer, id)` | proposer, per the operation's `cancel_by` (v0.6) | Drops a pending or expired operation. Any proposer for ordinary operations; only the scheduler for `set_proposers`/`set_executors`, and nobody for a `set_proposers` that drops its scheduler (`CannotCancel`) |
 | `hash_operation(target, fn_name, args, salt)`, `operation(id)`, `delay()`, `min_delay()` (v0.6), `proposers()`, `executors()` | anyone | Views |
 | `set_delay(delay)` | the timelock itself, through `schedule` and `execute` | Changes the delay, between `min_delay()` (v0.6) and 30 days |
 | `set_proposers(list)`, `set_executors(list)` (v0.6) | the timelock itself, through `schedule` and `execute` | Replaces a role list, one to ten members |
@@ -121,7 +121,7 @@ simulates and needs no fee.
 
 | Function | What |
 | --- | --- |
-| `price(token)` | USD price, timestamp, source, and divergence in bps when both oracles are fresh |
+| `price(token)` | USD price, timestamp, source, and divergence in bps when both oracles are fresh; from v0.6 also `secondary_timestamp`, when the confirming reading was taken |
 | `nav(fund)` | Per-share value, each leg's units, price, value, source and age, and the fund total. Errors if any leg is unpriced |
 
 **Zap** (stateless, holds nothing; constructor from v0.6: `router, usdc,
@@ -277,12 +277,15 @@ rolling 24 hours would pass 2% of fund value. A fund with no `set_nav`
 falls back to the NAV contract compiled into a `mainnet` build.
 
 From fund code v0.6.0 both legs of a `rebalance` or `trade` need a NAV
-price at most 15 minutes old (`StalePrice`), confirmed by a second source
-(`UnconfirmedPrice` when `price` returns no `divergence_bps`) within 2%
+price confirmed by a second source (`UnconfirmedPrice` when `price`
+returns no `divergence_bps` or `secondary_timestamp`), with both readings
+at most 15 minutes old (`StalePrice`) and within 2% of each other
 (`PriceDivergence`). Each leg's divergence counts as value given up, and a
-second budget caps losses at 5% of fund value over 30 days. Check `price`
-for both tokens first: today XLM and USDC qualify when Reflector is fresh,
-USTRY and CETES only right after a RedStone update, USDY and BENJI never.
+second budget caps losses at 5% of fund value over 30 days. A v0.6 fund
+needs a v0.6 NAV (set with `set_nav`); the current mainnet NAV's quotes
+lack `secondary_timestamp`. Check `price` for both tokens first: on
+today's routes XLM, USDC, USTRY and CETES qualify only in the 15 minutes
+after a RedStone update, USDY and BENJI never.
 
 ```
 stellar contract invoke --id CAZ7FRP7M5RMLGGOPQZNZMIEN7ACNLVBG7AOVEBGBCBYH6JVUCLTDCTD \

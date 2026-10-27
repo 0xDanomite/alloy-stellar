@@ -73,9 +73,14 @@ can call `accrue_fee`. The fraction of a share an accrual cannot mint is
 kept, in billionths of a share, and added to the next one, so calling
 `accrue_fee` every ledger mints the same fee as calling it once a day (v0.6;
 earlier funds drop the fraction each time, so frequent calls can erase a
-small fund's fee). `quote_issue` and `quote_redeem` include the pending
-fee, so a quote matches the call made in the same ledger. One accrual
-covers at most a year; time beyond that is not charged.
+small fund's fee). The v0.6 fee is computed without forming
+`supply * f` in one product, so it is exact at any supply; the only case
+it cannot mint is a fee that would overflow the share supply itself, and
+then accrual mints nothing and leaves the clock where it was, so the fee
+waits instead of being written off. Accrual never fails either way.
+`quote_issue` and `quote_redeem` include the pending fee, so a quote
+matches the call made in the same ledger. One accrual covers at most a
+year; time beyond that is not charged.
 
 The platform admin may take a cut of each fund's fee, at most half
 (`MAX_PLATFORM_SHARE_BPS = 5000`), minted to a recipient it names. The cut
@@ -121,13 +126,15 @@ key, and only v0.4+ funds have metadata.
 Every rebalance and trade is checked against the NAV oracle. In a v0.6
 fund:
 
-- both legs need a trading-grade price: at most 15 minutes old
-  (`MAX_TRADE_PRICE_AGE_SECONDS`, `StalePrice`), confirmed by the NAV's
-  second source (`UnconfirmedPrice` when the quote has no divergence,
-  which is what a single route or a fallback to the secondary returns),
-  and with the two sources at most 2% apart (`MAX_TRADE_DIVERGENCE_BPS`,
-  `PriceDivergence`). The NAV route's own, longer staleness limit still
-  governs the price shown on screen;
+- both legs need a trading-grade price: confirmed by the NAV's second
+  source (`UnconfirmedPrice` when the quote has no second reading, which
+  is what a single route or a fallback to the secondary returns), with
+  both readings at most 15 minutes old (`MAX_TRADE_PRICE_AGE_SECONDS`,
+  `StalePrice`; the quote's `timestamp` and `secondary_timestamp`), and
+  the two sources at most 2% apart (`MAX_TRADE_DIVERGENCE_BPS`,
+  `PriceDivergence`). NAV counts a route fresh within its own limit, up
+  to 26 hours for RedStone, so the fund checks both ages itself. That
+  limit still governs the price shown on screen;
 - each trade must return at least 99% of what leaves the fund;
 - what a trade may have given up is charged to two budgets: the gap at
   oracle prices plus each leg's divergence (a value-neutral swap at 50 bps
@@ -146,17 +153,25 @@ parts per billion of fund value. A non-positive oracle price is refused
 (`BadPrice`). Legs the fund holds none of are not priced, so a newly added,
 still-empty asset needs no feed.
 
-On today's mainnet NAV routes, XLM and USDC (Reflector, then RedStone)
-meet the trading-grade bar whenever Reflector is fresh and the two agree.
-USTRY and CETES quote RedStone first, so they pass only within 15 minutes
-of a RedStone update. USDY and BENJI have one route each and can never
-bound a v0.6 trade until a second source is added. v0.4 and v0.5 funds
-have the 99% floor, the daily budget and the cooldown, and trust whatever
-price the NAV returns.
+Every two-source route on mainnet today pairs Reflector (5 minute updates)
+with RedStone (12 to 24 hour updates), so XLM, USDC, USTRY and CETES meet
+the trading-grade bar only in the 15 minutes after a RedStone update, and
+only while Reflector is fresh and the two agree. USDY and BENJI have one
+route each and can never bound a v0.6 trade until a second source is
+added. Regular trading needs a second fast source per traded asset. v0.4
+and v0.5 funds have the 99% floor, the daily budget and the cooldown, and
+trust whatever price the NAV returns.
 
 The oracle is whatever the platform admin set with `set_nav`. A build
 with the `mainnet` cargo feature falls back to the mainnet NAV contract
 when none is set; default and `testnet` builds have no fallback.
+
+v0.6 adds `secondary_timestamp` to NAV's `PriceQuote`, which changes its
+return type, so a v0.6 fund needs a v0.6 NAV contract: rolling out v0.6
+means deploying a new NAV, setting its routes, and pointing v0.6 funds at
+it with `set_nav` (the `mainnet` build's compiled default is still the
+v0.1 NAV, against which a v0.6 fund's trades fail; `redeem` and `issue`
+never read it). Existing funds and the app keep using the current NAV.
 
 ## Trading through Soroswap
 
@@ -272,9 +287,16 @@ minutes (`MIN_DELAY_FLOOR_SECONDS = 300`) and `delay` starts at or above it.
   signature. Each operation runs once; the record stays so it can't be
   replayed.
 - An operation not executed within 14 days of becoming ready
-  (`GRACE_PERIOD_SECONDS`) expires (`Expired`); a proposer can `cancel` it
-  to schedule the same call and salt again.
-- A proposer can `cancel` a pending operation.
+  (`GRACE_PERIOD_SECONDS`) expires (`Expired`); it can be cancelled, as
+  below, to schedule the same call and salt again.
+- Each operation records the proposer who scheduled it and, in v0.6, who
+  may `cancel` it (`cancel_by`, `CannotCancel` otherwise). Ordinary
+  operations: any proposer, so each proposer can veto the others. A
+  `set_proposers` or `set_executors`: only the proposer who scheduled it,
+  so a proposer being rotated out cannot cancel its own removal. A
+  `set_proposers` that drops its own scheduler: nobody. Two proposers
+  scheduling rival role changes cannot cancel each other's; the executors
+  decide which runs, so rotation needs at least one honest executor.
 - The delay and the role lists change only through scheduled calls to the
   timelock itself (`target` = the timelock, `fn_name` = `set_delay`,
   `set_proposers` or `set_executors`, one argument), so each waits out the
