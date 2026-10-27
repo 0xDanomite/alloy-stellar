@@ -1453,32 +1453,44 @@ fn trades_refuse_fallback_stale_or_divergent_prices() {
 
 /// A fresh primary with no fresh second reading (a single route, or a
 /// RedStone secondary hours old, which NAV still calls fresh) may trade,
-/// but each such leg costs `UNCONFIRMED_PRICE_CHARGE_BPS` of its value in
-/// both loss budgets. A stale secondary's divergence is not trusted either
-/// way: 900 bps from a day-old reading neither refuses the trade nor sets
-/// the charge.
+/// but each such leg costs at least `UNCONFIRMED_PRICE_CHARGE_BPS` of its
+/// value in both loss budgets. An old secondary is still heard: past the
+/// 2% cap it refuses the trade, and under it the charge is the larger of
+/// its divergence and the flat charge.
 #[test]
 fn an_unconfirmed_primary_trades_and_is_charged() {
     let s = trading_fund();
     let nav = nav_of(&s);
     at(&s, 2 * 24 * 60 * 60);
     let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
-    s.assets[0].admin.mint(&s.manager, &(10 * SHARE_SCALE));
+    s.assets[0].admin.mint(&s.manager, &(20 * SHARE_SCALE));
+    let five = 5 * SHARE_SCALE;
 
     // Single source on the bought leg: 50 bps of $5 against a $35 fund.
     nav.set_quality(a, &0, &None);
-    s.fund
-        .rebalance(b, &(5 * SHARE_SCALE), a, &(5 * SHARE_SCALE));
+    s.fund.rebalance(b, &five, a, &five);
     assert_eq!(s.fund.window_loss_ppb(), 714_286);
 
-    // Both legs unconfirmed: one by a single route, one by a day-old
-    // secondary.
-    nav.set_readings(b, &0, &Some(900), &(25 * 60 * 60));
+    // A day-old secondary 9% away refuses the trade.
     at(&s, 2 * 24 * 60 * 60 + 60);
-    s.fund
-        .rebalance(b, &(5 * SHARE_SCALE), a, &(5 * SHARE_SCALE));
+    nav.set_readings(b, &0, &Some(900), &(25 * 60 * 60));
+    assert_eq!(
+        s.fund.try_rebalance(b, &five, a, &five),
+        Err(Ok(FundError::PriceDivergence.into()))
+    );
+
+    // 30 bps from a day-old secondary is charged as unconfirmed, 50 bps.
+    nav.set_readings(b, &0, &Some(30), &(25 * 60 * 60));
+    s.fund.rebalance(b, &five, a, &five);
     assert_eq!(s.fund.window_loss_ppb(), 714_286 + 1_428_572);
-    assert_eq!(s.fund.month_loss_ppb(), 714_286 + 1_428_572);
+
+    // 120 bps from a day-old secondary is charged as measured.
+    at(&s, 2 * 24 * 60 * 60 + 120);
+    nav.set_readings(b, &0, &Some(120), &(25 * 60 * 60));
+    s.fund.rebalance(b, &five, a, &five);
+    let used = 714_286 + 1_428_572 + 2_428_572;
+    assert_eq!(s.fund.window_loss_ppb(), used);
+    assert_eq!(s.fund.month_loss_ppb(), used);
 }
 
 /// The fee used to be computed as `supply * accrued * 1e9` in one product,

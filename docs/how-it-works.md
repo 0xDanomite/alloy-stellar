@@ -127,16 +127,19 @@ Every rebalance and trade is checked against the NAV oracle. In a v0.6
 fund:
 
 - both legs need a price from their route's primary source, not a
-  fallback to the secondary (`UnconfirmedPrice`; the quote's
-  `from_primary`), at most 15 minutes old (`MAX_TRADE_PRICE_AGE_SECONDS`,
-  `StalePrice`). NAV counts a route fresh within its own limit, up to 26
-  hours for RedStone, so the fund checks the age itself; that limit still
-  governs the price shown on screen;
-- when the quote carries a second reading also at most 15 minutes old
-  (`secondary_timestamp`), the two must be at most 2% apart
-  (`MAX_TRADE_DIVERGENCE_BPS`, `PriceDivergence`), and the measured
-  divergence is that leg's uncertainty. With no second reading that
-  fresh (a single route, or a secondary hours old), the trade goes ahead
+  fallback (`UnconfirmedPrice`; the quote's `from_primary`). For a
+  USDC-quoted route that includes the USDC to USD conversion: it must
+  come from the first USD-quoted USDC route, not a later one. The price
+  must be at most 15 minutes old (`MAX_TRADE_PRICE_AGE_SECONDS`,
+  `StalePrice`); for a USDC-quoted route NAV's timestamp is the older of
+  the price and the conversion. NAV counts a route fresh within its own
+  limit, up to 26 hours for RedStone, so the fund checks the age itself;
+  that limit still governs the price shown on screen;
+- any second reading must be at most 2% from the primary
+  (`MAX_TRADE_DIVERGENCE_BPS`, `PriceDivergence`), however old. If it is
+  also at most 15 minutes old (`secondary_timestamp`), the measured
+  divergence is that leg's uncertainty; if older, the larger of it and
+  50 bps. With no second reading (a single route) the trade goes ahead
   and the leg's uncertainty is a flat 50 bps
   (`UNCONFIRMED_PRICE_CHARGE_BPS`);
 - each trade must return at least 99% of what leaves the fund;
@@ -157,15 +160,24 @@ parts per billion of fund value. A non-positive oracle price is refused
 (`BadPrice`). Legs the fund holds none of are not priced, so a newly added,
 still-empty asset needs no feed.
 
-On today's mainnet routes, XLM and USDC have Reflector (5 minute updates)
-as primary, so they trade whenever Reflector is fresh: charged 50 bps a
-leg, or the measured divergence in the 15 minutes after a RedStone
-update. USTRY, CETES, USDY and BENJI have RedStone (12 to 24 hour updates)
-as primary, so they trade only in the 15 minutes after a RedStone update.
-Making Reflector the primary for USTRY and CETES on the v0.6 NAV, where
-Reflector covers them, would let them trade like XLM. A fallback quote
-never bounds a trade. v0.4 and v0.5 funds have the 99% floor, the daily
-budget and the cooldown, and trust whatever price the NAV returns.
+Accepted risk: a leg priced by its primary alone, with no fresh second
+source, may still bound a trade. Refusing it would make trading
+impossible on today's oracle coverage. A single feed can then be off by
+more than the flat 50 bps it is charged. What that buys a bad manager is
+bounded by the 99% floor per trade, the 2% daily budget and the 5%
+30-day budget, each of which the 50 bps charge spends, and a second
+reading that disagrees by more than 2% still stops the trade.
+
+On today's mainnet routes every trade price depends on a RedStone
+reading (12 to 24 hour updates). USTRY, CETES, USDY and BENJI have
+RedStone as primary. XLM and USDC have Reflector (5 minute updates) as
+primary, but Reflector quotes in USDC, and the USDC to USD conversion
+comes from RedStone, so the quote's age is RedStone's. So a v0.6 fund
+trades only in the 15 minutes after a RedStone update until the v0.6 NAV
+gets a fast USD-quoted source for USDC (or for each traded asset). A
+fallback quote never bounds a trade. v0.4 and v0.5 funds have the 99%
+floor, the daily budget and the cooldown, and trust whatever price the
+NAV returns.
 
 The oracle is whatever the platform admin set with `set_nav`. A build
 with the `mainnet` cargo feature falls back to the mainnet NAV contract

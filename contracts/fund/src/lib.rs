@@ -459,13 +459,14 @@ fn oracle_price(env: &Env, oracle: &NavClient, token: &Address) -> i128 {
 /// A price fit to bound a trade, and the uncertainty to charge for it. It
 /// must come from the route's primary source, not a fallback
 /// (`UnconfirmedPrice`), and be at most `MAX_TRADE_PRICE_AGE_SECONDS` old
-/// (`StalePrice`). If a second reading at most that old confirms it, the
-/// two may differ by at most `MAX_TRADE_DIVERGENCE_BPS` and the measured
-/// divergence is the charge. Otherwise (a single route, or a secondary
-/// older than the trade bound, as a RedStone reading usually is) the trade
-/// goes ahead and is charged `UNCONFIRMED_PRICE_CHARGE_BPS`. NAV's own
-/// freshness is per route (up to a day for RedStone), so the fund checks
-/// both ages itself.
+/// (`StalePrice`). Any second reading may differ from it by at most
+/// `MAX_TRADE_DIVERGENCE_BPS` (`PriceDivergence`), however old. If that
+/// reading is also at most `MAX_TRADE_PRICE_AGE_SECONDS` old, the measured
+/// divergence is the charge; if older (as a RedStone reading usually is),
+/// the charge is the larger of it and `UNCONFIRMED_PRICE_CHARGE_BPS`. With
+/// no second reading (a single route) the trade goes ahead and is charged
+/// `UNCONFIRMED_PRICE_CHARGE_BPS`. NAV's own freshness is per route (up to
+/// a day for RedStone), so the fund checks the ages itself.
 fn trade_price(env: &Env, oracle: &NavClient, token: &Address) -> (i128, u32) {
     let quote = oracle.price(token);
     if quote.price <= 0 {
@@ -480,13 +481,12 @@ fn trade_price(env: &Env, oracle: &NavClient, token: &Address) -> (i128, u32) {
         panic_with_error!(env, FundError::StalePrice);
     }
     match (quote.divergence_bps, quote.secondary_timestamp) {
-        (Some(bps), Some(at)) if fresh(at) => {
-            if bps > MAX_TRADE_DIVERGENCE_BPS {
-                panic_with_error!(env, FundError::PriceDivergence);
-            }
-            (quote.price, bps)
+        (Some(bps), _) if bps > MAX_TRADE_DIVERGENCE_BPS => {
+            panic_with_error!(env, FundError::PriceDivergence)
         }
-        _ => (quote.price, UNCONFIRMED_PRICE_CHARGE_BPS),
+        (Some(bps), Some(at)) if fresh(at) => (quote.price, bps),
+        (Some(bps), _) => (quote.price, bps.max(UNCONFIRMED_PRICE_CHARGE_BPS)),
+        (None, _) => (quote.price, UNCONFIRMED_PRICE_CHARGE_BPS),
     }
 }
 

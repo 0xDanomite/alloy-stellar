@@ -278,15 +278,16 @@ falls back to the NAV contract compiled into a `mainnet` build.
 
 From fund code v0.6.0 both legs of a `rebalance` or `trade` need a NAV
 price from the route's primary (`UnconfirmedPrice` when `from_primary` is
-false) at most 15 minutes old (`StalePrice`). If a second reading at most
-15 minutes old is present, the two must be within 2% (`PriceDivergence`)
-and the divergence counts as value given up; otherwise the leg counts 50
-bps. A second budget caps losses at 5% of fund value over 30 days. A v0.6
-fund needs a v0.6 NAV (set with `set_nav`); the current mainnet NAV's
-quotes lack `from_primary` and `secondary_timestamp`. Check `price` for
-both tokens first: on today's routes XLM and USDC trade whenever
-Reflector is fresh; USTRY, CETES, USDY and BENJI only in the 15 minutes
-after a RedStone update.
+false) at most 15 minutes old (`StalePrice`). Any second reading must be
+within 2% (`PriceDivergence`); its divergence counts as value given up,
+at least 50 bps unless it is also at most 15 minutes old, and a leg with
+no second reading counts 50 bps. A second budget caps losses at 5% of
+fund value over 30 days. A v0.6 fund needs a v0.6 NAV (set with
+`set_nav`); the current mainnet NAV's quotes lack `from_primary` and
+`secondary_timestamp`. Check `price` for both tokens first: on today's
+routes every trade price leans on a RedStone reading (directly, or
+through the USDC to USD conversion for Reflector prices), so trades pass
+only in the 15 minutes after a RedStone update.
 
 ```
 stellar contract invoke --id CAZ7FRP7M5RMLGGOPQZNZMIEN7ACNLVBG7AOVEBGBCBYH6JVUCLTDCTD \
