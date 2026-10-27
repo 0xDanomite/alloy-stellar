@@ -4,6 +4,8 @@ on:
     paths: ["app/**", "deployments/**", ".github/workflows/app.yml"]
   pull_request:
     paths: ["app/**", "deployments/**", ".github/workflows/app.yml"]
+permissions:
+  contents: read
 jobs:
   app:
     runs-on: ubuntu-latest
