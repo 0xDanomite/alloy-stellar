@@ -112,7 +112,7 @@ simulates and needs no fee.
 | --- | --- | --- |
 | `schedule(proposer, target, fn_name, args, salt)` | proposer | Queues `target.fn_name(args)`; returns the operation id |
 | `execute(executor, target, fn_name, args, salt)` | executor | Runs it once the delay has passed, with the timelock as caller; from v0.6 it expires 14 days after it became ready (`Expired`) |
-| `cancel(proposer, id)` | proposer, per the operation's `cancel_by` (v0.6) | Drops a pending or expired operation. Any proposer for ordinary operations; only the scheduler for `set_proposers`/`set_executors`, and nobody for a `set_proposers` that drops its scheduler (`CannotCancel`) |
+| `cancel(proposer, id)` | proposer | Drops a pending or expired operation. From v0.6 a `set_proposers` can be cancelled only by a proposer on its new list (`CannotCancel`) |
 | `hash_operation(target, fn_name, args, salt)`, `operation(id)`, `delay()`, `min_delay()` (v0.6), `proposers()`, `executors()` | anyone | Views |
 | `set_delay(delay)` | the timelock itself, through `schedule` and `execute` | Changes the delay, between `min_delay()` (v0.6) and 30 days |
 | `set_proposers(list)`, `set_executors(list)` (v0.6) | the timelock itself, through `schedule` and `execute` | Replaces a role list, one to ten members |

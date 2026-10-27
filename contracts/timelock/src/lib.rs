@@ -50,26 +50,16 @@ pub enum TimelockError {
     CannotCancel = 11,
 }
 
-/// Who may cancel a pending operation, fixed when it is scheduled.
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CancelBy {
-    /// Any proposer: the veto each proposer holds over the others.
-    AnyProposer,
-    /// Only the proposer who scheduled it. Role changes are this way, so
-    /// a proposer being rotated out cannot cancel its own removal.
-    Scheduler,
-    /// Nobody: a `set_proposers` that drops the proposer who scheduled it.
-    Nobody,
-}
-
+/// `proposers_after` is the new list when the operation is a
+/// `set_proposers` self-call, and only proposers on it may cancel it; any
+/// proposer may cancel every other operation.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Operation {
     pub ready_at: u64,
     pub done: bool,
     pub proposer: Address,
-    pub cancel_by: CancelBy,
+    pub proposers_after: Option<Vec<Address>>,
 }
 
 #[contracttype]
@@ -229,30 +219,21 @@ fn call_self(env: &Env, fn_name: &Symbol, args: &Vec<Val>) -> Val {
     Val::VOID.into()
 }
 
-fn cancel_by(
+/// The new proposer list, if this operation is a well-formed
+/// `set_proposers` on the timelock itself.
+fn proposers_after(
     env: &Env,
-    proposer: &Address,
     target: &Address,
     fn_name: &Symbol,
     args: &Vec<Val>,
-) -> CancelBy {
-    if *target != env.current_contract_address() {
-        return CancelBy::AnyProposer;
+) -> Option<Vec<Address>> {
+    if *target != env.current_contract_address()
+        || *fn_name != Symbol::new(env, "set_proposers")
+        || args.len() != 1
+    {
+        return None;
     }
-    if *fn_name == Symbol::new(env, "set_proposers") {
-        let keeps_scheduler = args.len() == 1
-            && Vec::<Address>::try_from_val(env, &args.get_unchecked(0))
-                .is_ok_and(|proposers| proposers.contains(proposer));
-        if keeps_scheduler {
-            CancelBy::Scheduler
-        } else {
-            CancelBy::Nobody
-        }
-    } else if *fn_name == Symbol::new(env, "set_executors") {
-        CancelBy::Scheduler
-    } else {
-        CancelBy::AnyProposer
-    }
+    Vec::<Address>::try_from_val(env, &args.get_unchecked(0)).ok()
 }
 
 #[contractimpl]
@@ -310,7 +291,7 @@ impl Timelock {
                 ready_at,
                 done: false,
                 proposer: proposer.clone(),
-                cancel_by: cancel_by(&env, &proposer, &target, &fn_name, &args),
+                proposers_after: proposers_after(&env, &target, &fn_name, &args),
             },
         );
         Scheduled {
@@ -368,8 +349,10 @@ impl Timelock {
         result
     }
 
-    /// Drops a pending operation, as its `cancel_by` allows. Executed ones
-    /// stay recorded so the same call and salt can never run twice.
+    /// Drops a pending operation. Any proposer may, except that a
+    /// `set_proposers` can be cancelled only by a proposer it keeps: one
+    /// being removed cannot veto its own removal. Executed operations stay
+    /// recorded so the same call and salt can never run twice.
     pub fn cancel(env: Env, proposer: Address, id: BytesN<32>) {
         require_role(
             &env,
@@ -382,12 +365,10 @@ impl Timelock {
         if op.done {
             panic_with_error!(&env, TimelockError::AlreadyDone);
         }
-        let allowed = match op.cancel_by {
-            CancelBy::AnyProposer => true,
-            CancelBy::Scheduler => op.proposer == proposer,
-            CancelBy::Nobody => false,
-        };
-        if !allowed {
+        if op
+            .proposers_after
+            .is_some_and(|after| !after.contains(&proposer))
+        {
             panic_with_error!(&env, TimelockError::CannotCancel);
         }
         env.storage()

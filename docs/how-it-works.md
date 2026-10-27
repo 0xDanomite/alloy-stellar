@@ -289,14 +289,14 @@ minutes (`MIN_DELAY_FLOOR_SECONDS = 300`) and `delay` starts at or above it.
 - An operation not executed within 14 days of becoming ready
   (`GRACE_PERIOD_SECONDS`) expires (`Expired`); it can be cancelled, as
   below, to schedule the same call and salt again.
-- Each operation records the proposer who scheduled it and, in v0.6, who
-  may `cancel` it (`cancel_by`, `CannotCancel` otherwise). Ordinary
-  operations: any proposer, so each proposer can veto the others. A
-  `set_proposers` or `set_executors`: only the proposer who scheduled it,
-  so a proposer being rotated out cannot cancel its own removal. A
-  `set_proposers` that drops its own scheduler: nobody. Two proposers
-  scheduling rival role changes cannot cancel each other's; the executors
-  decide which runs, so rotation needs at least one honest executor.
+- Any proposer can `cancel` a pending operation, so each proposer can
+  veto the others, with one exception from v0.6: a `set_proposers` can be
+  cancelled only by a proposer on its new list (`CannotCancel`). A
+  proposer being removed cannot veto its own removal, and proposers who
+  stay can still stop a hostile eviction. Each operation records the
+  proposer who scheduled it and, for a `set_proposers`, the new list
+  (`proposers_after`). An eviction that keeps no honest proposer can only
+  be stopped by the executors declining to run it.
 - The delay and the role lists change only through scheduled calls to the
   timelock itself (`target` = the timelock, `fn_name` = `set_delay`,
   `set_proposers` or `set_executors`, one argument), so each waits out the

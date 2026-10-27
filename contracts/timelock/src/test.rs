@@ -9,7 +9,7 @@ use soroban_sdk::{
 };
 
 use crate::{
-    CancelBy, Timelock, TimelockClient, TimelockError, GRACE_PERIOD_SECONDS, MAX_DELAY_SECONDS,
+    Timelock, TimelockClient, TimelockError, GRACE_PERIOD_SECONDS, MAX_DELAY_SECONDS,
     MIN_DELAY_FLOOR_SECONDS,
 };
 
@@ -569,15 +569,16 @@ fn roles_rotate_only_through_scheduled_self_calls() {
 }
 
 /// A compromised proposer used to be able to cancel any operation, so it
-/// could cancel its own removal forever. A role change can now be
-/// cancelled only by the proposer who scheduled it, never by one it
-/// removes; ordinary operations keep every proposer's veto.
+/// could cancel its own removal forever. A `set_proposers` can now be
+/// cancelled only by proposers it keeps; everything else keeps every
+/// proposer's veto.
 #[test]
-fn a_hostile_proposer_cannot_block_its_own_removal() {
+fn proposers_being_removed_cannot_veto_their_removal() {
     let env = Env::default();
     env.ledger().set_timestamp(1_000_000);
     env.mock_all_auths();
-    let (honest, hostile, executor) = (
+    let (honest, other, hostile, executor) = (
+        Address::generate(&env),
         Address::generate(&env),
         Address::generate(&env),
         Address::generate(&env),
@@ -587,7 +588,7 @@ fn a_hostile_proposer_cannot_block_its_own_removal() {
         &env.register(
             Timelock,
             (
-                vec![&env, honest.clone(), hostile.clone()],
+                vec![&env, honest.clone(), other.clone(), hostile.clone()],
                 vec![&env, executor.clone()],
                 DELAY,
                 MIN_DELAY_FLOOR_SECONDS,
@@ -599,44 +600,42 @@ fn a_hostile_proposer_cannot_block_its_own_removal() {
     let to = |list: Vec<Address>| -> Vec<Val> { vec![&env, list.to_val()] };
     let cannot = Err(Ok(TimelockError::CannotCancel.into()));
 
-    let removal = to(vec![&env, honest.clone()]);
-    let id = timelock.schedule(&honest, &me, &set_proposers, &removal, &salt(&env, 1));
-    let op = timelock.operation(&id).unwrap();
-    assert_eq!(op.proposer, honest);
-    assert_eq!(op.cancel_by, CancelBy::Scheduler);
-    assert_eq!(timelock.try_cancel(&hostile, &id), cannot);
+    // (a) A hostile eviction of `other`: `other` cannot veto it, but an
+    // honest proposer who stays can.
+    let eviction = to(vec![&env, hostile.clone(), honest.clone()]);
+    let evict = timelock.schedule(&hostile, &me, &set_proposers, &eviction, &salt(&env, 1));
+    assert_eq!(timelock.try_cancel(&other, &evict), cannot);
+    timelock.cancel(&honest, &evict);
 
-    // The hostile proposer's ordinary operations stay under the honest veto.
-    let target = Address::generate(&env);
+    // (c) set_executors and ordinary operations: any proposer may cancel.
+    let set_executors = Symbol::new(&env, "set_executors");
+    let executors = to(vec![&env, Address::generate(&env)]);
+    let rotate = timelock.schedule(&honest, &me, &set_executors, &executors, &salt(&env, 2));
+    timelock.cancel(&hostile, &rotate);
     let takeover = vec![&env, hostile.to_val()];
     let set_admin = Symbol::new(&env, "set_admin");
-    let bad = timelock.schedule(&hostile, &target, &set_admin, &takeover, &salt(&env, 2));
-    timelock.cancel(&honest, &bad);
+    let target = Address::generate(&env);
+    let bad = timelock.schedule(&hostile, &target, &set_admin, &takeover, &salt(&env, 3));
+    timelock.cancel(&other, &bad);
 
-    // Its counter-rotation cannot be cancelled by the honest side either;
-    // the executors decide which runs.
-    let counter = to(vec![&env, hostile.clone()]);
-    let counter_id = timelock.schedule(&hostile, &me, &set_proposers, &counter, &salt(&env, 3));
-    assert_eq!(timelock.try_cancel(&honest, &counter_id), cannot);
-
+    // (b) The hostile proposer cannot cancel its own removal, which runs.
+    let removal = to(vec![&env, honest.clone(), other.clone()]);
+    let id = timelock.schedule(&honest, &me, &set_proposers, &removal, &salt(&env, 4));
+    let op = timelock.operation(&id).unwrap();
+    assert_eq!(op.proposer, honest);
+    assert_eq!(
+        op.proposers_after,
+        Some(vec![&env, honest.clone(), other.clone()])
+    );
+    assert_eq!(timelock.try_cancel(&hostile, &id), cannot);
     env.ledger().set_timestamp(1_000_000 + DELAY);
-    timelock.execute(&executor, &me, &set_proposers, &removal, &salt(&env, 1));
-    assert_eq!(timelock.proposers(), vec![&env, honest.clone()]);
+    timelock.execute(&executor, &me, &set_proposers, &removal, &salt(&env, 4));
     assert_eq!(
-        timelock.try_cancel(&hostile, &counter_id),
+        timelock.proposers(),
+        vec![&env, honest.clone(), other.clone()]
+    );
+    assert_eq!(
+        timelock.try_schedule(&hostile, &me, &set_proposers, &eviction, &salt(&env, 5)),
         Err(Ok(TimelockError::NotProposer.into()))
     );
-    assert_eq!(
-        timelock.try_schedule(&hostile, &me, &set_proposers, &counter, &salt(&env, 4)),
-        Err(Ok(TimelockError::NotProposer.into()))
-    );
-
-    // Scheduling one's own removal is final: nobody can cancel it.
-    let leave = to(vec![&env, Address::generate(&env)]);
-    let leave_id = timelock.schedule(&honest, &me, &set_proposers, &leave, &salt(&env, 5));
-    assert_eq!(
-        timelock.operation(&leave_id).unwrap().cancel_by,
-        CancelBy::Nobody
-    );
-    assert_eq!(timelock.try_cancel(&honest, &leave_id), cannot);
 }
