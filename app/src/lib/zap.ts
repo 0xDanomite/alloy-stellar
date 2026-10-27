@@ -147,14 +147,25 @@ export interface LegQuote {
   depth: LegDepth;
 }
 
-/** The legs whose pools are too thin for this size, by code. */
+/** The legs the zap shouldn't route at this size, by code: too thin, or with no price to check the pool against. */
 function thinLegs(legs: LegQuote[]): string[] {
   return legs.filter((l) => l.depth.thin).map((l) => l.code);
 }
 
-export function thinMessage(codes: string[]): string | null {
-  if (!codes.length) return null;
-  return `${joinCodes(codes)}: Soroswap ${codes.length === 1 ? "pool" : "pools"} too thin for this size, more than 3% off the oracle price.`;
+function unpricedLegs(legs: LegQuote[]): string[] {
+  return legs.filter((l) => l.depth.unpriced).map((l) => l.code);
+}
+
+/** Why the USDC path isn't offered, in plain words; null when it is. */
+export function thinMessage(quote: { thin: string[]; unpriced: string[] } | undefined): string | null {
+  if (!quote) return null;
+  const unpriced = quote.unpriced;
+  const thin = quote.thin.filter((code) => !unpriced.includes(code));
+  const parts = [
+    thin.length ? `${joinCodes(thin)}: Soroswap ${thin.length === 1 ? "pool" : "pools"} too thin for this size, more than 3% off the oracle price.` : null,
+    unpriced.length ? `${joinCodes(unpriced)}: no oracle or market price to check the Soroswap ${unpriced.length === 1 ? "pool" : "pools"} against.` : null,
+  ].filter((p): p is string => p !== null);
+  return parts.length ? parts.join(" ") : null;
 }
 
 /** The leg's oracle price from the fund's NAV legs, else its SDEX price, else null. */
@@ -163,7 +174,7 @@ function legPrice(fund: Fund, index: number): number | null {
   return leg?.oracle?.priceUsd ?? leg?.priceUsdc ?? null;
 }
 
-const UNQUOTED: LegDepth = { fair: null, worseBps: null, thin: false };
+const UNQUOTED: LegDepth = { fair: null, worseBps: null, thin: false, unpriced: false };
 
 /**
  * One router quote per routed leg for `amounts`, judged against the leg's
@@ -198,8 +209,10 @@ export interface IssueQuote {
   /** The most the transaction may spend: the quote plus 1%. */
   maxUsdc: bigint;
   legs: LegQuote[];
-  /** Codes of legs too thin for this size; the USDC path should not be offered. */
+  /** Codes of legs too thin for this size or unpriced; the USDC path should not be offered. */
   thin: string[];
+  /** Codes of legs with no price to check their pool against; a subset of `thin`. */
+  unpriced: string[];
 }
 
 /**
@@ -211,7 +224,7 @@ export async function quoteZapIssue(fund: Fund, plan: ZapPlan, shares: bigint): 
   pathsOrThrow(plan, "issue");
   const legs = await quoteLegs(fund, plan, await quoteIssue(fund, shares), "issue");
   const usdc = legs.reduce((sum, l) => sum + l.usdc, 0n);
-  return { usdc, maxUsdc: maxIn(usdc), legs, thin: thinLegs(legs) };
+  return { usdc, maxUsdc: maxIn(usdc), legs, thin: thinLegs(legs), unpriced: unpricedLegs(legs) };
 }
 
 export interface RedeemQuote {
@@ -222,6 +235,7 @@ export interface RedeemQuote {
   simulated: boolean;
   legs: LegQuote[];
   thin: string[];
+  unpriced: string[];
 }
 
 /**
@@ -237,13 +251,14 @@ export async function quoteZapRedeem(fund: Fund, plan: ZapPlan, shares: bigint, 
   ]);
   if (legs.status === "rejected") throw legs.reason;
   const thin = thinLegs(legs.value);
+  const unpriced = unpricedLegs(legs.value);
   if (thin.length) {
     const usdc = legs.value.reduce((sum, l) => sum + l.usdc, 0n);
-    return { usdc, minUsdc: minOut(usdc), simulated: false, legs: legs.value, thin };
+    return { usdc, minUsdc: minOut(usdc), simulated: false, legs: legs.value, thin, unpriced };
   }
   if (simulation.status === "rejected") throw simulation.reason;
   const usdc = simulation.value ?? legs.value.reduce((sum, l) => sum + l.usdc, 0n);
-  return { usdc, minUsdc: minOut(usdc), simulated: simulation.value !== null, legs: legs.value, thin };
+  return { usdc, minUsdc: minOut(usdc), simulated: simulation.value !== null, legs: legs.value, thin, unpriced };
 }
 
 /** One signature: USDC in, shares out. Returns the USDC actually spent. */

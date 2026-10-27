@@ -297,7 +297,9 @@ What a fund needs for the zap:
   (`router_get_amounts_in` to issue, `router_get_amounts_out` to redeem)
   with the leg's oracle value from the NAV contract; a leg more than 3%
   worse is marked "Soroswap pool too thin for this size" and the app
-  defaults to the basket or in-kind flow. A pool existing is not enough:
+  defaults to the basket or in-kind flow. A leg with neither an oracle nor
+  an SDEX price can't be checked, so it is treated the same way: a skewed
+  pool would otherwise pass unseen. A pool existing is not enough:
   USDC/CETES and XLM/USDY pools exist but hold dust. Today XLM and USTRY
   have real depth (see the liquidity table above), so funds of USDC,
   USTRY and XLM, such as aLQD, are zappable at ordinary sizes; funds

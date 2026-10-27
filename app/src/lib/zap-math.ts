@@ -22,13 +22,16 @@ export interface LegDepth {
   /** How much worse than the oracle value the quote is, in basis points; negative is better. */
   worseBps: number | null;
   thin: boolean;
+  /** No oracle or market price to judge the quote against, so it can't be trusted. */
+  unpriced: boolean;
 }
 
 /**
  * Compares one leg's Soroswap quote with its oracle value. Issuing, the
  * quote is the USDC it costs to buy `amount`, worse when higher; redeeming,
  * it is the USDC selling `amount` pays, worse when lower. A leg with no
- * price can't be judged and passes.
+ * price can't be judged, so it counts as thin: a skewed pool would pass
+ * unseen. Dust worth under one USDC base unit passes.
  */
 export function legDepth(
   quoted: bigint,
@@ -37,12 +40,13 @@ export function legDepth(
   direction: "issue" | "redeem",
   toleranceBps = DEPTH_TOLERANCE_BPS,
 ): LegDepth {
-  if (priceUsd === null || !(priceUsd > 0) || amount <= 0n) return { fair: null, worseBps: null, thin: false };
+  if (amount <= 0n) return { fair: null, worseBps: null, thin: false, unpriced: false };
+  if (priceUsd === null || !(priceUsd > 0)) return { fair: null, worseBps: null, thin: true, unpriced: true };
   const fair = Number(amount) * priceUsd;
-  if (!(fair >= 1)) return { fair: null, worseBps: null, thin: false };
+  if (!(fair >= 1)) return { fair: null, worseBps: null, thin: false, unpriced: false };
   const gap = direction === "issue" ? Number(quoted) - fair : fair - Number(quoted);
   const worseBps = Math.round((gap / fair) * 10_000);
-  return { fair: BigInt(Math.round(fair)), worseBps, thin: quoted <= 0n || worseBps > toleranceBps };
+  return { fair: BigInt(Math.round(fair)), worseBps, thin: quoted <= 0n || worseBps > toleranceBps, unpriced: false };
 }
 
 /** Soroswap pairs are unordered: one key per token pair. */

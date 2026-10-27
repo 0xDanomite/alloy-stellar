@@ -72,7 +72,7 @@ describe("legDepth", () => {
   const ONE = 10_000_000n;
 
   it("passes an issue quote within 3% of the oracle value", () => {
-    expect(legDepth(10_200_000n, ONE, 1, "issue")).toEqual({ fair: ONE, worseBps: 200, thin: false });
+    expect(legDepth(10_200_000n, ONE, 1, "issue")).toEqual({ fair: ONE, worseBps: 200, thin: false, unpriced: false });
   });
 
   it("flags an issue quote more than 3% above the oracle value", () => {
@@ -94,7 +94,7 @@ describe("legDepth", () => {
   });
 
   it("prices the amount at the leg's oracle price", () => {
-    expect(legDepth(20_000_000n, 5n * ONE, 0.4, "issue")).toEqual({ fair: 20_000_000n, worseBps: 0, thin: false });
+    expect(legDepth(20_000_000n, 5n * ONE, 0.4, "issue")).toEqual({ fair: 20_000_000n, worseBps: 0, thin: false, unpriced: false });
     expect(legDepth(21_000_000n, 5n * ONE, 0.4, "issue")).toMatchObject({ worseBps: 500, thin: true });
   });
 
@@ -106,8 +106,9 @@ describe("legDepth", () => {
     expect(legDepth(10_200_000n, ONE, 1, "issue", 100).thin).toBe(true);
   });
 
-  it("passes legs it can't price", () => {
-    expect(legDepth(50n * ONE, ONE, null, "issue")).toEqual({ fair: null, worseBps: null, thin: false });
+  it("counts a leg it can't price as thin, and passes a zero amount", () => {
+    expect(legDepth(50n * ONE, ONE, null, "issue")).toEqual({ fair: null, worseBps: null, thin: true, unpriced: true });
+    expect(legDepth(50n * ONE, ONE, 0, "redeem")).toMatchObject({ thin: true, unpriced: true });
     expect(legDepth(50n * ONE, 0n, 1, "issue").thin).toBe(false);
   });
 });
