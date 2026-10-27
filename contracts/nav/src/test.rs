@@ -587,12 +587,12 @@ fn absurd_divergence_saturates() {
 }
 
 // The NAV side of audit finding AUD-04, pinned. NAV still answers these
-// quotes (share value on screen needs them); since v0.6 the fund refuses to
-// trade on them: a fallback quote has no divergence and is too old, and a
-// quote whose sources disagree carries the gap for the fund to check.
+// quotes (share value on screen needs them); since v0.6 each says whether
+// it came from the primary and how old its confirming reading is, so the
+// fund can refuse a fallback and charge an unconfirmed price.
 
 /// Sixteen minutes of Reflector silence hands back a RedStone print from
-/// yesterday, with no divergence: the fund reads that as unconfirmed.
+/// yesterday, marked as a fallback: the fund refuses to trade on it.
 #[test]
 fn a_reflector_gap_falls_back_to_a_day_old_unconfirmed_price() {
     let s = setup();
@@ -612,6 +612,7 @@ fn a_reflector_gap_falls_back_to_a_day_old_unconfirmed_price() {
     assert_eq!(quote.timestamp, NOW - 25 * HOUR);
     assert_eq!(quote.divergence_bps, None);
     assert_eq!(quote.secondary_timestamp, None);
+    assert!(!quote.from_primary);
 }
 
 /// The reverse case: a fresh Reflector primary confirmed by a RedStone
@@ -634,6 +635,7 @@ fn a_confirmation_reports_how_old_the_secondary_is() {
     let quote = s.nav.price(&xlm);
     assert_eq!(quote.divergence_bps, Some(0));
     assert_eq!(quote.secondary_timestamp, Some(NOW - 25 * HOUR));
+    assert!(quote.from_primary);
 }
 
 /// Two fresh sources a third apart still give a quote, with the gap

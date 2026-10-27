@@ -504,10 +504,10 @@ fn approve_rejects_expiry_beyond_max_ttl() {
     );
 }
 
-/// Every token is worth $1 unless `set` says otherwise, quoted fresh and
-/// confirmed by a fresh second source at zero divergence unless
-/// `set_quality` says otherwise. A quote with no divergence has no second
-/// reading, as NAV reports it.
+/// Every token is worth $1 unless `set` says otherwise, quoted fresh from
+/// its primary and confirmed by a fresh second source at zero divergence
+/// unless `set_quality`, `set_readings` or `set_fallback` say otherwise. A
+/// quote with no divergence has no second reading, as NAV reports it.
 #[contract]
 struct MockNav;
 
@@ -515,6 +515,12 @@ struct MockNav;
 impl MockNav {
     pub fn set(env: Env, token: Address, price: i128) {
         env.storage().instance().set(&token, &price);
+    }
+
+    pub fn set_fallback(env: Env, token: Address, fallback: bool) {
+        env.storage()
+            .instance()
+            .set(&(token, soroban_sdk::symbol_short!("fb")), &fallback);
     }
 
     pub fn set_quality(env: Env, token: Address, age_secs: u64, divergence_bps: Option<u32>) {
@@ -540,12 +546,16 @@ impl MockNav {
             .get(&(token.clone(), soroban_sdk::symbol_short!("q")))
             .unwrap_or((0, Some(0), 0));
         let now = env.ledger().timestamp();
+        let fallback: bool = instance
+            .get(&(token.clone(), soroban_sdk::symbol_short!("fb")))
+            .unwrap_or(false);
         PriceQuote {
             price: instance.get(&token).unwrap_or(100_000_000),
             timestamp: now - age,
             source: soroban_sdk::symbol_short!("mock"),
             divergence_bps,
             secondary_timestamp: divergence_bps.map(|_| now - secondary_age),
+            from_primary: !fallback,
         }
     }
 }
@@ -1387,10 +1397,10 @@ fn nav_of<'a>(s: &Setup<'a>) -> MockNavClient<'a> {
 }
 
 /// AUD-04: the audit's stale-oracle rebalance (oracle at $0.40, market at
-/// $0.30, a day-old fallback print) is refused, as is any leg priced by one
-/// source alone or by two sources more than 2% apart, on both trade paths.
+/// $0.30, a day-old fallback print) is refused, as is a stale primary or a
+/// primary more than 2% from a fresh second source, on both trade paths.
 #[test]
-fn trades_refuse_stale_unconfirmed_or_divergent_prices() {
+fn trades_refuse_fallback_stale_or_divergent_prices() {
     let s = trading_fund();
     let router = with_router(&s, 10_000);
     let nav = nav_of(&s);
@@ -1410,13 +1420,19 @@ fn trades_refuse_stale_unconfirmed_or_divergent_prices() {
         );
     };
 
+    // The audit's case: the primary went quiet and NAV fell back to a
+    // RedStone print from yesterday.
     nav.set(xlm, &40_000_000);
     nav.set_quality(xlm, &(25 * 60 * 60), &None);
-    refusals(FundError::StalePrice);
-    nav.set_quality(xlm, &(crate::MAX_TRADE_PRICE_AGE_SECONDS + 1), &Some(0));
-    refusals(FundError::StalePrice);
+    nav.set_fallback(xlm, &true);
+    refusals(FundError::UnconfirmedPrice);
     nav.set_quality(xlm, &60, &None);
     refusals(FundError::UnconfirmedPrice);
+    nav.set_fallback(xlm, &false);
+    nav.set_quality(xlm, &(crate::MAX_TRADE_PRICE_AGE_SECONDS + 1), &Some(0));
+    refusals(FundError::StalePrice);
+    nav.set_quality(xlm, &(crate::MAX_TRADE_PRICE_AGE_SECONDS + 1), &None);
+    refusals(FundError::StalePrice);
     nav.set_quality(xlm, &60, &Some(crate::MAX_TRADE_DIVERGENCE_BPS + 1));
     refusals(FundError::PriceDivergence);
     assert_eq!(s.fund.window_loss_ppb(), 0);
@@ -1425,37 +1441,44 @@ fn trades_refuse_stale_unconfirmed_or_divergent_prices() {
     // The sold leg is checked as strictly as the bought one.
     nav.set(xlm, &100_000_000);
     nav.set_quality(xlm, &0, &Some(0));
-    nav.set_quality(usdc, &0, &None);
+    nav.set_fallback(usdc, &true);
     refusals(FundError::UnconfirmedPrice);
 
+    nav.set_fallback(usdc, &false);
     nav.set_quality(usdc, &crate::MAX_TRADE_PRICE_AGE_SECONDS, &Some(0));
     nav.set_quality(xlm, &0, &Some(crate::MAX_TRADE_DIVERGENCE_BPS));
     router.configure(&10_000, &false, &false);
     s.fund.trade(usdc, &sold, xlm, &0, &path);
 }
 
-/// A fresh primary with a divergence is not enough: NAV calls a RedStone
-/// secondary fresh for 26 hours, so a day-old reading could confirm it.
-/// Both readings must be within the trade age.
+/// A fresh primary with no fresh second reading (a single route, or a
+/// RedStone secondary hours old, which NAV still calls fresh) may trade,
+/// but each such leg costs `UNCONFIRMED_PRICE_CHARGE_BPS` of its value in
+/// both loss budgets. A stale secondary's divergence is not trusted either
+/// way: 900 bps from a day-old reading neither refuses the trade nor sets
+/// the charge.
 #[test]
-fn a_confirmation_from_a_stale_secondary_is_refused() {
+fn an_unconfirmed_primary_trades_and_is_charged() {
     let s = trading_fund();
     let nav = nav_of(&s);
     at(&s, 2 * 24 * 60 * 60);
     let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
-    s.assets[0].admin.mint(&s.manager, &(5 * SHARE_SCALE));
-    nav.set_readings(a, &0, &Some(0), &(25 * 60 * 60));
-    assert_eq!(
-        s.fund.try_rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE),
-        Err(Ok(FundError::StalePrice.into()))
-    );
-    nav.set_readings(a, &0, &Some(0), &(crate::MAX_TRADE_PRICE_AGE_SECONDS + 1));
-    assert_eq!(
-        s.fund.try_rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE),
-        Err(Ok(FundError::StalePrice.into()))
-    );
-    nav.set_readings(a, &0, &Some(0), &crate::MAX_TRADE_PRICE_AGE_SECONDS);
-    s.fund.rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE);
+    s.assets[0].admin.mint(&s.manager, &(10 * SHARE_SCALE));
+
+    // Single source on the bought leg: 50 bps of $5 against a $35 fund.
+    nav.set_quality(a, &0, &None);
+    s.fund
+        .rebalance(b, &(5 * SHARE_SCALE), a, &(5 * SHARE_SCALE));
+    assert_eq!(s.fund.window_loss_ppb(), 714_286);
+
+    // Both legs unconfirmed: one by a single route, one by a day-old
+    // secondary.
+    nav.set_readings(b, &0, &Some(900), &(25 * 60 * 60));
+    at(&s, 2 * 24 * 60 * 60 + 60);
+    s.fund
+        .rebalance(b, &(5 * SHARE_SCALE), a, &(5 * SHARE_SCALE));
+    assert_eq!(s.fund.window_loss_ppb(), 714_286 + 1_428_572);
+    assert_eq!(s.fund.month_loss_ppb(), 714_286 + 1_428_572);
 }
 
 /// The fee used to be computed as `supply * accrued * 1e9` in one product,

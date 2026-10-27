@@ -105,8 +105,9 @@ pub trait PlatformInterface {
 }
 
 /// Mirrors `alloy_nav::PriceQuote` from v0.6: USD per whole token, 8
-/// decimals. A NAV older than v0.6 returns no `secondary_timestamp`, so the
-/// quote fails to decode and a v0.6 fund cannot trade against it.
+/// decimals. A NAV older than v0.6 returns neither `secondary_timestamp`
+/// nor `from_primary`, so the quote fails to decode and a v0.6 fund cannot
+/// trade against it.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceQuote {
@@ -115,6 +116,7 @@ pub struct PriceQuote {
     pub source: Symbol,
     pub divergence_bps: Option<u32>,
     pub secondary_timestamp: Option<u64>,
+    pub from_primary: bool,
 }
 
 #[contractclient(name = "NavClient")]
@@ -158,9 +160,12 @@ const DAY_SECONDS: u64 = 24 * 60 * 60;
 /// A trade refuses any price older than this, however long the NAV route
 /// itself would accept it.
 pub const MAX_TRADE_PRICE_AGE_SECONDS: u64 = 15 * 60;
-/// A trade needs each leg's price confirmed by a second fresh source no
-/// further than this from the first.
+/// When a fresh second source confirms a trade price, the two may be no
+/// further apart than this.
 pub const MAX_TRADE_DIVERGENCE_BPS: u32 = 200;
+/// The uncertainty charged to the loss budgets for a leg priced by its
+/// primary source alone, with no second reading inside the trade age.
+pub const UNCONFIRMED_PRICE_CHARGE_BPS: u32 = 50;
 const PPB: i128 = 1_000_000_000;
 /// Fee accrual keeps the unminted fraction of a share, in billionths, so
 /// frequent accruals add up to what one long accrual would mint.
@@ -451,33 +456,38 @@ fn oracle_price(env: &Env, oracle: &NavClient, token: &Address) -> i128 {
     price
 }
 
-/// A price fit to bound a trade: confirmed by the NAV's second source
-/// within `MAX_TRADE_DIVERGENCE_BPS`, with both readings at most
-/// `MAX_TRADE_PRICE_AGE_SECONDS` old. A quote with no second reading came
-/// from one source alone (a single route, or the fallback after a stale
-/// primary), so one feed would set the bound by itself. NAV's own freshness
-/// is per route (up to a day for RedStone), so the fund checks both ages
-/// itself. Returns the price and its divergence.
+/// A price fit to bound a trade, and the uncertainty to charge for it. It
+/// must come from the route's primary source, not a fallback
+/// (`UnconfirmedPrice`), and be at most `MAX_TRADE_PRICE_AGE_SECONDS` old
+/// (`StalePrice`). If a second reading at most that old confirms it, the
+/// two may differ by at most `MAX_TRADE_DIVERGENCE_BPS` and the measured
+/// divergence is the charge. Otherwise (a single route, or a secondary
+/// older than the trade bound, as a RedStone reading usually is) the trade
+/// goes ahead and is charged `UNCONFIRMED_PRICE_CHARGE_BPS`. NAV's own
+/// freshness is per route (up to a day for RedStone), so the fund checks
+/// both ages itself.
 fn trade_price(env: &Env, oracle: &NavClient, token: &Address) -> (i128, u32) {
     let quote = oracle.price(token);
     if quote.price <= 0 {
         panic_with_error!(env, FundError::BadPrice);
     }
-    let too_old =
-        |at: u64| env.ledger().timestamp().saturating_sub(at) > MAX_TRADE_PRICE_AGE_SECONDS;
-    if too_old(quote.timestamp) {
-        panic_with_error!(env, FundError::StalePrice);
-    }
-    let (Some(bps), Some(secondary_at)) = (quote.divergence_bps, quote.secondary_timestamp) else {
+    if !quote.from_primary {
         panic_with_error!(env, FundError::UnconfirmedPrice);
-    };
-    if too_old(secondary_at) {
+    }
+    let fresh =
+        |at: u64| env.ledger().timestamp().saturating_sub(at) <= MAX_TRADE_PRICE_AGE_SECONDS;
+    if !fresh(quote.timestamp) {
         panic_with_error!(env, FundError::StalePrice);
     }
-    if bps > MAX_TRADE_DIVERGENCE_BPS {
-        panic_with_error!(env, FundError::PriceDivergence);
+    match (quote.divergence_bps, quote.secondary_timestamp) {
+        (Some(bps), Some(at)) if fresh(at) => {
+            if bps > MAX_TRADE_DIVERGENCE_BPS {
+                panic_with_error!(env, FundError::PriceDivergence);
+            }
+            (quote.price, bps)
+        }
+        _ => (quote.price, UNCONFIRMED_PRICE_CHARGE_BPS),
     }
-    (quote.price, bps)
 }
 
 /// What a trade may have given up at worst: the gap at oracle prices plus
@@ -893,11 +903,12 @@ impl Fund {
 
     /// The manager swaps `sold` of one component for `bought` of another:
     /// the fund pays out `sell` and takes in `buy` in the same transaction.
-    /// Shares re-weight through the balances. Both legs need an oracle price
-    /// at most 15 minutes old and confirmed by a second source within 2%.
-    /// Each trade must be worth at least 99% of what leaves the fund at
-    /// those prices. Everything given up, with each leg's divergence counted
-    /// as given up, must stay under 2% of fund value in any 24 hours and 5%
+    /// Shares re-weight through the balances. Both legs need a price from
+    /// their primary oracle at most 15 minutes old, within 2% of a fresh
+    /// second source when there is one. Each trade must be worth at least
+    /// 99% of what leaves the fund at those prices. Everything given up,
+    /// with each leg's divergence (0.5% when unconfirmed) counted as given
+    /// up, must stay under 2% of fund value in any 24 hours and 5%
     /// in any 30 days, and trades are at least a minute apart. So a manager
     /// or agent can't drain value through bad fills or a stale feed, one at
     /// a time, in a burst or over a month. `Locked` and `Managed` funds

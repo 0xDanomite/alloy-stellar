@@ -41,7 +41,7 @@ rounds what you receive down.
 | Nobody can buy in ahead of the manager's setup | `issue` is refused until the manager calls `open_for_issue`; fee and mandate are only settable before it | `nobody_can_issue_before_the_manager_opens_the_fund` |
 | Fee shares never land outside the allowlist | A recipient that can't hold shares has them held by the fund in escrow until `claim_fee` | `fee_for_a_recipient_off_the_allowlist_waits_in_escrow` |
 | A manager cannot bleed value through many small bad fills | What trades give up at oracle prices, plus each leg's oracle divergence, is capped at 2% of fund value per rolling 24 hours and 5% per 30 days, trades one minute apart (v0.6; v0.4 and v0.5 funds have the daily cap only) | `losses_inside_a_day_are_capped_at_two_percent_of_fund_value`, `losses_over_thirty_days_are_capped_at_five_percent` |
-| A stale or single-source price cannot bound a trade | `rebalance` and `trade` refuse a price over 15 minutes old, one without a second source, or one whose sources are more than 2% apart (v0.6) | `trades_refuse_stale_unconfirmed_or_divergent_prices` |
+| A stale or fallback price cannot bound a trade | `rebalance` and `trade` refuse a fallback quote, a primary over 15 minutes old, or a primary more than 2% from a fresh second source; an unconfirmed primary is charged 50 bps a leg (v0.6) | `trades_refuse_fallback_stale_or_divergent_prices`, `an_unconfirmed_primary_trades_and_is_charged` |
 | Nobody can round the fee away | The fraction of a share an accrual cannot mint carries to the next, so frequent `accrue_fee` calls mint what one would (v0.6) | `frequent_accrual_mints_the_same_fee_as_one_accrual` |
 
 The property test drives random funds through random sequences of issues
@@ -126,19 +126,23 @@ key, and only v0.4+ funds have metadata.
 Every rebalance and trade is checked against the NAV oracle. In a v0.6
 fund:
 
-- both legs need a trading-grade price: confirmed by the NAV's second
-  source (`UnconfirmedPrice` when the quote has no second reading, which
-  is what a single route or a fallback to the secondary returns), with
-  both readings at most 15 minutes old (`MAX_TRADE_PRICE_AGE_SECONDS`,
-  `StalePrice`; the quote's `timestamp` and `secondary_timestamp`), and
-  the two sources at most 2% apart (`MAX_TRADE_DIVERGENCE_BPS`,
-  `PriceDivergence`). NAV counts a route fresh within its own limit, up
-  to 26 hours for RedStone, so the fund checks both ages itself. That
-  limit still governs the price shown on screen;
+- both legs need a price from their route's primary source, not a
+  fallback to the secondary (`UnconfirmedPrice`; the quote's
+  `from_primary`), at most 15 minutes old (`MAX_TRADE_PRICE_AGE_SECONDS`,
+  `StalePrice`). NAV counts a route fresh within its own limit, up to 26
+  hours for RedStone, so the fund checks the age itself; that limit still
+  governs the price shown on screen;
+- when the quote carries a second reading also at most 15 minutes old
+  (`secondary_timestamp`), the two must be at most 2% apart
+  (`MAX_TRADE_DIVERGENCE_BPS`, `PriceDivergence`), and the measured
+  divergence is that leg's uncertainty. With no second reading that
+  fresh (a single route, or a secondary hours old), the trade goes ahead
+  and the leg's uncertainty is a flat 50 bps
+  (`UNCONFIRMED_PRICE_CHARGE_BPS`);
 - each trade must return at least 99% of what leaves the fund;
 - what a trade may have given up is charged to two budgets: the gap at
-  oracle prices plus each leg's divergence (a value-neutral swap at 50 bps
-  divergence on both legs costs 1% of the traded value). All of it must
+  oracle prices plus each leg's uncertainty (a value-neutral swap with
+  both legs unconfirmed costs 1% of the traded value). All of it must
   stay within 2% of fund value over any rolling 24 hours
   (`MAX_WINDOW_LOSS_BPS = 200`) and within 5% over 30 days
   (`MAX_LONG_WINDOW_LOSS_BPS = 500`). The 24-hour log keeps each losing
@@ -153,20 +157,21 @@ parts per billion of fund value. A non-positive oracle price is refused
 (`BadPrice`). Legs the fund holds none of are not priced, so a newly added,
 still-empty asset needs no feed.
 
-Every two-source route on mainnet today pairs Reflector (5 minute updates)
-with RedStone (12 to 24 hour updates), so XLM, USDC, USTRY and CETES meet
-the trading-grade bar only in the 15 minutes after a RedStone update, and
-only while Reflector is fresh and the two agree. USDY and BENJI have one
-route each and can never bound a v0.6 trade until a second source is
-added. Regular trading needs a second fast source per traded asset. v0.4
-and v0.5 funds have the 99% floor, the daily budget and the cooldown, and
-trust whatever price the NAV returns.
+On today's mainnet routes, XLM and USDC have Reflector (5 minute updates)
+as primary, so they trade whenever Reflector is fresh: charged 50 bps a
+leg, or the measured divergence in the 15 minutes after a RedStone
+update. USTRY, CETES, USDY and BENJI have RedStone (12 to 24 hour updates)
+as primary, so they trade only in the 15 minutes after a RedStone update.
+Making Reflector the primary for USTRY and CETES on the v0.6 NAV, where
+Reflector covers them, would let them trade like XLM. A fallback quote
+never bounds a trade. v0.4 and v0.5 funds have the 99% floor, the daily
+budget and the cooldown, and trust whatever price the NAV returns.
 
 The oracle is whatever the platform admin set with `set_nav`. A build
 with the `mainnet` cargo feature falls back to the mainnet NAV contract
 when none is set; default and `testnet` builds have no fallback.
 
-v0.6 adds `secondary_timestamp` to NAV's `PriceQuote`, which changes its
+v0.6 adds `secondary_timestamp` and `from_primary` to NAV's `PriceQuote`, which changes its
 return type, so a v0.6 fund needs a v0.6 NAV contract: rolling out v0.6
 means deploying a new NAV, setting its routes, and pointing v0.6 funds at
 it with `set_nav` (the `mainnet` build's compiled default is still the
@@ -486,8 +491,9 @@ gh attestation verify alloy-fund_v0.1.0.wasm -R 0xDanomite/alloy-stellar
 - Oracle routes are set by the NAV admin, a single key on mainnet with no
   timelock. Since v0.3 a route is not just display: it sets the bound on
   every fund's `rebalance` and `trade`, and a change takes effect at once.
-  v0.6 funds refuse stale, single-source or divergent prices, which stops
-  one bad feed but not an admin who rewrites both routes. Handing the NAV
+  v0.6 funds refuse stale, fallback or divergent prices and charge an
+  unconfirmed one, which stops a stalled feed and bounds a bad one, but
+  not an admin who rewrites the primary route. Handing the NAV
   to a timelock with a delay holders can act within is the operational
   fix.
 - Releases from v0.4 ship two fund builds: `alloy-fund_v*.wasm` with no
