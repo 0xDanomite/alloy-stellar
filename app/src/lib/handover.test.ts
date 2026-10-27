@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Address, Keypair, StrKey, xdr } from "@stellar/stellar-sdk";
-import { decodeHandover, encodeHandover, handoverIncoming, HANDOVER_LEDGERS, verifyHandover, type HandoverLink } from "./handover";
+import { checkUnsignedHandover, decodeHandover, encodeHandover, handoverIncoming, HANDOVER_LEDGERS, verifyHandover, type HandoverLink } from "./handover";
 
 const account = () => Keypair.random().publicKey();
 const contractId = () => StrKey.encodeContract(Keypair.random().rawPublicKey());
@@ -88,5 +88,24 @@ describe("verifyHandover", () => {
   it("refuses damaged links", () => {
     expect(errorOf({ entries: ["not xdr"] })).toMatch(/damaged/);
     expect(decodeHandover("%%%")).toBeNull();
+  });
+});
+
+describe("checkUnsignedHandover", () => {
+  const expected = { fund: FUND, manager: MANAGER, incoming: INCOMING };
+
+  it("lets the outgoing manager sign exactly this handover", () => {
+    expect(checkUnsignedHandover(entry(), expected)).toBeNull();
+  });
+
+  it("refuses to sign anything a simulation swapped in", () => {
+    expect(checkUnsignedHandover(entry({ fn: "trade" }), expected)).toMatch(/something other than a handover/);
+    expect(checkUnsignedHandover(entry({ fund: contractId() }), expected)).toMatch(/different fund/);
+    expect(checkUnsignedHandover(entry({ args: [new Address(account()).toScVal()] }), expected)).toMatch(/different new manager/);
+    expect(checkUnsignedHandover(entry({ sub: [entry().rootInvocation] }), expected)).toMatch(/more than the handover/);
+  });
+
+  it("refuses an entry for another signer", () => {
+    expect(checkUnsignedHandover(entry({ signer: account() }), expected)).toMatch(/current manager/);
   });
 });
