@@ -95,6 +95,20 @@ pub struct ManagerSet {
     pub manager: Address,
 }
 
+#[contractevent(topics = ["manager_replaced"])]
+pub struct ManagerReplaced {
+    #[topic]
+    pub previous: Address,
+    #[topic]
+    pub manager: Address,
+}
+
+#[contractevent(topics = ["wound_down"], data_format = "map")]
+pub struct WoundDown {
+    pub operator: Option<Address>,
+    pub usdc: Address,
+}
+
 #[contractevent(topics = ["rebalance"], data_format = "map")]
 pub struct Rebalanced {
     #[topic]

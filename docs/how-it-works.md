@@ -31,7 +31,7 @@ rounds what you receive down.
 
 | Promise | How it holds | Test |
 | --- | --- | --- |
-| Nobody can stop a redemption | `redeem` has no pause, no manager gate; the platform has no function that touches a deployed fund | `redeem_works_whatever_the_manager_does` |
+| Nobody can stop a redemption | `redeem` has no pause, no manager gate; the platform contract never calls a fund. Holds for SAC components, which is all the shelf admits: a custom token whose `balance` traps would block every redeem (see Known limitations) | `redeem_works_whatever_the_manager_does`, `a_trapping_non_sac_component_blocks_redemption` |
 | An issuer freezing one asset does not trap the rest | Redeem can skip a leg; it becomes an owed claim paid later by `withdraw_owed` | `frozen_leg_can_be_skipped_and_claimed_later` |
 | A clawback never blocks redemption | Holdings floor at zero; owed claims rank ahead of holders | `clawback_below_owed_reserve_never_blocks_redeem` |
 | New money never covers an impaired asset | `issue` is refused while any asset holds less than it owes | `issue_is_blocked_while_a_leg_is_short_of_owed_claims` |
@@ -40,7 +40,9 @@ rounds what you receive down.
 | A fund's mandate is honored | `Locked` (the default) refuses `add_component`; `Static` also refuses `rebalance` and `trade`; the mandate is fixed before `open_for_issue` | `each_mandate_allows_exactly_its_actions` |
 | Nobody can buy in ahead of the manager's setup | `issue` is refused until the manager calls `open_for_issue`; fee and mandate are only settable before it | `nobody_can_issue_before_the_manager_opens_the_fund` |
 | Fee shares never land outside the allowlist | A recipient that can't hold shares has them held by the fund in escrow until `claim_fee` | `fee_for_a_recipient_off_the_allowlist_waits_in_escrow` |
-| A manager cannot bleed value through many small bad fills | Oracle losses across rebalances are capped at 2% of fund value per rolling 24 hours, one minute apart | `losses_inside_a_day_are_capped_at_two_percent_of_fund_value` |
+| A manager cannot bleed value through many small bad fills | What trades give up at oracle prices, plus each leg's oracle divergence, is capped at 2% of fund value per rolling 24 hours and 5% per 30 days, trades one minute apart (v0.6; v0.4 and v0.5 funds have the daily cap only) | `losses_inside_a_day_are_capped_at_two_percent_of_fund_value`, `losses_over_thirty_days_are_capped_at_five_percent` |
+| A stale or fallback price cannot bound a trade | `rebalance` and `trade` refuse a fallback quote, a primary over 15 minutes old, or a primary more than 2% from a fresh second source; an unconfirmed primary is charged 50 bps a leg (v0.6) | `trades_refuse_fallback_stale_or_divergent_prices`, `an_unconfirmed_primary_trades_and_is_charged` |
+| Nobody can round the fee away | The fraction of a share an accrual cannot mint carries to the next, so frequent `accrue_fee` calls mint what one would (v0.6) | `frequent_accrual_mints_the_same_fee_as_one_accrual` |
 
 The property test drives random funds through random sequences of issues
 and partial redeems and compares every step against a fixed-unit basket
@@ -65,11 +67,20 @@ The fee is paid in new shares, never in assets: for `t` seconds at rate
 supply * f / (1 - f),   f = r * t / one year
 ```
 
-so the new shares own exactly `f` of the fund afterwards. `issue` and
-`redeem` accrue first, and anyone can call `accrue_fee`. `quote_issue` and
-`quote_redeem` include the pending fee, so a quote matches the call made in
-the same ledger. One accrual covers at most a year; time beyond that is
-not charged.
+so the new shares own exactly `f` of the fund afterwards. `issue`,
+`redeem`, `burn` and `burn_from` accrue first (burns since v0.6), and anyone
+can call `accrue_fee`. The fraction of a share an accrual cannot mint is
+kept, in billionths of a share, and added to the next one, so calling
+`accrue_fee` every ledger mints the same fee as calling it once a day (v0.6;
+earlier funds drop the fraction each time, so frequent calls can erase a
+small fund's fee). The v0.6 fee is computed without forming
+`supply * f` in one product, so it is exact at any supply; the only case
+it cannot mint is a fee that would overflow the share supply itself, and
+then accrual mints nothing and leaves the clock where it was, so the fee
+waits instead of being written off. Accrual never fails either way.
+`quote_issue` and `quote_redeem` include the pending fee, so a quote
+matches the call made in the same ledger. One accrual covers at most a
+year; time beyond that is not charged.
 
 The platform admin may take a cut of each fund's fee, at most half
 (`MAX_PLATFORM_SHARE_BPS = 5000`), minted to a recipient it names. The cut
@@ -95,6 +106,31 @@ and donations. A `Managed` fund may also
 `add_component` any asset the platform shelf lists (a `Permissioned` one
 only with the investor allowlist on), up to 12 components. An added asset
 starts at zero units and gains weight only through rebalances and trades.
+
+## Wind-down
+
+From v0.6 the platform admin (in practice its timelock) can take a fund
+out of a manager's hands:
+
+- `replace_manager(new_manager)` installs a new manager without the old
+  one's consent, for a lost or compromised key. The fee accrued so far
+  goes to the old recipient; from then on the manager's part goes to the
+  new manager until they set another recipient.
+- `wind_down(operator, usdc)` winds the fund down for good. Issuance
+  closes (`is_open` turns false, `issue` fails with `IssuanceClosed`),
+  the fee stops after accruing what was owed up to that moment, and every
+  manager power is revoked (`WoundDown`), `replace_manager` included. The
+  optional `operator` may then only `trade` into `usdc`
+  (`OnlyIntoUsdc` otherwise), with the same price checks, 99% floor, loss
+  budgets and cooldown as any trade; with no operator nobody trades.
+  `rebalance` stays closed because it pays assets out to the caller, so
+  assets leave the fund only through `redeem`, `withdraw_owed` and swaps
+  that land in the fund. Calling it again changes the operator or the
+  target. `wind_down_state()` reads it.
+
+Redemption is untouched: what a holder could redeem at the moment of the
+wind-down is what they redeem later, because the fee stops and only
+holder exits and bounded USDC trades change the basket.
 
 ## Metadata
 
@@ -132,22 +168,72 @@ characters before they are shown.
 
 ## Rebalance bounds
 
-Every rebalance is checked against the NAV oracle three ways:
+Every rebalance and trade is checked against the NAV oracle. In a v0.6
+fund:
 
+- both legs need a price from their route's primary source, not a
+  fallback (`UnconfirmedPrice`; the quote's `from_primary`). For a
+  USDC-quoted route that includes the USDC to USD conversion: it must
+  come from the first USD-quoted USDC route, not a later one. The price
+  must be at most 15 minutes old (`MAX_TRADE_PRICE_AGE_SECONDS`,
+  `StalePrice`); for a USDC-quoted route NAV's timestamp is the older of
+  the price and the conversion. NAV counts a route fresh within its own
+  limit, up to 26 hours for RedStone, so the fund checks the age itself;
+  that limit still governs the price shown on screen;
+- any second reading must be at most 2% from the primary
+  (`MAX_TRADE_DIVERGENCE_BPS`, `PriceDivergence`), however old. If it is
+  also at most 15 minutes old (`secondary_timestamp`), the measured
+  divergence is that leg's uncertainty; if older, the larger of it and
+  50 bps. With no second reading (a single route) the trade goes ahead
+  and the leg's uncertainty is a flat 50 bps
+  (`UNCONFIRMED_PRICE_CHARGE_BPS`);
 - each trade must return at least 99% of what leaves the fund;
-- what all trades gave up must stay within 2% of fund value over any
-  rolling 24 hours (`MAX_WINDOW_LOSS_BPS = 200`). Each losing trade is
-  logged with its loss as a share of fund value at that moment, and drops
-  out of the log a day later. At most 32 losing trades can be live at
-  once; gains are not logged and cost nothing;
+- what a trade may have given up is charged to two budgets: the gap at
+  oracle prices plus each leg's uncertainty (a value-neutral swap with
+  both legs unconfirmed costs 1% of the traded value). All of it must
+  stay within 2% of fund value over any rolling 24 hours
+  (`MAX_WINDOW_LOSS_BPS = 200`) and within 5% over 30 days
+  (`MAX_LONG_WINDOW_LOSS_BPS = 500`). The 24-hour log keeps each losing
+  trade, at most 32 live at once; the 30-day log keeps one total per UTC
+  day for today and the 30 days before, so a loss counts for 30 to 31
+  days and the log never holds more than 31 entries. Gains are not logged
+  and cost nothing, and they do not earn budget back;
 - trades are at least 60 seconds apart.
 
-A non-positive oracle price is refused (`BadPrice`). Legs the fund holds
-none of are not priced, so a newly added, still-empty asset needs no feed.
+`window_loss_ppb()` and `month_loss_ppb()` read the two budgets used, in
+parts per billion of fund value. A non-positive oracle price is refused
+(`BadPrice`). Legs the fund holds none of are not priced, so a newly added,
+still-empty asset needs no feed.
+
+Accepted risk: a leg priced by its primary alone, with no fresh second
+source, may still bound a trade. Refusing it would make trading
+impossible on today's oracle coverage. A single feed can then be off by
+more than the flat 50 bps it is charged. What that buys a bad manager is
+bounded by the 99% floor per trade, the 2% daily budget and the 5%
+30-day budget, each of which the 50 bps charge spends, and a second
+reading that disagrees by more than 2% still stops the trade.
+
+On today's mainnet routes every trade price depends on a RedStone
+reading (12 to 24 hour updates). USTRY, CETES, USDY and BENJI have
+RedStone as primary. XLM and USDC have Reflector (5 minute updates) as
+primary, but Reflector quotes in USDC, and the USDC to USD conversion
+comes from RedStone, so the quote's age is RedStone's. So a v0.6 fund
+trades only in the 15 minutes after a RedStone update until the v0.6 NAV
+gets a fast USD-quoted source for USDC (or for each traded asset). A
+fallback quote never bounds a trade. v0.4 and v0.5 funds have the 99%
+floor, the daily budget and the cooldown, and trust whatever price the
+NAV returns.
 
 The oracle is whatever the platform admin set with `set_nav`. A build
 with the `mainnet` cargo feature falls back to the mainnet NAV contract
 when none is set; default and `testnet` builds have no fallback.
+
+v0.6 adds `secondary_timestamp` and `from_primary` to NAV's `PriceQuote`, which changes its
+return type, so a v0.6 fund needs a v0.6 NAV contract: rolling out v0.6
+means deploying a new NAV, setting its routes, and pointing v0.6 funds at
+it with `set_nav` (the `mainnet` build's compiled default is still the
+v0.1 NAV, against which a v0.6 fund's trades fail; `redeem` and `issue`
+never read it). Existing funds and the app keep using the current NAV.
 
 ## Trading through Soroswap
 
@@ -166,8 +252,8 @@ fund's custody: the fund itself calls the router's
 - The minimum out is the larger of the caller's `min_bought` and 99% of
   `sold` at oracle prices, and the fund checks its own balances afterwards
   rather than trusting the router's report (`SwapShortfall`).
-- A trade counts toward the same rolling loss budget and 60 second
-  cooldown as `rebalance`.
+- A trade has the same price checks, loss budgets and 60 second cooldown
+  as `rebalance`.
 - The router is set per fund by the platform admin (`set_router`), as the
   oracle is, so a manager can't route assets through a contract they
   control. `mainnet` builds fall back to the Soroswap router
@@ -220,15 +306,42 @@ this way). Alloy treats that as a first-class case:
 - `create_fund` is the only way funds are made; `is_fund` is the authority
   on whether a contract is a genuine Alloy fund.
 - Managers and assets are allowlisted by the platform admin. The admin is
-  a single address today and moves to a timelock with `set_admin`.
+  a single address on the original platform; the v4 and demo platforms
+  answer to a timelock.
+- The shelf admits Stellar Asset Contracts (SACs) only. That is a listing
+  rule the admin applies, checked off chain (the token's address must equal
+  `stellar contract id asset` for its classic asset): a contract cannot
+  tell on chain whether another contract is a SAC. The fund relies on it in
+  two places, a `balance` that never traps (redemption) and 7 decimals
+  (trade valuation).
 - Funds are stored one ledger entry each and listed with
   `funds(start, limit)`.
+
+The platform contract never calls a fund, but v0.3+ funds honor
+`platform.admin()` for three setters. What the admin can do to funds that
+already exist:
+
+| Power | Funds | Effect if abused |
+| --- | --- | --- |
+| `set_nav` | v0.3+ | Alone, none: only the manager trades. With a manager, it sets the prices that bound trades; v0.6 funds still require a fresh, confirmed price, but an admin who controls both NAV routes controls that too. Pointing it at a contract that always fails disables trading and never touches `redeem`. |
+| `set_router` | v0.4+ | Alone, none. With a manager, bounded: `trade` checks what it got and gave by balance against the oracle floor, and authorizes one exact transfer. |
+| `set_platform_fee` | v0.4+ | Redirects up to half of the manager's fee to any address that can hold shares, at any time. Never raises total dilution. |
+| `replace_manager` | v0.6 | Installs a manager of its choosing, who then has every manager power, bounded as for any manager. |
+| `wind_down` | v0.6 | Closes issuance and stops the fee for good, revokes the manager, and lets an operator of its choosing trade into one token within the trade bounds. Never touches `redeem`. |
+| `set_fund_wasm`, `set_shelf_asset`, `set_manager` | platform | Affect new funds only; delisting an asset never stops a redemption. |
+
+So the admin alone cannot touch holder assets; admin and manager together
+can, within the trade bounds. The NAV contract's admin matters as much:
+its routes set every trade bound, and a route change takes effect at once
+unless the NAV itself answers to a timelock.
 
 ## Timelock
 
 `contracts/timelock` is the admin the platform and NAV contracts are meant
-to answer to. It has fixed proposers and executors (one to ten each, set at
-construction) and a delay of at most 30 days.
+to answer to. It has proposers and executors (one to ten each) and a delay
+between a minimum and 30 days. The v0.6 constructor is
+`(proposers, executors, delay, min_delay)`: `min_delay` is at least five
+minutes (`MIN_DELAY_FLOOR_SECONDS = 300`) and `delay` starts at or above it.
 
 - A proposer calls `schedule(proposer, target, fn_name, args, salt)`. The
   `scheduled` event carries the full call and the time it becomes ready.
@@ -237,11 +350,29 @@ construction) and a delay of at most 30 days.
   `admin.require_auth()` sees its admin as the direct caller and needs no
   signature. Each operation runs once; the record stays so it can't be
   replayed.
-- A proposer can `cancel` a pending operation.
-- The delay changes only through a scheduled call to the timelock itself
-  (`target` = the timelock, `fn_name` = `set_delay`), so it waits out the
-  delay it replaces. A contract can't call itself on Stellar, so `execute`
-  handles that one call internally and refuses any other self-call.
+- An operation not executed within 14 days of becoming ready
+  (`GRACE_PERIOD_SECONDS`) expires (`Expired`); it can be cancelled, as
+  below, to schedule the same call and salt again.
+- Any proposer can `cancel` a pending operation, so each proposer can
+  veto the others, with one exception from v0.6: a `set_proposers` can be
+  cancelled only by a proposer on its new list (`CannotCancel`). A
+  proposer being removed cannot veto its own removal, and proposers who
+  stay can still stop a hostile eviction. Each operation records the
+  proposer who scheduled it and, for a `set_proposers`, the new list
+  (`proposers_after`). An eviction that keeps no honest proposer can only
+  be stopped by the executors declining to run it.
+- The delay and the role lists change only through scheduled calls to the
+  timelock itself (`target` = the timelock, `fn_name` = `set_delay`,
+  `set_proposers` or `set_executors`, one argument), so each waits out the
+  delay it may replace. `set_delay` refuses anything below `min_delay()`,
+  and a role list must keep one to ten members. A contract can't call
+  itself on Stellar, so `execute` handles these calls internally and
+  refuses any other self-call.
+
+The v0.4 timelocks on mainnet predate this: fixed roles, no minimum delay
+and no expiry. Each has one key as its only proposer and executor, so that
+key alone can act after 300 seconds and nobody else can cancel. Making
+that key a Stellar multisig account narrows it without a redeploy.
 
 Handing over a contract uses its two-party `set_admin`: schedule
 `set_admin(timelock)` on the platform (or NAV), and when it executes, the
@@ -264,7 +395,10 @@ USDC zap below instead: one signature in, one out.
 `contracts/zap` turns a basket fund into a one-transaction USDC product
 where Soroswap has the liquidity. It is a separate contract, stateless and
 permissionless; the fund knows nothing about it. Its constructor takes
-the Soroswap router and the USDC contract, and nothing else is stored.
+the Soroswap router, the USDC contract and the platforms whose funds it
+serves (v0.6: one to eight, fixed for the zap's life, read with
+`platforms()`), and nothing else is stored. Every call first asks those
+platforms `is_fund(fund)` and refuses any other contract (`UnknownFund`).
 
 - `issue_with_usdc(investor, fund, shares, max_usdc, paths)` takes
   `max_usdc` from the investor, reads `quote_issue(shares)` and
@@ -274,17 +408,21 @@ the Soroswap router and the USDC contract, and nothing else is stored.
   the zap deposits the basket, the shares are minted straight to the
   investor, and unspent USDC goes back to them. Returns the USDC spent.
 - `redeem_to_usdc(owner, fund, shares, min_usdc, paths)` calls
-  `redeem(from = owner, to = zap, shares, [])`, sells every non-USDC leg
-  exact-in (`swap_exact_tokens_for_tokens`) and pays the owner all of the
-  USDC, or reverts with `SlippageExceeded` under `min_usdc`. A leg too
-  small to swap to one stroop of USDC is sent to the owner as is.
+  `redeem(from = owner, to = zap, shares, [])`, sells exactly what each
+  non-USDC leg delivered, measured by the zap's balance change rather than
+  the fund's report, exact-in (`swap_exact_tokens_for_tokens`), and pays
+  the owner all of the USDC, or reverts with `SlippageExceeded` under
+  `min_usdc`. A leg too small to swap to one stroop of USDC is sent to the
+  owner as is.
 - `paths` holds one Soroswap route per non-USDC component, in
   `components()` order: from USDC to the leg when issuing, from the leg to
   USDC when redeeming, at most two hops between (`MAX_PATH = 4`). A wrong
   end or length is `InvalidPath`; too few or too many routes is
   `MissingPath`.
 - Errors: `InvalidPath` (1), `SlippageExceeded` (2), `InvalidAmount` (3),
-  `MissingPath` (4), `Overflow` (5). Events: `zap_issue` and `zap_redeem`,
+  `MissingPath` (4), `Overflow` (5), and since v0.6 `UnknownFund` (6),
+  `DuplicateComponent` (7), `InvalidPlatforms` (8), `HoldingsChanged` (9).
+  Events: `zap_issue` and `zap_redeem`,
   topics the investor (or owner) and the fund, data the shares and the
   USDC spent (or paid).
 
@@ -304,8 +442,13 @@ exact `transfer` at a time: each swap input to the route's first pair
 fund's `issue` requires the zap's auth as `investor`, which the zap gives
 by being the direct caller. Swaps are measured by balance change, not the
 router's report; a route that delivers less than asked fails, and any
-surplus goes to the investor. Each call ends with the zap holding what it
-held before.
+surplus goes to the investor. A fund listing a token twice is refused
+(`DuplicateComponent`), and so is an issue that would refund less than
+nothing. Every call ends by checking that the zap holds exactly what it
+held before in every component (`HoldingsChanged`), so tokens sent to the
+zap by mistake stay there and no call can spend them. The v0.5 zap on
+mainnet checks none of this: it trusts any contract named as `fund`, so a
+fake fund can take whatever rests in it.
 
 What a fund needs for the zap:
 
@@ -332,9 +475,10 @@ What a fund needs for the zap:
   holding USDY, CETES or BENJI are not.
 
 `redeem_to_usdc` cannot skip legs; if an issuer has frozen a leg, redeem
-in kind with `redeem` and its `skip` list instead. The zap does not check
-`platform.is_fund`: it trusts whatever fund the investor names, so
-clients should check that first. Each zap call costs one swap per leg plus
+in kind with `redeem` and its `skip` list instead. Each leg swaps with a
+zero minimum out; the aggregate `max_usdc` and `min_usdc` are the slippage
+bound, so clients should always derive them from fresh router quotes and
+never pass `min_usdc = 0`. Each zap call costs one swap per leg plus
 the fund call; aLQD's three legs ran at about 13.5M instructions for issue
 and 10.8M for redeem in the fork test, well inside a transaction's 100M.
 
@@ -344,7 +488,7 @@ investor's signature:
 
 ```
 stellar contract build --package alloy-fund
-node scripts/zap-snapshot.mjs zap-mainnet.json        # aLQD by default
+node scripts/zap-snapshot.mjs zap-mainnet.json        # aLQD and the v4 platform by default
 ALLOY_ZAP_SNAPSHOT=zap-mainnet.json cargo test -p alloy-zap -- --ignored --nocapture
 ```
 
@@ -353,9 +497,10 @@ for 0.1057514 USDC: about 0.33% round trip in pool fees and price impact.
 
 ## Pricing
 
-Funds never need a price: issue and redeem move assets in proportion to
+Issue and redeem never need a price: they move assets in proportion to
 what the fund holds, so no oracle can make a share mint cheap or redeem
-rich. Prices are for showing what a share is worth, and they come from a
+rich. Prices show what a share is worth, and since v0.3 they also bound the
+manager's `rebalance` and `trade` (see Rebalance bounds). They come from a
 separate read-only `nav` contract that holds nothing and only calls fund
 views (`components`, `units_per_share`, `total_supply`).
 
@@ -398,12 +543,43 @@ gh attestation verify alloy-fund_v0.1.0.wasm -R 0xDanomite/alloy-stellar
 - Neither contract is upgradeable. That keeps the redemption promise
   absolute; a bug in `issue` can only be contained per fund (the manager
   closes the allowlist).
-- `redeem` takes no minimum-out; per-share value can only fall between
-  quote and execution through an issuer clawback or freeze.
-- Oracle routes are set by a single admin key, like the platform; a
-  wrong route mislabels share value on screen but cannot move assets.
-- Release builds compile no network feature, so released fund code has no
-  default oracle; the platform admin still sets one per fund.
+- `redeem` takes no minimum-out. Per-share value can fall between quote
+  and execution through an issuer clawback or freeze, a manager
+  `rebalance` or `trade` landing first (within the trade bounds), or fee
+  accrual.
+- Oracle routes are set by the NAV admin, a single key on mainnet with no
+  timelock. Since v0.3 a route is not just display: it sets the bound on
+  every fund's `rebalance` and `trade`, and a change takes effect at once.
+  v0.6 funds refuse stale, fallback or divergent prices and charge an
+  unconfirmed one, which stops a stalled feed and bounds a bad one, but
+  not an admin who rewrites the primary route. Handing the NAV
+  to a timelock with a delay holders can act within is the operational
+  fix.
+- Releases from v0.4 ship two fund builds: `alloy-fund_v*.wasm` with no
+  network defaults, and `alloy-fund-mainnet_v*.wasm` with the mainnet NAV
+  and Soroswap router compiled in (aLQD runs the latter). An address the
+  platform admin sets on a fund always wins over the compiled default.
+- Redemption relies on every component's `balance` never trapping. SACs
+  never trap, and the shelf admits SACs only; a custom token (pausable,
+  upgradeable) that trapped would block every `redeem` of a fund holding
+  it, `skip` included. The trade bound likewise assumes 7 decimals, which
+  every SAC has.
+- After a clawback cuts below what is owed to past redeemers, `issue`
+  stays shut even once every owed claim is paid as far as it can be,
+  because the gap between reserved and held never closes on its own. The
+  manager reopens issuance by sending the fund the shortfall.
+- When a leg holds less than it owes, `withdraw_owed` pays first come,
+  first served: the first claimant takes what is there and later ones wait
+  for more to arrive.
+- `trade` asks the router for the larger of `min_bought` and 99% of the
+  oracle value, so a manager passing `min_bought = 0` leaves up to 1% per
+  trade to a sandwich (it still counts against the loss budgets). Pass a
+  market-derived minimum.
 - An asset reclassified `Permissioned` after a fund opened does not force
   that fund back to an allowlist. The issuer's asset contract still refuses
   unauthorized holders.
+- Fixes from v0.6 (trade price checks, the 30-day budget, fee carry, burn
+  accrual, the self-holding guard, the zap's fund check, the timelock's
+  minimum, expiry and role rotation) apply only to contracts deployed from
+  v0.6 code. No contract is upgradeable, so live v0.1 to v0.5 deployments
+  keep their behavior.

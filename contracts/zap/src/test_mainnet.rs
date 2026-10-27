@@ -2,10 +2,11 @@
 //! and its pools. Ignored by default; run with
 //!
 //!   stellar contract build --package alloy-fund
-//!   node scripts/zap-snapshot.mjs zap-mainnet.json [fund]
+//!   node scripts/zap-snapshot.mjs zap-mainnet.json [fund] [platform]
 //!   ALLOY_ZAP_SNAPSHOT=zap-mainnet.json cargo test -p alloy-zap -- --ignored --nocapture
 //!
-//! The fund defaults to aLQD. The investor's USDC is minted in the fork
+//! The fund defaults to aLQD and its platform to the v4 platform; set
+//! `ALLOY_ZAP_FUND` and `ALLOY_ZAP_PLATFORM` to match the snapshot. The investor's USDC is minted in the fork
 //! (the issuer's auth is mocked); every zap call runs with only the
 //! investor's signature.
 extern crate std;
@@ -25,6 +26,8 @@ mod fund_wasm {
 const ROUTER: &str = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH";
 const USDC: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
 const ALQD: &str = "CC5QR5OOQMCPVSL3SJMH7QESCFINWUMX3427CT4NIDBS3FRVDHAM4NAJ";
+/// The v4 platform, which created aLQD.
+const PLATFORM: &str = "CDL3FYEGDRYQP2MOW7Z4UBGUQLEHJ6VBPBLGE3YJ5ITVDB5CMKY7CJ7R";
 const SCALE: i128 = 10_000_000;
 
 fn report(env: &Env, what: &str) {
@@ -48,9 +51,17 @@ fn zaps_usdc_into_and_out_of_a_mainnet_fund() {
         &std::env::var("ALLOY_ZAP_FUND").unwrap_or(ALQD.into()),
     );
     let fund = fund_wasm::Client::new(&env, &fund_id);
+    let platform = std::env::var("ALLOY_ZAP_PLATFORM").unwrap_or(PLATFORM.into());
     let zap = ZapClient::new(
         &env,
-        &env.register(Zap, (Address::from_str(&env, ROUTER), usdc.clone())),
+        &env.register(
+            Zap,
+            (
+                Address::from_str(&env, ROUTER),
+                usdc.clone(),
+                soroban_sdk::vec![&env, Address::from_str(&env, &platform)],
+            ),
+        ),
     );
     let investor = Address::generate(&env);
     StellarAssetClient::new(&env, &usdc).mint(&investor, &(1_000 * SCALE));

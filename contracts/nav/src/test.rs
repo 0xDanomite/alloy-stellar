@@ -585,3 +585,108 @@ fn absurd_divergence_saturates() {
     assert_eq!(quote.price, 1);
     assert_eq!(quote.divergence_bps, Some(u32::MAX));
 }
+
+// The NAV side of audit finding AUD-04, pinned. NAV still answers these
+// quotes (share value on screen needs them); since v0.6 each says whether
+// it came from the primary and how old its confirming reading is, so the
+// fund can refuse a fallback and charge an unconfirmed price.
+
+/// Sixteen minutes of Reflector silence hands back a RedStone print from
+/// yesterday, marked as a fallback: the fund refuses to trade on it.
+#[test]
+fn a_reflector_gap_falls_back_to_a_day_old_unconfirmed_price() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let xlm = new_token(&s.env);
+    s.reflector
+        .set(&stellar(&xlm), &30_000_000_000_000, &(NOW - 16 * 60));
+    s.redstone
+        .set(&stellar(&xlm), &40_000_000, &(NOW - 25 * HOUR));
+    s.nav.set_route(
+        &xlm,
+        &reflector_route(&s, &xlm),
+        &Some(redstone_route(&s, &xlm)),
+    );
+    let quote = s.nav.price(&xlm);
+    assert_eq!(quote.price, 40_000_000);
+    assert_eq!(quote.timestamp, NOW - 25 * HOUR);
+    assert_eq!(quote.divergence_bps, None);
+    assert_eq!(quote.secondary_timestamp, None);
+    assert!(!quote.from_primary);
+}
+
+/// The reverse case: a fresh Reflector primary confirmed by a RedStone
+/// secondary from yesterday, which NAV still counts as fresh (26 hours).
+/// The quote carries the secondary's age so the fund can refuse it.
+#[test]
+fn a_confirmation_reports_how_old_the_secondary_is() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let xlm = new_token(&s.env);
+    s.reflector
+        .set(&stellar(&xlm), &30_000_000_000_000, &(NOW - 60));
+    s.redstone
+        .set(&stellar(&xlm), &30_000_000, &(NOW - 25 * HOUR));
+    s.nav.set_route(
+        &xlm,
+        &reflector_route(&s, &xlm),
+        &Some(redstone_route(&s, &xlm)),
+    );
+    let quote = s.nav.price(&xlm);
+    assert_eq!(quote.divergence_bps, Some(0));
+    assert_eq!(quote.secondary_timestamp, Some(NOW - 25 * HOUR));
+    assert!(quote.from_primary);
+}
+
+/// Two fresh sources a third apart still give a quote, with the gap
+/// reported for the fund to refuse.
+#[test]
+fn divergence_is_reported_for_the_fund_to_enforce() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let token = new_token(&s.env);
+    s.redstone
+        .set(&stellar(&token), &150_000_000, &(NOW - HOUR));
+    s.reflector
+        .set(&stellar(&token), &100_000_000_000_000, &(NOW - 60));
+    s.nav.set_route(
+        &token,
+        &redstone_route(&s, &token),
+        &Some(reflector_route(&s, &token)),
+    );
+    let quote = s.nav.price(&token);
+    assert_eq!(quote.price, 150_000_000);
+    assert_eq!(quote.divergence_bps, Some(3_333));
+    assert!(quote.secondary_timestamp.is_some_and(|at| at >= NOW - HOUR));
+}
+
+/// A USDC-quoted primary is only as first-choice as its USDC to USD leg:
+/// when the first USD-quoted USDC route is stale and the conversion falls
+/// back to the next, the quote is marked as not from the primary. USDC's
+/// own USDC-quoted route (Reflector on mainnet) cannot convert and is
+/// skipped, so `route_usdc`'s layout counts as first choice.
+#[test]
+fn a_usdc_quoted_primary_tracks_the_usdc_legs_fallback() {
+    let s = setup();
+    route_usdc(&s, 100_000_000);
+    let xlm = new_token(&s.env);
+    s.reflector
+        .set(&stellar(&xlm), &30_000_000_000_000, &(NOW - 60));
+    s.nav.set_route(&xlm, &reflector_route(&s, &xlm), &None);
+    assert!(s.nav.price(&xlm).from_primary);
+
+    // Two USD-quoted USDC routes; the first goes stale.
+    let mut usd_reflector = reflector_route(&s, &s.usdc);
+    usd_reflector.quote = Quote::Usd;
+    s.redstone
+        .set(&stellar(&s.usdc), &100_000_000, &(NOW - 27 * HOUR));
+    s.nav
+        .set_route(&s.usdc, &redstone_route(&s, &s.usdc), &Some(usd_reflector));
+    let quote = s.nav.price(&xlm);
+    assert_eq!(quote.price, 30_000_000);
+    assert!(!quote.from_primary);
+
+    s.redstone
+        .set(&stellar(&s.usdc), &100_000_000, &(NOW - HOUR));
+    assert!(s.nav.price(&xlm).from_primary);
+}

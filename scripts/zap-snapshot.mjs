@@ -1,9 +1,9 @@
 // Writes a ledger snapshot of everything a USDC zap into and out of a
 // mainnet fund touches, for the fork test in contracts/zap/src/test_mainnet.rs:
 //
-//   node scripts/zap-snapshot.mjs zap-mainnet.json [fund]
+//   node scripts/zap-snapshot.mjs zap-mainnet.json [fund] [platform]
 //
-// It simulates the fund's quotes, a Soroswap swap each way for every
+// It simulates the platform's `is_fund` for the fund, the fund's quotes, a Soroswap swap each way for every
 // non-USDC leg (with the fund itself as the trader, since it holds every
 // leg) and a transfer of each leg to a fresh contract address, then fetches
 // exactly the entries in those footprints. Nothing is signed or sent.
@@ -17,6 +17,7 @@ const { rpc, Contract, TransactionBuilder, Account, xdr, Address, Networks, nati
 
 const out = process.argv[2] ?? "zap-mainnet.json";
 const FUND = process.argv[3] ?? "CC5QR5OOQMCPVSL3SJMH7QESCFINWUMX3427CT4NIDBS3FRVDHAM4NAJ";
+const PLATFORM = process.argv[4] ?? "CDL3FYEGDRYQP2MOW7Z4UBGUQLEHJ6VBPBLGE3YJ5ITVDB5CMKY7CJ7R";
 const ROUTER = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH";
 const USDC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
 const server = new rpc.Server(process.env.MAINNET_RPC_URL ?? "https://mainnet.sorobanrpc.com");
@@ -40,6 +41,7 @@ async function simulate(id, fn, ...args) {
   return sim.result ? scValToNative(sim.result.retval) : undefined;
 }
 
+if (!(await simulate(PLATFORM, "is_fund", addr(FUND)))) throw new Error(`${FUND} is not a fund of ${PLATFORM}`);
 const components = await simulate(FUND, "components");
 const tokens = components.map((c) => c.token);
 const holdings = await simulate(FUND, "holdings");

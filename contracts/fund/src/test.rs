@@ -504,7 +504,10 @@ fn approve_rejects_expiry_beyond_max_ttl() {
     );
 }
 
-/// Every token is worth $1 except the one stored under "px", at its stored price.
+/// Every token is worth $1 unless `set` says otherwise, quoted fresh from
+/// its primary and confirmed by a fresh second source at zero divergence
+/// unless `set_quality`, `set_readings` or `set_fallback` say otherwise. A
+/// quote with no divergence has no second reading, as NAV reports it.
 #[contract]
 struct MockNav;
 
@@ -514,12 +517,45 @@ impl MockNav {
         env.storage().instance().set(&token, &price);
     }
 
+    pub fn set_fallback(env: Env, token: Address, fallback: bool) {
+        env.storage()
+            .instance()
+            .set(&(token, soroban_sdk::symbol_short!("fb")), &fallback);
+    }
+
+    pub fn set_quality(env: Env, token: Address, age_secs: u64, divergence_bps: Option<u32>) {
+        Self::set_readings(env, token, age_secs, divergence_bps, 0);
+    }
+
+    pub fn set_readings(
+        env: Env,
+        token: Address,
+        age_secs: u64,
+        divergence_bps: Option<u32>,
+        secondary_age_secs: u64,
+    ) {
+        env.storage().instance().set(
+            &(token, soroban_sdk::symbol_short!("q")),
+            &(age_secs, divergence_bps, secondary_age_secs),
+        );
+    }
+
     pub fn price(env: Env, token: Address) -> PriceQuote {
+        let instance = env.storage().instance();
+        let (age, divergence_bps, secondary_age): (u64, Option<u32>, u64) = instance
+            .get(&(token.clone(), soroban_sdk::symbol_short!("q")))
+            .unwrap_or((0, Some(0), 0));
+        let now = env.ledger().timestamp();
+        let fallback: bool = instance
+            .get(&(token.clone(), soroban_sdk::symbol_short!("fb")))
+            .unwrap_or(false);
         PriceQuote {
-            price: env.storage().instance().get(&token).unwrap_or(100_000_000),
-            timestamp: env.ledger().timestamp(),
+            price: instance.get(&token).unwrap_or(100_000_000),
+            timestamp: now - age,
             source: soroban_sdk::symbol_short!("mock"),
-            divergence_bps: None,
+            divergence_bps,
+            secondary_timestamp: divergence_bps.map(|_| now - secondary_age),
+            from_primary: !fallback,
         }
     }
 }
@@ -1350,4 +1386,616 @@ fn static_is_chosen_once_before_opening() {
     );
     s.fund.open_for_issue();
     assert_eq!(s.fund.mandate(), Mandate::Static);
+}
+
+// Regressions for the v0.5 contract audit. Each test is the audit's proof,
+// turned around to assert the fix (or, where a finding is accepted, to pin
+// the documented behavior).
+
+fn nav_of<'a>(s: &Setup<'a>) -> MockNavClient<'a> {
+    MockNavClient::new(&s.env, &s.fund.nav().unwrap())
+}
+
+/// AUD-04: the audit's stale-oracle rebalance (oracle at $0.40, market at
+/// $0.30, a day-old fallback print) is refused, as is a stale primary or a
+/// primary more than 2% from a fresh second source, on both trade paths.
+#[test]
+fn trades_refuse_fallback_stale_or_divergent_prices() {
+    let s = trading_fund();
+    let router = with_router(&s, 10_000);
+    let nav = nav_of(&s);
+    at(&s, 2 * 24 * 60 * 60);
+    let (usdc, xlm) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    s.assets[1].admin.mint(&s.manager, &(1_000 * SHARE_SCALE));
+    let sold = 5 * SHARE_SCALE;
+    let path = route(&s, 0, 1);
+    let refusals = |error: FundError| {
+        assert_eq!(
+            s.fund.try_rebalance(usdc, &sold, xlm, &(sold * 5 / 2)),
+            Err(Ok(error.into()))
+        );
+        assert_eq!(
+            s.fund.try_trade(usdc, &sold, xlm, &0, &path),
+            Err(Ok(error.into()))
+        );
+    };
+
+    // The audit's case: the primary went quiet and NAV fell back to a
+    // RedStone print from yesterday.
+    nav.set(xlm, &40_000_000);
+    nav.set_quality(xlm, &(25 * 60 * 60), &None);
+    nav.set_fallback(xlm, &true);
+    refusals(FundError::UnconfirmedPrice);
+    nav.set_quality(xlm, &60, &None);
+    refusals(FundError::UnconfirmedPrice);
+    nav.set_fallback(xlm, &false);
+    nav.set_quality(xlm, &(crate::MAX_TRADE_PRICE_AGE_SECONDS + 1), &Some(0));
+    refusals(FundError::StalePrice);
+    nav.set_quality(xlm, &(crate::MAX_TRADE_PRICE_AGE_SECONDS + 1), &None);
+    refusals(FundError::StalePrice);
+    nav.set_quality(xlm, &60, &Some(crate::MAX_TRADE_DIVERGENCE_BPS + 1));
+    refusals(FundError::PriceDivergence);
+    assert_eq!(s.fund.window_loss_ppb(), 0);
+    assert_eq!(s.assets[0].token.balance(&s.manager), 0);
+
+    // The sold leg is checked as strictly as the bought one.
+    nav.set(xlm, &100_000_000);
+    nav.set_quality(xlm, &0, &Some(0));
+    nav.set_fallback(usdc, &true);
+    refusals(FundError::UnconfirmedPrice);
+
+    nav.set_fallback(usdc, &false);
+    nav.set_quality(usdc, &crate::MAX_TRADE_PRICE_AGE_SECONDS, &Some(0));
+    nav.set_quality(xlm, &0, &Some(crate::MAX_TRADE_DIVERGENCE_BPS));
+    router.configure(&10_000, &false, &false);
+    s.fund.trade(usdc, &sold, xlm, &0, &path);
+}
+
+/// A fresh primary with no fresh second reading (a single route, or a
+/// RedStone secondary hours old, which NAV still calls fresh) may trade,
+/// but each such leg costs at least `UNCONFIRMED_PRICE_CHARGE_BPS` of its
+/// value in both loss budgets. An old secondary is still heard: past the
+/// 2% cap it refuses the trade, and under it the charge is the larger of
+/// its divergence and the flat charge.
+#[test]
+fn an_unconfirmed_primary_trades_and_is_charged() {
+    let s = trading_fund();
+    let nav = nav_of(&s);
+    at(&s, 2 * 24 * 60 * 60);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    s.assets[0].admin.mint(&s.manager, &(20 * SHARE_SCALE));
+    let five = 5 * SHARE_SCALE;
+
+    // Single source on the bought leg: 50 bps of $5 against a $35 fund.
+    nav.set_quality(a, &0, &None);
+    s.fund.rebalance(b, &five, a, &five);
+    assert_eq!(s.fund.window_loss_ppb(), 714_286);
+
+    // A day-old secondary 9% away refuses the trade.
+    at(&s, 2 * 24 * 60 * 60 + 60);
+    nav.set_readings(b, &0, &Some(900), &(25 * 60 * 60));
+    assert_eq!(
+        s.fund.try_rebalance(b, &five, a, &five),
+        Err(Ok(FundError::PriceDivergence.into()))
+    );
+
+    // 30 bps from a day-old secondary is charged as unconfirmed, 50 bps.
+    nav.set_readings(b, &0, &Some(30), &(25 * 60 * 60));
+    s.fund.rebalance(b, &five, a, &five);
+    assert_eq!(s.fund.window_loss_ppb(), 714_286 + 1_428_572);
+
+    // 120 bps from a day-old secondary is charged as measured.
+    at(&s, 2 * 24 * 60 * 60 + 120);
+    nav.set_readings(b, &0, &Some(120), &(25 * 60 * 60));
+    s.fund.rebalance(b, &five, a, &five);
+    let used = 714_286 + 1_428_572 + 2_428_572;
+    assert_eq!(s.fund.window_loss_ppb(), used);
+    assert_eq!(s.fund.month_loss_ppb(), used);
+}
+
+/// The fee used to be computed as `supply * accrued * 1e9` in one product,
+/// and an overflow minted nothing while the clock still moved on, so a
+/// large enough fund paid no fee at all. The split never forms that
+/// product: at 5% for a year the fee is exactly `supply / 19`.
+#[test]
+fn the_fee_is_exact_at_any_supply() {
+    for supply in [1, 10 * SHARE_SCALE, i128::MAX / 1_000_000, i128::MAX / 20] {
+        let (shares, fraction) = crate::fee_split(supply, 500, YEAR_SECONDS).unwrap();
+        assert_eq!(shares, supply / 19);
+        assert_eq!(fraction, supply % 19 * 1_000_000_000 / 19);
+    }
+    let (shares, _) = crate::fee_split(10 * SHARE_SCALE, 50, 86_400).unwrap();
+    assert_eq!(shares, 1_369);
+}
+
+/// When the fee cannot be minted because the supply would overflow,
+/// accrual mints nothing and leaves the clock alone, so the fee waits
+/// instead of being written off; it still never fails.
+#[test]
+fn an_unmintable_fee_waits_and_never_blocks() {
+    let s = with_fee(Compliance::Open, 500);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &SHARE_SCALE);
+    let set_supply = |supply: i128| {
+        s.env.as_contract(&s.fund.address, || {
+            crate::storage::set_supply(&s.env, supply)
+        })
+    };
+
+    set_supply(i128::MAX - 1);
+    at(&s, YEAR_SECONDS);
+    assert_eq!(s.fund.pending_fee(), 0);
+    assert_eq!(s.fund.accrue_fee(), 0);
+    assert_eq!(s.fund.fee().unwrap().last_accrual, 0);
+
+    let huge = 1_000_000_000_000_000_000_000_000_000_000i128;
+    set_supply(huge);
+    assert_eq!(s.fund.accrue_fee(), huge / 19);
+    assert_eq!(s.fund.fee().unwrap().last_accrual, YEAR_SECONDS);
+}
+
+/// AUD-04: a value-neutral rebalance used to log zero loss whatever the
+/// oracle's uncertainty. Each leg's divergence is now charged to both loss
+/// budgets: 50 bps on $5 out and $5 in is $0.05 of a $35 fund.
+#[test]
+fn oracle_divergence_is_charged_to_the_loss_budget() {
+    let s = trading_fund();
+    let nav = nav_of(&s);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    nav.set_quality(a, &0, &Some(50));
+    nav.set_quality(b, &0, &Some(50));
+    s.assets[0].admin.mint(&s.manager, &(5 * SHARE_SCALE));
+    s.fund
+        .rebalance(b, &(5 * SHARE_SCALE), a, &(5 * SHARE_SCALE));
+    assert_eq!(s.fund.window_loss_ppb(), 1_428_572);
+    assert_eq!(s.fund.month_loss_ppb(), 1_428_572);
+}
+
+/// AUD-03: the audit's manager took 38% of the fund in 30 days by using
+/// the 2% daily budget every day. Losses over any 30 days now stop at 5%,
+/// and the budget comes back only once they age out.
+#[test]
+fn losses_over_thirty_days_are_capped_at_five_percent() {
+    let s = managed(Compliance::Open);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(100 * SHARE_SCALE));
+    with_oracle(&s);
+    for asset in &s.assets {
+        asset.admin.mint(&s.manager, &(100_000 * SHARE_SCALE));
+    }
+    let value = |s: &Setup| -> i128 { s.fund.holdings().iter().sum() };
+    let start = value(&s);
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    let bleed = |s: &Setup, now: u64| {
+        at(s, now);
+        let holdings = s.fund.holdings();
+        let (sell, buy, sold) = if holdings.get_unchecked(0) > holdings.get_unchecked(1) {
+            (a, b, holdings.get_unchecked(0))
+        } else {
+            (b, a, holdings.get_unchecked(1))
+        };
+        // The largest fill the per-trade floor and the daily window accept.
+        let budget = (200 * 100_000 - s.fund.window_loss_ppb()) * value(s) / 1_000_000_000;
+        let loss = (sold / 100).min(budget - 1).max(1);
+        s.fund.try_rebalance(sell, &sold, buy, &(sold - loss))
+    };
+    let (mut accepted, mut refused) = (0, 0);
+    for day in 0..30u64 {
+        for half in 0..2u64 {
+            match bleed(&s, day * 86_400 + half * 43_200 + 60) {
+                Ok(_) => accepted += 1,
+                Err(error) => {
+                    assert_eq!(error, Ok(FundError::LossBudgetExceeded.into()));
+                    refused += 1;
+                }
+            }
+        }
+    }
+    let end = value(&s);
+    assert!(
+        accepted > 0 && refused > 50,
+        "{accepted} accepted, {refused} refused"
+    );
+    assert!(s.fund.month_loss_ppb() <= crate::MAX_LONG_WINDOW_LOSS_BPS * 100_000);
+    assert!(end * 100 >= start * 95, "{start} -> {end}");
+
+    // 31 days after the first losing day, its losses no longer count.
+    assert!(bleed(&s, 31 * 86_400 + 60).is_ok());
+}
+
+/// AUD-05: 1,440 minutely `accrue_fee` calls used to mint nothing where one
+/// daily call mints 1,369 shares. The unminted fraction now carries over,
+/// so they mint the same within a share.
+#[test]
+fn frequent_accrual_mints_the_same_fee_as_one_accrual() {
+    let daily = with_fee(Compliance::Open, 50);
+    let minutely = with_fee(Compliance::Open, 50);
+    for s in [&daily, &minutely] {
+        let investor = funded_investor(s, 1_000 * SHARE_SCALE);
+        s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    }
+    for minute in 1..=1_440u64 {
+        at(&minutely, minute * 60);
+        minutely.fund.accrue_fee();
+        assert_eq!(minutely.fund.pending_fee(), 0);
+    }
+    at(&daily, 86_400);
+    assert_eq!(daily.fund.pending_fee(), 1_369);
+    assert_eq!(daily.fund.accrue_fee(), 1_369);
+    let paid = minutely.fund.balance(&minutely.manager);
+    assert!((paid - 1_369).abs() <= 1, "minutely accrual paid {paid}");
+}
+
+/// AUD-11: `burn` used to change supply without accruing first, cutting the
+/// year's fee from 28,862,589 to 5,263,157 shares. It now accrues first, so
+/// burning gives the same fee whether or not someone accrued just before.
+#[test]
+fn burn_accrues_the_fee_first() {
+    let accrued = with_fee(Compliance::Open, 500);
+    let direct = with_fee(Compliance::Open, 500);
+    for s in [&accrued, &direct] {
+        let investor = funded_investor(s, 1_000 * SHARE_SCALE);
+        s.fund.issue(&investor, &investor, &(100 * SHARE_SCALE));
+        at(s, YEAR_SECONDS / 2);
+        if core::ptr::eq(s, &accrued) {
+            s.fund.accrue_fee();
+        }
+        s.fund.burn(&investor, &(90 * SHARE_SCALE));
+        at(s, YEAR_SECONDS);
+        s.fund.accrue_fee();
+    }
+    assert_eq!(
+        direct.fund.balance(&direct.manager),
+        accrued.fund.balance(&accrued.manager)
+    );
+    assert!(direct.fund.balance(&direct.manager) > 28_000_000);
+}
+
+/// AUD-14: shares held by the fund's own address could never move again.
+/// Every path that names a holder now refuses the fund itself.
+#[test]
+fn the_fund_cannot_hold_its_own_shares() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    let fund = s.fund.address.clone();
+    let refused = Some(Ok(FundError::FundAsHolder.into()));
+    assert_eq!(
+        s.fund.try_issue(&investor, &fund, &SHARE_SCALE).err(),
+        refused
+    );
+    s.fund.issue(&investor, &investor, &SHARE_SCALE);
+    assert_eq!(s.fund.try_transfer(&investor, &fund, &1).err(), refused);
+    assert_eq!(s.fund.try_set_fee_recipient(&fund).err(), refused);
+    assert_eq!(s.fund.try_set_platform_fee(&1_000, &fund).err(), refused);
+}
+
+/// A SEP-41 token whose `balance` can be made to trap, as an upgradeable or
+/// pausable custom token could. Not a SAC.
+#[contract]
+struct TrapToken;
+
+#[contractimpl]
+impl TrapToken {
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let balance: i128 = env.storage().persistent().get(&to).unwrap_or(0);
+        env.storage().persistent().set(&to, &(balance + amount));
+    }
+
+    pub fn break_it(env: Env) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::symbol_short!("broken"), &true);
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        if env
+            .storage()
+            .instance()
+            .has(&soroban_sdk::symbol_short!("broken"))
+        {
+            panic!("paused");
+        }
+        env.storage().persistent().get(&id).unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let from_balance = Self::balance(env.clone(), from.clone());
+        assert!(from_balance >= amount);
+        env.storage()
+            .persistent()
+            .set(&from, &(from_balance - amount));
+        let to_balance = Self::balance(env.clone(), to.clone());
+        env.storage().persistent().set(&to, &(to_balance + amount));
+    }
+}
+
+/// AUD-07, accepted: a component whose `balance` traps blocks every
+/// redemption, and `skip` cannot help. SAC `balance` never traps, which is
+/// why the shelf admits SACs only.
+#[test]
+fn a_trapping_non_sac_component_blocks_redemption() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let good = create_asset(&env, false);
+    let trap_id = env.register(TrapToken, ());
+    let trap = TrapTokenClient::new(&env, &trap_id);
+    let components = vec![
+        &env,
+        Component {
+            token: good.token.address.clone(),
+            initial_units: SHARE_SCALE,
+        },
+        Component {
+            token: trap_id.clone(),
+            initial_units: SHARE_SCALE,
+        },
+    ];
+    let id = env.register(
+        Fund,
+        (
+            env.register(MockPlatform, ()),
+            Address::generate(&env),
+            String::from_str(&env, "T"),
+            String::from_str(&env, "T"),
+            components,
+            Compliance::Open,
+        ),
+    );
+    let fund = FundClient::new(&env, &id);
+    fund.open_for_issue();
+    let investor = Address::generate(&env);
+    good.admin.mint(&investor, &(10 * SHARE_SCALE));
+    trap.mint(&investor, &(10 * SHARE_SCALE));
+    fund.issue(&investor, &investor, &SHARE_SCALE);
+
+    trap.break_it();
+    let skip = vec![&env, trap_id.clone()];
+    assert!(fund
+        .try_redeem(&investor, &investor, &SHARE_SCALE, &skip)
+        .is_err());
+    assert_eq!(good.token.balance(&id), SHARE_SCALE);
+}
+
+/// AUD-10, documented: after a clawback cuts below owed claims, settling
+/// every claim still leaves `reserved > held`, and issuance stays shut
+/// until someone (the manager) donates the gap back.
+#[test]
+fn issuance_reopens_once_a_clawback_gap_is_donated_back() {
+    let s = setup(Compliance::Open, [false, false, true]);
+    let a = funded_investor(&s, 1_000 * SHARE_SCALE);
+    let b = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&a, &a, &SHARE_SCALE);
+    s.fund.issue(&b, &b, &SHARE_SCALE);
+    let leg = s.assets[2].token.address.clone();
+    s.fund
+        .redeem(&a, &a, &SHARE_SCALE, &vec![&s.env, leg.clone()]);
+    let held = s.assets[2].token.balance(&s.fund.address);
+    s.assets[2]
+        .admin
+        .clawback(&s.fund.address, &(held - 1_000_000));
+    s.fund.withdraw_owed(&a, &a, &leg);
+    let gap = s.fund.owed(&a, &leg);
+    assert!(gap > 0);
+    assert_eq!(
+        s.fund.try_issue(&b, &b, &SHARE_SCALE),
+        Err(Ok(FundError::ReserveShortfall.into()))
+    );
+
+    s.assets[2].admin.mint(&s.fund.address, &gap);
+    s.fund.issue(&b, &b, &SHARE_SCALE);
+}
+
+/// The vault inflation attack does not apply to in-kind pro-rata issue: a
+/// 1-stroop first holder who donates a large balance makes shares dearer,
+/// but the next investor pays pro-rata and redeems what they paid, less at
+/// most a stroop per leg.
+#[test]
+fn a_donation_inflation_attack_transfers_no_value() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let attacker = funded_investor(&s, 1_000_000 * SHARE_SCALE);
+    let victim = funded_investor(&s, 1_000_000 * SHARE_SCALE);
+    s.fund.issue(&attacker, &attacker, &1);
+    for asset in &s.assets {
+        asset
+            .token
+            .transfer(&attacker, &s.fund.address, &(10_000 * SHARE_SCALE));
+    }
+    let before = balances(&s, &victim);
+    s.fund.issue(&victim, &victim, &1);
+    s.fund.redeem(&victim, &victim, &1, &Vec::new(&s.env));
+    let after = balances(&s, &victim);
+    for (paid, got) in before.iter().zip(after.iter()) {
+        assert!(paid - got <= 1);
+    }
+}
+
+// Wind-down and manager replacement by the platform admin.
+
+#[test]
+fn only_the_platform_admin_winds_down_or_replaces_the_manager() {
+    let s = setup(Compliance::Open, [false; 3]);
+    let usdc = s.assets[0].token.address.clone();
+    let new_manager = Address::generate(&s.env);
+
+    s.env.mock_auths(&[]);
+    assert!(s.fund.try_wind_down(&None, &usdc).is_err());
+    assert!(s.fund.try_replace_manager(&new_manager).is_err());
+    s.env.mock_all_auths();
+
+    s.fund.replace_manager(&new_manager);
+    assert_eq!(s.env.auths()[0].0, s.fund.platform());
+    assert_eq!(s.fund.manager(), new_manager);
+
+    s.fund.wind_down(&None, &usdc);
+    assert_eq!(s.env.auths()[0].0, s.fund.platform());
+    assert_eq!(
+        s.fund.wind_down_state(),
+        Some(crate::WindDown {
+            operator: None,
+            usdc
+        })
+    );
+}
+
+#[test]
+fn a_wound_down_fund_closes_issuance_and_revokes_the_manager() {
+    let s = trading_fund();
+    let (a, b) = (&s.assets[0].token.address, &s.assets[1].token.address);
+    let investor = funded_investor(&s, 100 * SHARE_SCALE);
+    s.fund.wind_down(&None, a);
+
+    assert!(!s.fund.is_open());
+    assert_eq!(
+        s.fund.try_issue(&investor, &investor, &SHARE_SCALE).err(),
+        Some(Ok(FundError::IssuanceClosed.into()))
+    );
+    let revoked = Some(Ok(FundError::WoundDown.into()));
+    let someone = Address::generate(&s.env);
+    assert_eq!(s.fund.try_set_investor(&someone, &true).err(), revoked);
+    assert_eq!(s.fund.try_set_fee_recipient(&someone).err(), revoked);
+    assert_eq!(s.fund.try_set_manager(&someone).err(), revoked);
+    assert_eq!(s.fund.try_replace_manager(&someone).err(), revoked);
+    assert_eq!(
+        s.fund
+            .try_set_metadata(
+                &Symbol::new(&s.env, "status"),
+                &String::from_str(&s.env, "x")
+            )
+            .err(),
+        revoked
+    );
+    assert_eq!(
+        s.fund
+            .try_add_component(&create_asset(&s.env, false).token.address)
+            .err(),
+        revoked
+    );
+    assert_eq!(
+        s.fund.try_rebalance(b, &SHARE_SCALE, a, &SHARE_SCALE).err(),
+        revoked
+    );
+    // With no operator, nobody trades at all.
+    with_router(&s, 10_000);
+    assert_eq!(
+        s.fund
+            .try_trade(b, &SHARE_SCALE, a, &0, &route(&s, 1, 0))
+            .err(),
+        revoked
+    );
+}
+
+/// Winding down changes nothing a holder redeems: the quote at wind-down
+/// is what they get, however long after, because the fee stops too.
+#[test]
+fn wind_down_never_blocks_or_reduces_a_redemption() {
+    let s = with_fee(Compliance::Open, crate::MAX_FEE_BPS);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    at(&s, YEAR_SECONDS / 2);
+    let quoted = s.fund.quote_redeem(&(10 * SHARE_SCALE));
+    s.fund.wind_down(&None, &s.assets[0].token.address);
+    assert_eq!(s.fund.quote_redeem(&(10 * SHARE_SCALE)), quoted);
+
+    at(&s, 3 * YEAR_SECONDS);
+    assert_eq!(s.fund.pending_fee(), 0);
+    assert_eq!(s.fund.accrue_fee(), 0);
+    let skip = vec![&s.env, s.assets[2].token.address.clone()];
+    let got = s
+        .fund
+        .redeem(&investor, &investor, &(10 * SHARE_SCALE), &skip);
+    assert_eq!(got, quoted);
+    s.fund
+        .withdraw_owed(&investor, &investor, &s.assets[2].token.address);
+    assert_eq!(s.fund.balance(&investor), 0);
+}
+
+/// The operator can only swap a component into USDC inside the fund, under
+/// the oracle floor and loss budgets; nothing reaches the operator.
+#[test]
+fn the_operator_only_trades_into_usdc_and_assets_stay_in_the_fund() {
+    let s = trading_fund();
+    with_router(&s, 9_950);
+    let (usdc, b, c) = (
+        &s.assets[0].token.address,
+        &s.assets[1].token.address,
+        &s.assets[2].token.address,
+    );
+    let operator = Address::generate(&s.env);
+    s.fund.wind_down(&Some(operator.clone()), usdc);
+
+    assert_eq!(
+        s.fund
+            .try_trade(b, &SHARE_SCALE, c, &0, &route(&s, 1, 2))
+            .err(),
+        Some(Ok(FundError::OnlyIntoUsdc.into()))
+    );
+    assert_eq!(
+        s.fund
+            .try_rebalance(b, &SHARE_SCALE, usdc, &SHARE_SCALE)
+            .err(),
+        Some(Ok(FundError::WoundDown.into()))
+    );
+    // Worse than the 1% floor is still refused.
+    let router = MockRouterClient::new(&s.env, &s.fund.router().unwrap());
+    router.configure(&9_850, &false, &false);
+    assert!(s
+        .fund
+        .try_trade(b, &(5 * SHARE_SCALE), usdc, &0, &route(&s, 1, 0))
+        .is_err());
+    router.configure(&9_950, &false, &false);
+
+    let before = s.fund.holdings();
+    let bought = s
+        .fund
+        .trade(b, &(5 * SHARE_SCALE), usdc, &0, &route(&s, 1, 0));
+    assert_eq!(s.env.auths()[0].0, operator);
+    let after = s.fund.holdings();
+    assert_eq!(after.get_unchecked(0), before.get_unchecked(0) + bought);
+    assert_eq!(
+        after.get_unchecked(1),
+        before.get_unchecked(1) - 5 * SHARE_SCALE
+    );
+    assert_eq!(after.get_unchecked(2), before.get_unchecked(2));
+    assert!(bought >= 5 * SHARE_SCALE * 99 / 100);
+    assert!(s.fund.window_loss_ppb() > 0);
+    for asset in &s.assets {
+        assert_eq!(asset.token.balance(&operator), 0);
+    }
+}
+
+#[test]
+fn a_replaced_manager_loses_its_powers_and_its_fee() {
+    let s = with_fee(Compliance::Open, 100);
+    let investor = funded_investor(&s, 1_000 * SHARE_SCALE);
+    s.fund.issue(&investor, &investor, &(10 * SHARE_SCALE));
+    let treasury = Address::generate(&s.env);
+    s.fund.set_fee_recipient(&treasury);
+
+    at(&s, YEAR_SECONDS);
+    let new_manager = Address::generate(&s.env);
+    s.fund.replace_manager(&new_manager);
+    let treasury_fee = s.fund.balance(&treasury);
+    assert!(treasury_fee > 0);
+    assert_eq!(s.fund.fee_recipient(), new_manager);
+
+    let old = s.manager.clone();
+    s.env.mock_auths(&[MockAuth {
+        address: &old,
+        invoke: &MockAuthInvoke {
+            contract: &s.fund.address,
+            fn_name: "set_investor",
+            args: (&investor, false).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(s.fund.try_set_investor(&investor, &false).is_err());
+    s.env.mock_all_auths();
+    s.fund.set_investor(&investor, &false);
+    assert_eq!(s.env.auths()[0].0, new_manager);
+
+    at(&s, 2 * YEAR_SECONDS);
+    s.fund.accrue_fee();
+    assert_eq!(s.fund.balance(&treasury), treasury_fee);
+    assert!(s.fund.balance(&new_manager) > 0);
 }

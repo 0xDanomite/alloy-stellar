@@ -126,12 +126,29 @@ impl MockRouter {
     }
 }
 
+/// Answers `is_fund` for the funds registered on it, as a platform does
+/// for the funds it created.
+#[contract]
+struct MockPlatform;
+
+#[contractimpl]
+impl MockPlatform {
+    pub fn register(env: Env, fund: Address) {
+        env.storage().instance().set(&fund, &true);
+    }
+
+    pub fn is_fund(env: Env, fund: Address) -> bool {
+        env.storage().instance().has(&fund)
+    }
+}
+
 /// A fund of 5 USDC, 2 USTRY-like at $1.05 and 30 XLM-like at $0.10 per
 /// share: 10.10 USDC a share at the router's prices.
 struct Setup<'a> {
     env: Env,
     zap: ZapClient<'a>,
     router: MockRouterClient<'a>,
+    platform: MockPlatformClient<'a>,
     fund: fund::Client<'a>,
     manager: Address,
     usdc: Address,
@@ -182,10 +199,11 @@ fn setup<'a>(compliance: fund::Compliance, permissioned_ustry: bool) -> Setup<'a
             initial_units: 30 * SCALE,
         },
     ];
+    let platform = MockPlatformClient::new(&env, &env.register(MockPlatform, ()));
     let fund_id = env.register(
         fund::WASM,
         (
-            Address::generate(&env),
+            platform.address.clone(),
             manager.clone(),
             String::from_str(&env, "Alloy Liquid"),
             String::from_str(&env, "aLQD"),
@@ -198,15 +216,27 @@ fn setup<'a>(compliance: fund::Compliance, permissioned_ustry: bool) -> Setup<'a
         StellarAssetClient::new(&env, &ustry).set_authorized(&fund_id, &true);
     }
     fund.open_for_issue();
+    platform.register(&fund_id);
 
+    // The fund's platform is the second trusted one, so the lookup has to
+    // look past the first.
+    let other_platform = env.register(MockPlatform, ());
     let zap = ZapClient::new(
         &env,
-        &env.register(Zap, (router.address.clone(), usdc.clone())),
+        &env.register(
+            Zap,
+            (
+                router.address.clone(),
+                usdc.clone(),
+                vec![&env, other_platform, platform.address.clone()],
+            ),
+        ),
     );
     Setup {
         env,
         zap,
         router,
+        platform,
         fund,
         manager,
         usdc,
@@ -667,4 +697,182 @@ fn emits_one_event_per_zap() {
     s.redeem(&investor, SCALE, 0);
     let redeemed = s.env.events().all().filter_by_contract(&s.zap.address);
     assert_eq!(redeemed.events().len(), 1);
+}
+
+fn register_with_platforms(count: u32) -> Vec<Address> {
+    let env = Env::default();
+    let mut platforms = Vec::new(&env);
+    for _ in 0..count {
+        platforms.push_back(Address::generate(&env));
+    }
+    let args = (Address::generate(&env), Address::generate(&env), platforms);
+    ZapClient::new(&env, &env.register(Zap, args)).platforms()
+}
+
+#[test]
+fn construction_keeps_up_to_eight_platforms() {
+    assert_eq!(register_with_platforms(crate::MAX_PLATFORMS).len(), 8);
+}
+
+#[test]
+#[should_panic]
+fn construction_needs_a_platform() {
+    register_with_platforms(0);
+}
+
+#[test]
+#[should_panic]
+fn construction_refuses_more_than_eight_platforms() {
+    register_with_platforms(crate::MAX_PLATFORMS + 1);
+}
+
+// Regressions for the v0.5 contract audit (AUD-06): the audit's proofs,
+// turned around to assert the fix.
+
+/// A contract that answers the fund interface however its deployer likes.
+#[contract]
+struct FakeFund;
+
+#[contractimpl]
+impl FakeFund {
+    pub fn configure(env: Env, components: Vec<fund::Component>, amounts: Vec<i128>) {
+        let instance = env.storage().instance();
+        instance.set(&soroban_sdk::symbol_short!("c"), &components);
+        instance.set(&soroban_sdk::symbol_short!("a"), &amounts);
+    }
+
+    pub fn components(env: Env) -> Vec<fund::Component> {
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("c"))
+            .unwrap()
+    }
+
+    pub fn quote_issue(env: Env, _shares: i128) -> Vec<i128> {
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("a"))
+            .unwrap()
+    }
+
+    pub fn issue(env: Env, investor: Address, _to: Address, _shares: i128) -> Vec<i128> {
+        let components = Self::components(env.clone());
+        let amounts = Self::quote_issue(env.clone(), 0);
+        for (component, amount) in components.iter().zip(amounts.iter()) {
+            TokenClient::new(&env, &component.token).transfer(
+                &investor,
+                env.current_contract_address(),
+                &amount,
+            );
+        }
+        amounts
+    }
+
+    /// Pays nothing and reports whatever was configured.
+    pub fn redeem(
+        env: Env,
+        _from: Address,
+        _to: Address,
+        _shares: i128,
+        _skip: Vec<Address>,
+    ) -> Vec<i128> {
+        Self::quote_issue(env, 0)
+    }
+}
+
+impl Setup<'_> {
+    fn fake_fund(&self, tokens: &[&Address], amounts: &[i128]) -> FakeFundClient<'_> {
+        let fake = FakeFundClient::new(&self.env, &self.env.register(FakeFund, ()));
+        let mut components = Vec::new(&self.env);
+        for token in tokens {
+            components.push_back(fund::Component {
+                token: (*token).clone(),
+                initial_units: 1,
+            });
+        }
+        let mut quoted = Vec::new(&self.env);
+        for amount in amounts {
+            quoted.push_back(*amount);
+        }
+        fake.configure(&components, &quoted);
+        fake
+    }
+}
+
+/// The audit's fake fund sold 50 XLM stranded in the zap for 5 USDC. The
+/// zap now refuses any fund its platforms did not create.
+#[test]
+fn a_fund_no_trusted_platform_created_is_refused() {
+    let s = open();
+    StellarAssetClient::new(&s.env, &s.xlm).mint(&s.zap.address, &(50 * SCALE));
+    StellarAssetClient::new(&s.env, &s.usdc).mint(&s.zap.address, &(100 * SCALE));
+    let attacker = s.investor(SCALE);
+    let unknown = Err(Ok(ZapError::UnknownFund.into()));
+
+    let fake = s.fake_fund(&[&s.xlm], &[50 * SCALE]);
+    let sell = vec![&s.env, s.path(&[&s.xlm, &s.usdc])];
+    assert_eq!(
+        s.zap
+            .try_redeem_to_usdc(&attacker, &fake.address, &1, &0, &sell),
+        unknown
+    );
+    let fake = s.fake_fund(&[&s.usdc, &s.usdc], &[SCALE, 100 * SCALE]);
+    assert_eq!(
+        s.zap
+            .try_issue_with_usdc(&attacker, &fake.address, &1, &SCALE, &Vec::new(&s.env)),
+        unknown
+    );
+    assert_eq!(s.balance(&s.xlm, &s.zap.address), 50 * SCALE);
+    assert_eq!(s.balance(&s.usdc, &s.zap.address), 100 * SCALE);
+    assert_eq!(s.balance(&s.usdc, &attacker), SCALE);
+}
+
+/// Behind the platform check, the zap still refuses what the audit's fake
+/// funds did: a duplicate USDC leg (which pulled 101 USDC against a 1 USDC
+/// `max_usdc`), and a redeem that pays nothing yet reports 50 XLM (which
+/// sold the stranded XLM). Only what a redeem delivers is ever sold.
+#[test]
+fn duplicate_legs_and_unpaid_redeems_take_nothing_from_the_zap() {
+    let s = open();
+    StellarAssetClient::new(&s.env, &s.xlm).mint(&s.zap.address, &(50 * SCALE));
+    StellarAssetClient::new(&s.env, &s.usdc).mint(&s.zap.address, &(100 * SCALE));
+    let attacker = s.investor(SCALE);
+
+    let duplicate = s.fake_fund(&[&s.usdc, &s.usdc], &[SCALE, 100 * SCALE]);
+    s.platform.register(&duplicate.address);
+    assert_eq!(
+        s.zap
+            .try_issue_with_usdc(&attacker, &duplicate.address, &1, &SCALE, &Vec::new(&s.env)),
+        Err(Ok(ZapError::DuplicateComponent.into()))
+    );
+
+    let unpaid = s.fake_fund(&[&s.xlm], &[50 * SCALE]);
+    s.platform.register(&unpaid.address);
+    let sell = vec![&s.env, s.path(&[&s.xlm, &s.usdc])];
+    assert_eq!(
+        s.zap
+            .redeem_to_usdc(&attacker, &unpaid.address, &1, &0, &sell),
+        0
+    );
+    assert_eq!(s.balance(&s.xlm, &s.zap.address), 50 * SCALE);
+    assert_eq!(s.balance(&s.usdc, &s.zap.address), 100 * SCALE);
+    assert_eq!(s.balance(&s.usdc, &attacker), SCALE);
+}
+
+/// Tokens sent to the zap by mistake stay put through ordinary zaps: every
+/// call ends with the zap holding exactly what it held before.
+#[test]
+fn stranded_tokens_survive_genuine_zaps() {
+    let s = open();
+    for token in [&s.usdc, &s.ustry, &s.xlm] {
+        StellarAssetClient::new(&s.env, token).mint(&s.zap.address, &(7 * SCALE));
+    }
+    let investor = s.investor(50 * SCALE);
+    assert_eq!(s.issue(&investor, SCALE, 20 * SCALE), 101_000_000);
+    assert_eq!(s.balance(&s.usdc, &investor), 50 * SCALE - 101_000_000);
+    assert_eq!(s.redeem(&investor, SCALE, 0), 101_000_000);
+    assert_eq!(s.balance(&s.usdc, &investor), 50 * SCALE);
+    for token in [&s.usdc, &s.ustry, &s.xlm] {
+        assert_eq!(s.balance(token, &s.zap.address), 7 * SCALE);
+    }
 }
