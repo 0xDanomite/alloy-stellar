@@ -4,6 +4,8 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "./index.css";
 import { Layout } from "./components/Layout";
 import { WalletProvider } from "./lib/wallet";
+import { endpoints } from "./lib/config";
+import { installRpcFailover } from "./lib/rpc-failover";
 import { Landing } from "./pages/Landing";
 import { FundPage } from "./pages/FundPage";
 import { FundsPage } from "./pages/FundsPage";
@@ -14,6 +16,8 @@ import { HowPage } from "./pages/HowPage";
 import { CreatePage } from "./pages/CreatePage";
 import { AdminPage } from "./pages/AdminPage";
 import { NotFound } from "./pages/NotFound";
+
+installRpcFailover([endpoints.rpcUrl, ...endpoints.rpcFallbacks]);
 
 const router = createBrowserRouter([
   {
