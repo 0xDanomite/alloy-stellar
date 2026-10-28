@@ -98,12 +98,14 @@ export function switchNetwork(next: Network) {
 const ENDPOINTS = {
   testnet: {
     rpcUrl: "https://soroban-testnet.stellar.org",
+    rpcFallbacks: [],
     horizonUrl: "https://horizon-testnet.stellar.org",
     expertUrl: "https://stellar.expert/explorer/testnet",
     passphrase: "Test SDF Network ; September 2015",
   },
   mainnet: {
     rpcUrl: "https://rpc.lightsail.network",
+    rpcFallbacks: ["https://mainnet.sorobanrpc.com", "https://soroban-rpc.mainnet.stellar.gateway.fm", "https://rpc.ankr.com/stellar_soroban"],
     horizonUrl: "https://horizon.stellar.org",
     expertUrl: "https://stellar.expert/explorer/public",
     passphrase: "Public Global Stellar Network ; September 2015",
@@ -114,6 +116,7 @@ const env = import.meta.env;
 
 export const endpoints = {
   rpcUrl: ENDPOINTS[network].rpcUrl,
+  rpcFallbacks: ENDPOINTS[network].rpcFallbacks,
   horizonUrl: ENDPOINTS[network].horizonUrl,
   expertUrl: ENDPOINTS[network].expertUrl,
   passphrase: ENDPOINTS[network].passphrase,
