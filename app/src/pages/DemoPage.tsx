@@ -8,15 +8,14 @@ interface Chapter {
 }
 
 const CHAPTERS: Chapter[] = [
-  { at: 0, title: "Alloy, live on Stellar mainnet" },
-  { at: 7, title: "The problem" },
-  { at: 19, title: "Create a fund" },
-  { at: 34, title: "Net asset value" },
-  { at: 47, title: "Invest" },
-  { at: 58, title: "Rebalance" },
-  { at: 76, title: "Issuer rails" },
-  { at: 92, title: "Redeem" },
-  { at: 99, title: "What's next" },
+  { at: 0, title: "Stellar tokenized the real world" },
+  { at: 4, title: "Meet Alloy" },
+  { at: 10, title: "Create a fund" },
+  { at: 17, title: "Net asset value" },
+  { at: 29, title: "Redeem any time" },
+  { at: 36, title: "Issuer rails" },
+  { at: 44, title: "Live on Stellar mainnet" },
+  { at: 48, title: "What's next" },
 ];
 
 function timestamp(seconds: number): string {
@@ -37,11 +36,11 @@ export function DemoPage() {
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
       <p className="text-filing text-muted-foreground">Alloy · demo</p>
       <h1 className="mt-1 font-display text-[clamp(2rem,5vw,3rem)] leading-[1.05] font-semibold">
-        See Alloy <span className="text-primary">in two minutes.</span>
+        See Alloy <span className="text-primary">in one minute.</span>
       </h1>
       <p className="mt-3 max-w-[40rem] text-muted-foreground">
-        A manager creates a fund, an investor buys it, the manager rebalances, and the investor cashes out, all on
-        Stellar mainnet with real transactions.
+        Many assets forged into one fund token, priced at net asset value, redeemable any hour, and live on Stellar
+        mainnet.
       </p>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_280px]">
