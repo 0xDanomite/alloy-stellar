@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-const require = createRequire(fileURLToPath(new URL("../app/package.json", import.meta.url)));
+const require = createRequire(fileURLToPath(new URL("./package.json", import.meta.url)));
 const { rpc, Contract, TransactionBuilder, Account, xdr, Address, Networks } = require("@stellar/stellar-sdk");
 const out = process.argv[2] ?? "mainnet.json";
 const server = new rpc.Server("https://mainnet.sorobanrpc.com");

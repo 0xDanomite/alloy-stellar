@@ -24,7 +24,7 @@ read [SKILL.md](SKILL.md). For the design and its guarantees, read
 | `contracts/timelock` | Timelock meant to be the platform and NAV admin: `schedule`, `execute` after a delay, `cancel`, fixed proposer and executor roles |
 | `contracts/nav` | Read-only NAV contract: per-asset RedStone and Reflector routes, staleness limits, fallback, divergence |
 | `contracts/zap` | Stateless USDC zap: `issue_with_usdc` and `redeem_to_usdc` buy or sell every leg through the Soroswap router in one transaction |
-| `app` | Vite + React app: fund pages, oracle NAV, USDC in and out through the zap, buy the basket via SDEX path payments, deposit, redeem, create and manage funds |
+| `scripts/package.json` | Node dependencies for the `.mjs` scripts (`cd scripts && npm ci`) |
 | `scripts/alloy.sh` | CLI, one command per journey step, testnet and mainnet |
 | `scripts/lib.sh` | Shared network config, identities, `invoke` and `view` helpers |
 | `scripts/testnet-launch.sh`, `scripts/mainnet-launch.sh` | Full launch rehearsals |
@@ -39,11 +39,14 @@ Node 22, jq.
 ```
 cargo test --workspace            # contract tests, including the property test
 stellar contract build            # wasm to target/wasm32v1-none/release
-cd app && npm ci && npm run build # typecheck + production build
-cd app && npm run dev             # local app
+cd scripts && npm ci             # dependencies for the .mjs scripts
 ```
 
-Copy `.env.example` to `.env` before running scripts or the app.
+Copy `.env.example` to `.env` before running scripts.
+
+The app no longer lives here: it is being rebuilt inside the Alloy
+platform. The last version is at the `app-final` tag. Do not add app code
+to this repo; see [ROADMAP.md](ROADMAP.md).
 
 ## Conventions
 

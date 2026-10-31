@@ -16,7 +16,8 @@ It matters because Stellar carries each tokenized asset in its own wrapper.
 Alloy is the layer above: one share of a managed portfolio, built for
 issuer-permissioned assets, safe through clawbacks and freezes.
 
-Live app: https://alloy-stellar.vercel.app (create a fund at `/create`).
+Hackathon app (frozen while the app moves into the Alloy platform):
+https://alloy-stellar.vercel.app (create a fund at `/create`).
 
 ## Mainnet contracts
 

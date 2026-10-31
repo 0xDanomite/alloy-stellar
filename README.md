@@ -7,7 +7,19 @@ Stellar's tokenized treasuries, stablecoins and money-market funds,
 priced on chain by RedStone and Reflector, and redeemable for the assets
 underneath at any time.
 
-**Live app:** [alloy-stellar.vercel.app](https://alloy-stellar.vercel.app) · **Create a fund:** [/create](https://alloy-stellar.vercel.app/create) · **Pitch deck:** [deck](https://claude.ai/artifact/D2Epdk9Z7XFDSz6Qg8Y7iG) · **New code since arrival:** [arrival...submission](https://github.com/0xDanomite/alloy-stellar/compare/arrival...submission)
+> **The app is moving into the Alloy platform.** This repository is now the
+> home of Alloy's open-source Soroban contracts. The HackMeridian app is
+> being rebuilt inside [alloy.neevstack.com](https://alloy.neevstack.com),
+> on the production infrastructure our EVM funds already run on: indexing,
+> keyed RPC, and the same manager and admin tools. The hackathon app stays
+> online, frozen, at [alloy-stellar.vercel.app](https://alloy-stellar.vercel.app),
+> and its source is preserved at the
+> [`submission`](https://github.com/0xDanomite/alloy-stellar/tree/submission)
+> (as judged) and [`app-final`](https://github.com/0xDanomite/alloy-stellar/tree/app-final/app)
+> tags. The contracts stay here under Apache-2.0 and are moving from
+> hackathon-grade to production-grade: see [ROADMAP.md](ROADMAP.md).
+
+**Hackathon app (frozen):** [alloy-stellar.vercel.app](https://alloy-stellar.vercel.app) · **Create a fund:** [/create](https://alloy-stellar.vercel.app/create) · **Pitch deck:** [deck](https://claude.ai/artifact/D2Epdk9Z7XFDSz6Qg8Y7iG) · **New code since arrival:** [arrival...submission](https://github.com/0xDanomite/alloy-stellar/compare/arrival...submission)
 
 **For AI agents:** [AGENTS.md](AGENTS.md) (working in this repo) · [SKILL.md](SKILL.md) (using Alloy on mainnet)
 
@@ -55,9 +67,9 @@ redeem on Stellar mainnet.
 | NAV contract: per-asset RedStone and Reflector routes, staleness limits, fallback, divergence | [contracts/nav](contracts/nav) |
 | Verifiable builds: CI builds tagged releases from source and attests them (SEP-0055); deploys use only those binaries | [release workflow](.github/workflows/release.yml), [v0.2.0](https://github.com/0xDanomite/alloy-stellar/releases/tag/v0.2.0) |
 | CLI for the whole journey, mainnet and testnet | [scripts/alloy.sh](scripts/alloy.sh), [scripts/mainnet-launch.sh](scripts/mainnet-launch.sh) |
-| App: funds, oracle NAV, buy-the-basket, redeem, testnet/mainnet switch | [app](app) |
+| App: funds, oracle NAV, buy-the-basket, redeem, testnet/mainnet switch | [app](https://github.com/0xDanomite/alloy-stellar/tree/app-final/app) |
 | Manager rebalancing (the Set-style trade module, on Soroban): the manager swaps one holding for another inside the fund, every share re-weights, and the contract rejects any fill worth under 99% at oracle prices | [fund contract](contracts/fund/src/lib.rs), [v0.3.0](https://github.com/0xDanomite/alloy-stellar/releases/tag/v0.3.0), [mainnet rebalance](https://stellar.expert/explorer/public/tx/4e6f2a9cb92a71face8823f4ce29c28189bd6fae5c6306cd29e3cd7462f257c5) |
-| Create and manage funds from the wallet: approved managers pick shelf assets and units per share, preview launch NAV, deploy with one signature, then switch access and approve investors | [create page](app/src/pages/CreatePage.tsx), [commit](https://github.com/0xDanomite/alloy-stellar/commit/65a3815) |
+| Create and manage funds from the wallet: approved managers pick shelf assets and units per share, preview launch NAV, deploy with one signature, then switch access and approve investors | [create page](https://github.com/0xDanomite/alloy-stellar/blob/app-final/app/src/pages/CreatePage.tsx), [commit](https://github.com/0xDanomite/alloy-stellar/commit/65a3815) |
 
 What we learned about Stellar:
 
@@ -131,10 +143,11 @@ clawbacks, and never lock redemption.**
 - **One frozen asset doesn't block the rest.** If an issuer freezes one
   asset for a redeemer, that leg becomes a claim to collect later and the
   rest pays out now.
-- **Ready for BENJI.**
+- **Built for permissioned assets.**
   [aBENJI](https://stellar.expert/explorer/public/contract/CCIQFFLE5X3T3SWWOET2N2LIPQLEUDTGLOGCDCBPDOM67ARH6A26MKG5)
-  holds a slot for real BENJI and opens the moment the issuer authorizes
-  the fund's address.
+  shows how a fund holds an asset whose issuer must authorize each holder:
+  the fund can only take that asset once the issuer authorizes the fund's
+  address.
 
 ## How It Works
 
@@ -188,6 +201,9 @@ Details: [docs/how-it-works.md](docs/how-it-works.md).
 **Pick a fund, buy the basket, deposit, and hold one token you can redeem
 any time.**
 
+This walks through the frozen hackathon app. The same flows are being
+rebuilt inside [alloy.neevstack.com](https://alloy.neevstack.com).
+
 **Managers:** open [Create fund](https://alloy-stellar.vercel.app/create),
 connect an approved manager wallet, tick assets from the shelf, set what one
 share holds, and sign. The fund deploys as its own contract and appears in
@@ -217,20 +233,7 @@ The switch in the header moves between mainnet and testnet.
   - Banks and wealth managers get white-label model-portfolio rails.
   - Issuers get distribution: their asset inside managed portfolios, with
     their holder rules enforced.
-- **Next steps:**
-  1. An independent audit.
-  2. Streaming fees and a timelocked admin.
-  3. A cumulative loss budget and cooldown on rebalances, on top of the
-     per-trade 1% oracle bound.
-  4. Agent-run funds: a manager agent with a policy (target weights, drift
-     bands, oracle-checked minimums, spend limits) rebalances through
-     Soroswap's aggregator, which can now execute swaps on an agent's behalf.
-     The manager sets the rules; the agent runs them; investors can still
-     always redeem.
-  5. Fund-share NAV as a SEP-40 price feed, and an aTRSY/USDC pool, so fund
-     shares work as collateral across Stellar DeFi.
-  6. Issuer authorizations, starting with BENJI.
-  7. Private, ZK-verified investor allowlists.
+- **Since HackMeridian and next:** see [ROADMAP.md](ROADMAP.md).
 
 ## Source verification
 
@@ -254,8 +257,8 @@ Together we shipped Alloy on Robinhood Chain and Polygon before bringing it to S
 1. Install Rust with the `wasm32v1-none` target, stellar-cli 25.2+, Node 22
    and jq.
 2. Copy `.env.example` to `.env`.
-3. Run the tests with `cargo test`, and the app with
-   `cd app && npm ci && npm run dev`.
+3. Run the tests with `cargo test`. Install the script dependencies with
+   `cd scripts && npm ci`.
 4. Rehearse the full journey on testnet with `scripts/testnet-launch.sh`
    (throwaway keys, funded from friendbot).
 5. On mainnet, run `scripts/mainnet-launch.sh`, using identities in your
