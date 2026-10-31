@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
-const require = createRequire(new URL("../app/package.json", import.meta.url));
+const require = createRequire(new URL("./package.json", import.meta.url));
 const { Address, Contract, Keypair, TransactionBuilder, nativeToScVal, rpc, xdr } = require("@stellar/stellar-sdk");
 
 const file = process.argv[2] ?? "deployments/mainnet-v4.json";
