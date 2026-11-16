@@ -267,3 +267,9 @@ Together we shipped Alloy on Robinhood Chain and Polygon before bringing it to S
 ## License
 
 [Apache-2.0](LICENSE)
+
+## Offline oracle freshness regressions
+
+[Run the NAV expiry tests](integration-tests/oracles/README.md) against captured
+Reflector/RedStone contracts. They build the current NAV WASM and check primary,
+conversion-leg and secondary expiry without RPC calls or deployed changes.

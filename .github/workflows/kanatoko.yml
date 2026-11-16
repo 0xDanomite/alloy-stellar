@@ -1,0 +1,33 @@
+name: Offline oracle regressions
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        run: rustup toolchain install 1.95.0 --profile minimal --target wasm32v1-none --component rustfmt --component clippy
+      - uses: stellar/stellar-cli@28484880988199233a7e8e87c97cb12dac323cb3 # v25.2.0
+        with:
+          version: 25.2.0
+      - name: Build current contract WASM
+        run: ./integration-tests/oracles/build.sh
+      - name: Check replay formatting
+        run: cargo +1.95.0 fmt --manifest-path integration-tests/oracles/Cargo.toml --all -- --check
+      - name: Fetch replay dependencies
+        run: cargo +1.95.0 fetch --locked --manifest-path integration-tests/oracles/Cargo.toml
+      - name: Lint replay
+        run: cargo +1.95.0 clippy --locked --offline --manifest-path integration-tests/oracles/Cargo.toml --all-targets --no-deps -- -D warnings
+      - name: Replay captured contracts offline
+        run: |
+          unset KANATOKO_CAPTURE_RPC RECAPTURE_RPC
+          cargo +1.95.0 test --locked --offline --manifest-path integration-tests/oracles/Cargo.toml
