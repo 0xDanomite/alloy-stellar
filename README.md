@@ -267,7 +267,3 @@ Together we shipped Alloy on Robinhood Chain and Polygon before bringing it to S
 ## License
 
 [Apache-2.0](LICENSE)
-
-## Offline oracle freshness regressions
-
-The [Kanatoko tests](integration-tests/oracles/README.md) show which price NAV selects as the Reflector, RedStone and USDC/USD observations age.
