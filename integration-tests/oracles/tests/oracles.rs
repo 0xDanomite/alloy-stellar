@@ -20,12 +20,12 @@ const XLM: &str = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 const USDC: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
 
 fn runner(name: &str) -> AutoRunner {
-    let path = format!("{}/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"));
-    let runner = mainnet().cache(path);
-    match std::env::var("KANATOKO_CAPTURE_RPC") {
-        Ok(url) => runner.rpc_url(url).rpc_rate_limit(4).refresh(),
-        Err(_) => runner.offline(),
-    }
+    mainnet()
+        .cache(format!(
+            "{}/fixtures/{name}.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .offline()
 }
 
 fn feed(fork: &ScenarioFork<'_>, oracle: &Address, token: &Address) -> PriceData {

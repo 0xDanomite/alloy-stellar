@@ -270,6 +270,4 @@ Together we shipped Alloy on Robinhood Chain and Polygon before bringing it to S
 
 ## Offline oracle freshness regressions
 
-[Run the NAV expiry tests](integration-tests/oracles/README.md) against captured
-Reflector/RedStone contracts. They build the current NAV WASM and check primary,
-conversion-leg and secondary expiry without RPC calls or deployed changes.
+The [Kanatoko tests](integration-tests/oracles/README.md) show which price NAV selects as the Reflector, RedStone and USDC/USD observations age.
